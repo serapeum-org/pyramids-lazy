@@ -21,8 +21,17 @@ resolved lazily via module ``__getattr__`` because its module hard-imports ``das
 
 from typing import Any
 
-from pyramids_lazy._lazy_cube import LazyNetCDF
-from pyramids_lazy.backend import LazyComputeBackend, backend
+from pyramids_lazy._seam import require_core_seam
+
+# Must precede every submodule import below: each reaches core through `pyramids.lazy_support`, so
+# without this an older pyramids-core fails as a raw ModuleNotFoundError naming neither cause nor fix.
+require_core_seam()
+
+from pyramids_lazy._lazy_cube import LazyNetCDF  # noqa: E402 - after the seam check
+from pyramids_lazy.backend import (  # noqa: E402 - after the seam check, deliberately
+    LazyComputeBackend,
+    backend,
+)
 
 __all__ = [
     "LazyComputeBackend",
