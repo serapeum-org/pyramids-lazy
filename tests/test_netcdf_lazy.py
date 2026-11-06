@@ -70,3 +70,27 @@ def test_combine_kerchunk_writes_manifest(nc_file, tmp_path):
     out = str(tmp_path / "combined.json")
     manifest = backend.combine_kerchunk([nc_file, nc_file], out, concat_dims=("time",))
     assert isinstance(manifest, dict)
+
+
+def test_build_lazy_cube_returns_lazy_view(nc_file):
+    """build_lazy_cube returns a LazyNetCDF that names the variable and computes back."""
+    from pyramids.netcdf import NetCDF
+
+    nc = NetCDF.read_file(nc_file)
+    cube = backend.build_lazy_cube(nc, "auto")
+    assert "temp" in cube.variable_names
+    computed = cube.compute()
+    assert computed is not None
+
+
+def test_to_dask_dataframe_tidy_frame(nc_file):
+    """to_dask_dataframe returns a tidy dask frame with dim columns beside the value column."""
+    pytest.importorskip("dask.dataframe")
+    from pyramids.netcdf import NetCDF
+
+    nc = NetCDF.read_file(nc_file)
+    ddf = backend.to_dask_dataframe(nc, variables=None, dropna=False, chunks="auto")
+    cols = set(ddf.columns)
+    assert "temp" in cols  # value column
+    assert cols & {"x", "y", "time"}  # dimension columns present
+    assert len(ddf.compute()) == 2 * 3 * 4

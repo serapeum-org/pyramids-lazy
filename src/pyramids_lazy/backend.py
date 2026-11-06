@@ -6,9 +6,10 @@
 through it, so the dask/zarr stack stays out of a bare ``pyramids-core`` install.
 
 The method set mirrors the ``ComputeBackend`` Protocol core publishes -- that Protocol is the
-authoritative contract. Bodies are moved here from core one operation at a time; a method still
-raising :class:`NotImplementedError` marks an operation core has not yet handed over, and core does
-not dispatch to it until it has, so no such placeholder is ever reached through the seam.
+authoritative contract. All v1 operations are implemented: each method forwards to the relocated body
+in a sibling ``pyramids_lazy`` module (``_zarr``, ``_collection_zarr``, ``_vector_read``, ``_lazy``,
+``_mfdataset``, ``_kerchunk_facade``, ``_lazy_cube``, ``_to_dask_dataframe``), which import every core
+primitive through the ``pyramids.lazy_support`` facade.
 """
 
 from __future__ import annotations
@@ -18,8 +19,6 @@ from typing import Any
 #: The contract version this backend implements. Must stay ``>=`` core's
 #: ``COMPUTE_BACKEND_API_VERSION``; additive Protocol methods do not bump it, a breaking change does.
 API_VERSION = 1
-
-_WIP = "pyramids-lazy has not yet taken {op!r} over from pyramids-core"
 
 
 class LazyComputeBackend:
@@ -45,14 +44,20 @@ class LazyComputeBackend:
         return build_lazy_array(chunks=chunks, lock=lock, **kwargs)
 
     def build_lazy_cube(self, netcdf: Any, chunks: Any) -> Any:
-        """Build the lazy cube view for ``NetCDF.chunk``."""
-        raise NotImplementedError(_WIP.format(op="build_lazy_cube"))
+        """Build the lazy cube view for ``NetCDF.chunk`` (returns a ``LazyNetCDF``)."""
+        from pyramids_lazy._lazy_cube import build_lazy_cube
+
+        return build_lazy_cube(netcdf, chunks)
 
     def to_dask_dataframe(
         self, netcdf: Any, *, variables: Any, dropna: bool, chunks: Any
     ) -> Any:
         """Back ``NetCDF.to_dask_dataframe``."""
-        raise NotImplementedError(_WIP.format(op="to_dask_dataframe"))
+        from pyramids_lazy._to_dask_dataframe import to_dask_dataframe
+
+        return to_dask_dataframe(
+            netcdf, variables=variables, dropna=dropna, chunks=chunks
+        )
 
     def to_kerchunk(self, source: Any, output_path: Any, **kwargs: Any) -> dict:
         """Back ``NetCDF.to_kerchunk`` (single-file kerchunk manifest)."""
