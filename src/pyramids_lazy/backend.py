@@ -61,11 +61,15 @@ class LazyComputeBackend:
 
     def write_dataset_to_zarr(self, dataset: Any, store: Any, **kwargs: Any) -> Any:
         """Back ``Dataset.to_zarr``."""
-        raise NotImplementedError(_WIP.format(op="write_dataset_to_zarr"))
+        from pyramids_lazy._zarr import write_dataset_to_zarr
+
+        return write_dataset_to_zarr(dataset, store, **kwargs)
 
     def read_dataset_from_zarr(self, store: Any, **kwargs: Any) -> Any:
         """Back ``Dataset.from_zarr`` (returns a ``Dataset``)."""
-        raise NotImplementedError(_WIP.format(op="read_dataset_from_zarr"))
+        from pyramids_lazy._zarr import read_dataset_from_zarr
+
+        return read_dataset_from_zarr(store, **kwargs)
 
     def write_collection_to_zarr(
         self, collection: Any, store: Any, **kwargs: Any
