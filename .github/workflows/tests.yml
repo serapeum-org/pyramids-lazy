@@ -43,9 +43,10 @@ jobs:
 
       - name: Run pyramids-lazy tests through the compute backend
         shell: bash
-        # The plugin is pure Python; put its src on PYTHONPATH and run its tests inside core's dev env
-        # (GDAL + dask + zarr + dask-geopandas). The seam resolves the backend via its first-party
-        # fallback (import pyramids_lazy), so no install of the plugin is needed.
+        # The plugin is pure Python; run its tests inside core's dev env (GDAL + dask + zarr +
+        # dask-geopandas). PYTHONPATH exposes both the plugin package (src) and the relocated-from-core
+        # ``tests`` support package (repo root, for ``from tests._marks import ...``). The seam resolves
+        # the backend via its first-party fallback (import pyramids_lazy); no install needed.
         run: >-
-          PYTHONPATH="$GITHUB_WORKSPACE/pyramids-lazy/src"
-          pixi run -e dev python -m pytest pyramids-lazy/tests -vvv
+          PYTHONPATH="$GITHUB_WORKSPACE/pyramids-lazy:$GITHUB_WORKSPACE/pyramids-lazy/src"
+          pixi run -e dev python -m pytest pyramids-lazy/tests --rootdir pyramids-lazy -vvv
