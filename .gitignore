@@ -7,7 +7,9 @@ build/
 dist/
 .eggs/
 
-# Environments (the dev env lives outside the repo, under C:\python-environments\uv\pyramids-lazy)
+# Environments. .pixi/ holds machine-local state (including a detached-environments pointer to an
+# absolute local path), so it is never shared; the solved env itself lives outside the repo.
+.pixi/
 .venv/
 venv/
 env/
@@ -24,3 +26,6 @@ htmlcov/
 .DS_Store
 .idea/
 .vscode/
+
+# Project memory — local notes, never part of the package's history.
+CLAUDE.md
