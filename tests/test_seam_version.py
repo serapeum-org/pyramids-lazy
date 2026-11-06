@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins
+import subprocess
 import sys
 
 import pytest
@@ -42,3 +43,35 @@ class TestTheFacadeIsRequired:
     def test_the_installed_core_satisfies_the_contract(self):
         """The core this suite runs against passes the check (it is a no-op here)."""
         assert require_core_seam() is None
+
+
+class TestTheCheckPrecedesTheFacadeImports:
+    """The guard must win on a cold `import pyramids_lazy`, not lose to a submodule."""
+
+    def test_a_cold_package_import_is_branded(self):
+        """`import pyramids_lazy` with no facade reports the contract, not ModuleNotFoundError.
+
+        This pins an ordering guarantee: `_seam` is imported with a straight `import`, which sorts
+        ahead of the `from` imports in `__init__`, so the check runs before any submodule reaches
+        `pyramids.lazy_support`. Run in a subprocess because the package is already imported here.
+        """
+        program = (
+            "import builtins\n"
+            "real = builtins.__import__\n"
+            "def fake(name, *a, **k):\n"
+            "    if name == 'pyramids.lazy_support':\n"
+            "        raise ImportError(\"No module named 'pyramids.lazy_support'\")\n"
+            "    return real(name, *a, **k)\n"
+            "builtins.__import__ = fake\n"
+            "try:\n"
+            "    import pyramids_lazy\n"
+            "except ImportError as exc:\n"
+            "    print(exc)\n"
+        )
+        completed = subprocess.run(
+            [sys.executable, "-c", program],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert "has no `pyramids.lazy_support`" in completed.stdout, completed.stdout

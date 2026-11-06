@@ -21,19 +21,18 @@ resolved lazily via module ``__getattr__`` because its module hard-imports ``das
 
 from typing import Any
 
-from pyramids_lazy._seam import require_core_seam
+# Importing `_seam` runs the core-contract check, and a straight `import` sorts ahead of the
+# `from` imports below — so the check happens before any submodule reaches
+# `pyramids.lazy_support`, with no statement between the imports and nothing to silence.
+import pyramids_lazy._seam as _seam
+from pyramids_lazy._lazy_cube import LazyNetCDF
+from pyramids_lazy.backend import LazyComputeBackend, backend
 
-# Must precede every submodule import below: each reaches core through `pyramids.lazy_support`, so
-# without this an older pyramids-core fails as a raw ModuleNotFoundError naming neither cause nor fix.
-require_core_seam()
-
-from pyramids_lazy._lazy_cube import LazyNetCDF  # noqa: E402 - after the seam check
-from pyramids_lazy.backend import (  # noqa: E402 - after the seam check, deliberately
-    LazyComputeBackend,
-    backend,
-)
+#: The `pyramids.lazy_support` contract this build requires, re-exported for diagnostics.
+REQUIRED_LAZY_SUPPORT_API_VERSION = _seam.REQUIRED_LAZY_SUPPORT_API_VERSION
 
 __all__ = [
+    "REQUIRED_LAZY_SUPPORT_API_VERSION",
     "LazyComputeBackend",
     "LazyFeatureCollection",
     "LazyNetCDF",

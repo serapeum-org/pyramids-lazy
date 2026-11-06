@@ -45,3 +45,8 @@ def require_core_seam() -> None:
                 found=LAZY_SUPPORT_API_VERSION,
             )
         )
+
+
+# Importing this module IS the check: it runs here, at module scope, so that a plain
+# `import pyramids_lazy._seam` performs it without the caller having to remember a call.
+require_core_seam()
