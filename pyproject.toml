@@ -57,7 +57,41 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [dependency-groups]
-dev = ["pytest>=8.0.0", "pytest-cov>=5.0.0"]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+    # The seam this backend implements is unreleased; branch pin until pyramids-core ships it.
+    "pyramids-core @ git+https://github.com/serapeum-org/pyramids-core.git@refactor/lazy-extraction-phase0",
+]
+
+# GDAL and the HDF5-linking libs must come from conda-forge so they share one native stack.
+[tool.pixi.project]
+channels = ["conda-forge"]
+platforms = ["win-64", "linux-64", "osx-64", "osx-arm64"]
+
+[tool.pixi.dependencies]
+gdal = "*"
+libgdal-netcdf = "*"
+geopandas = "*"
+"dask-core" = ">=2024.1.0"
+distributed = ">=2024.1.0"
+zarr = ">=3"
+fsspec = ">=2024.1.0"
+s3fs = ">=2024.1.0"
+kerchunk = ">=0.2.10"
+h5py = ">=3.8.0,<3.17"
+hdf5 = "1.14.*"
+dask-geopandas = ">=0.5.0"
+pyarrow = ">=10.0.0"
+
+[tool.pixi.pypi-dependencies]
+pyramids-lazy = { path = ".", editable = true }
+
+[tool.pixi.environments]
+dev = { features = ["dev"], solve-group = "default" }
+
+[tool.pixi.tasks]
+test = { cmd = "pytest -vvv", description = "Run the test suite" }
 
 [tool.pytest.ini_options]
 env = ["MPLBACKEND=Agg"]
