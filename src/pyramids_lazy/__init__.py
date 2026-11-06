@@ -11,11 +11,26 @@ Discovery works two ways, both resolving to the same singleton :data:`backend`:
   prefers; and
 * :func:`get_compute_backend`, the first-party fallback core calls by name when no entry point is
   registered (e.g. an editable checkout on ``PYTHONPATH`` with no installed metadata).
+
+The lazy view classes are also public here so core can forward its public ``pyramids.netcdf.LazyNetCDF``
+/ ``pyramids.feature.LazyFeatureCollection`` names (and their ``isinstance`` checks) to them.
+:class:`LazyNetCDF` imports eagerly (it needs only dask at call time); ``LazyFeatureCollection`` is
+resolved lazily via module ``__getattr__`` because its module hard-imports ``dask_geopandas`` (the
+``[parquet]`` extra).
 """
 
+from typing import Any
+
+from pyramids_lazy._lazy_cube import LazyNetCDF
 from pyramids_lazy.backend import LazyComputeBackend, backend
 
-__all__ = ["LazyComputeBackend", "backend", "get_compute_backend"]
+__all__ = [
+    "LazyComputeBackend",
+    "LazyFeatureCollection",
+    "LazyNetCDF",
+    "backend",
+    "get_compute_backend",
+]
 
 __version__ = "0.1.0"
 
@@ -28,3 +43,12 @@ def get_compute_backend() -> LazyComputeBackend:
     bare checkout on ``PYTHONPATH`` as well as from an installed distribution.
     """
     return backend
+
+
+def __getattr__(name: str) -> Any:
+    """Resolve ``LazyFeatureCollection`` lazily (its module needs the ``[parquet]`` dask-geopandas)."""
+    if name == "LazyFeatureCollection":
+        from pyramids_lazy._lazy_collection import LazyFeatureCollection
+
+        return LazyFeatureCollection
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
