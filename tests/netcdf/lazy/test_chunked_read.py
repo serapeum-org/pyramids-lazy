@@ -33,10 +33,10 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 from osgeo import gdal, osr
-
 from pyramids.base._file_manager import FILE_CACHE
-from pyramids_lazy import _lazy as lazy_mod
 from pyramids.netcdf.netcdf import NetCDF
+
+from pyramids_lazy import _lazy as lazy_mod
 from tests._marks import requires_dask
 
 pytestmark = pytest.mark.netcdf_lazy

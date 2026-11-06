@@ -4,7 +4,6 @@ from typing import Sequence
 
 import numpy as np
 import pytest
-
 from pyramids.base._file_manager import FILE_CACHE
 from pyramids.netcdf import ExtraDimensions, GeoReference
 from pyramids.netcdf.netcdf import NetCDF

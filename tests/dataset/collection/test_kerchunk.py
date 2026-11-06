@@ -12,9 +12,9 @@ import json
 
 import numpy as np
 import pytest
-
 from pyramids.base.georeference import GeoReference
 from pyramids.dataset import Dataset, DatasetCollection
+
 from tests._marks import requires_kerchunk
 from tests.dataset.collection.conftest import NC_FIXTURE
 

@@ -9,10 +9,9 @@ from geopandas.geodataframe import GeoDataFrame
 from osgeo import gdal
 from osgeo.gdal import Dataset
 from pandas import DataFrame
-from shapely import wkt
-
 from pyramids.base.georeference import GeoReference
 from pyramids.dataset import Dataset as PyramidsDataset
+from shapely import wkt
 
 
 @pytest.fixture(scope="module")

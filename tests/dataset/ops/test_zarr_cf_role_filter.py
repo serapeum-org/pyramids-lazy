@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
 from pyramids.dataset.ops._geobox_zarr import (
     _attrs_reader,
     _cf_referenced_names,

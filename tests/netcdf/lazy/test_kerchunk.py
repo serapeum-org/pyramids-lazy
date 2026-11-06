@@ -11,8 +11,8 @@ import json
 from pathlib import Path
 
 import pytest
-
 from pyramids.netcdf import NetCDF
+
 from tests._marks import requires_kerchunk
 from tests.netcdf.lazy.conftest import THREE_D_NC_FIXTURE as FIXTURE
 

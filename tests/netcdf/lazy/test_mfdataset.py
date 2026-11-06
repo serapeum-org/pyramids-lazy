@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
 from pyramids.netcdf import NetCDF
+
 from tests._marks import requires_dask
 from tests.netcdf.lazy.conftest import THREE_D_NC_FIXTURE as FIXTURE
 

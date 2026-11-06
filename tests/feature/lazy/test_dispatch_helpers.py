@@ -16,13 +16,13 @@ from __future__ import annotations
 
 import geopandas as gpd
 import pytest
-from shapely.geometry import Point
-
 from pyramids.feature import (
     FeatureCollection,
     has_lazy_backend,
     is_lazy_fc,
 )
+from shapely.geometry import Point
+
 from tests._marks import HAS_DASK_GEOPANDAS as HAS_DASK_GP
 from tests._marks import requires_dask_geopandas
 
@@ -90,7 +90,6 @@ class TestIsLazyFcPositive:
     def test_from_dask_gdf_is_lazy(self):
         """A LazyFC built via ``from_dask_gdf`` is recognised."""
         import dask_geopandas as dg
-
         from pyramids.feature import LazyFeatureCollection
 
         gdf = gpd.GeoDataFrame(
@@ -105,7 +104,6 @@ class TestIsLazyFcPositive:
     def test_compute_result_is_not_lazy(self):
         """``.compute()`` produces an eager FC — no longer a LazyFC."""
         import dask_geopandas as dg
-
         from pyramids.feature import LazyFeatureCollection
 
         gdf = gpd.GeoDataFrame(

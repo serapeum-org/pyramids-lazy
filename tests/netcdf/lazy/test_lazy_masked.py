@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
 from pyramids.netcdf import GeoReference, NetCDF
+
 from tests._marks import requires_dask
 
 pytestmark = pytest.mark.netcdf_lazy

@@ -5,9 +5,9 @@ from __future__ import annotations
 import pickle
 
 import pytest
-
 from pyramids.base.protocols import LazySpatialObject, SpatialObject, is_lazy
 from pyramids.feature import FeatureCollection
+
 from tests._marks import requires_dask_geopandas
 
 pytestmark = pytest.mark.parquet_lazy
@@ -17,7 +17,6 @@ pytestmark = pytest.mark.parquet_lazy
 class TestLazyFeatureCollection:
     def test_is_dask_gdf_subclass(self, lfc):
         import dask_geopandas as dg
-
         from pyramids.feature import LazyFeatureCollection
 
         assert isinstance(lfc, dg.GeoDataFrame)
@@ -151,7 +150,6 @@ class TestLazyFeatureCollection:
     def test_from_dask_gdf_public_name_is_canonical(self, small_gdf):
         """ARC-V1: public ``from_dask_gdf`` is the supported constructor."""
         import dask_geopandas as dg
-
         from pyramids.feature import LazyFeatureCollection
 
         ddf = dg.from_geopandas(small_gdf, npartitions=2)
@@ -173,7 +171,6 @@ class TestLazyFeatureCollection:
             before and after the swap.
         """
         import dask_geopandas as dg
-
         from pyramids.feature import LazyFeatureCollection
 
         ddf = dg.from_geopandas(small_gdf, npartitions=2)

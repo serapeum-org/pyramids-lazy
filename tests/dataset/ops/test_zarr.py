@@ -11,7 +11,6 @@ import warnings
 
 import numpy as np
 import pytest
-
 from pyramids.base._errors import OptionalPackageDoesNotExist
 from pyramids.base.georeference import GeoReference
 from pyramids.dataset import Dataset
@@ -567,9 +566,8 @@ class TestResolveStore:
             options — not silently drop them or wrap in an FSMap (which v3
             rejects with `component=`).
         """
-        from zarr.storage import FsspecStore
-
         from pyramids.dataset.ops._zarr import _resolve_store
+        from zarr.storage import FsspecStore
 
         calls: list = []
 

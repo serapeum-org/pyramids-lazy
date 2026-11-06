@@ -17,7 +17,6 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 from osgeo import gdal
-
 from pyramids.netcdf import GeoReference
 from pyramids.netcdf.netcdf import Container, NetCDF
 

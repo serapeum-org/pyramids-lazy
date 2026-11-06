@@ -25,6 +25,9 @@ classifiers = [
 # No GDAL here: the plugin inherits pyramids-core's vendored GDAL (constraint C2). Declaring GDAL
 # would risk a second, ABI-mismatched libgdal on the path.
 dependencies = [
+    # A floor cannot express "must publish the pyramids.lazy_support facade", which no released
+    # core does yet; pyramids_lazy._seam checks it at import. Raise this to the first release
+    # that ships the facade.
     "pyramids-core>=0.74.0",
     "dask>=2024.1.0",
     "distributed>=2024.1.0",
@@ -60,12 +63,14 @@ where = ["src"]
 dev = [
     "pytest>=8.0.0",
     "pytest-cov>=5.0.0",
+    "mypy>=1.11.0",
+    "ruff>=0.15.22",
     # The seam this backend implements is unreleased; branch pin until pyramids-core ships it.
     "pyramids-core @ git+https://github.com/serapeum-org/pyramids-core.git@refactor/lazy-extraction-phase0",
 ]
 
 # GDAL and the HDF5-linking libs must come from conda-forge so they share one native stack.
-[tool.pixi.project]
+[tool.pixi.workspace]
 channels = ["conda-forge"]
 platforms = ["win-64", "linux-64", "osx-64", "osx-arm64"]
 
@@ -90,16 +95,16 @@ pyramids-lazy = { path = ".", editable = true }
 [tool.pixi.environments]
 dev = { features = ["dev"], solve-group = "default" }
 
-[tool.pixi.tasks]
+[tool.pixi.feature.dev.tasks]
 test = { cmd = "pytest -vvv", description = "Run the test suite" }
+lint = { cmd = "ruff check . && ruff format --check .", description = "Lint and format check" }
+typecheck = { cmd = "mypy", description = "Type-check the package" }
 
 [tool.pytest.ini_options]
-env = ["MPLBACKEND=Agg"]
 # "." makes the relocated-from-core ``tests`` package importable (the suite uses
 # ``from tests._marks import ...`` etc.); "src" exposes ``pyramids_lazy``.
 pythonpath = [".", "src"]
 testpaths = ["tests"]
-timeout = 300
 faulthandler_timeout = 120
 # Marker set carried over from pyramids-core so the relocated extras-gated tests register and
 # auto-skip (via tests/_marks.py + conftest) when an extra's headline dep is absent.
@@ -144,25 +149,3 @@ disallow_untyped_defs = false
 check_untyped_defs = true
 exclude = ["tests/"]
 
-[[tool.mypy.overrides]]
-# These modules are moved verbatim from pyramids-core, where the identical call sites are covered by
-# its `pyramids.dataset.ops.*` / netcdf-engine mypy overrides (np.dtype passed where a str is
-# annotated, a general float tuple into GeoReference's 6-tuple, dynamic engine dispatch, ...). Mirror
-# that suppression so the relocation is type-clean rather than re-typing moved code.
-module = [
-    "pyramids_lazy._zarr",
-    "pyramids_lazy._collection_zarr",
-    "pyramids_lazy._lazy",
-    "pyramids_lazy._lazy_cube",
-    "pyramids_lazy._to_dask_dataframe",
-]
-disable_error_code = [
-    "attr-defined",
-    "call-arg",
-    "misc",
-    "return-value",
-    "assignment",
-    "union-attr",
-    "no-any-return",
-    "arg-type",
-]

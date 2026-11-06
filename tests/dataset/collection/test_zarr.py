@@ -13,10 +13,10 @@ import json
 
 import numpy as np
 import pytest
-
 from pyramids.base._errors import OptionalPackageDoesNotExist
 from pyramids.base.georeference import GeoReference
 from pyramids.dataset import Dataset, DatasetCollection
+
 from tests._marks import requires_lazy as requires_zarr
 
 try:

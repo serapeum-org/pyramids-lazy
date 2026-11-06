@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import geopandas as gpd
 import pytest
+from pyramids.feature import FeatureCollection
 from shapely.geometry import Point
 
-from pyramids.feature import FeatureCollection
 from tests._marks import requires_dask_geopandas, requires_pyarrow
 
 pytestmark = pytest.mark.parquet_lazy

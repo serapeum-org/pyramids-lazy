@@ -12,8 +12,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 from pandas.testing import assert_frame_equal
-
 from pyramids.netcdf import ExtraDimensions, GeoReference, NetCDF
+
 from tests._marks import requires_dask_dataframe
 
 pytestmark = pytest.mark.netcdf_lazy

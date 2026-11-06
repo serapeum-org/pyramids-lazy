@@ -13,7 +13,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
 from pyramids.base._file_manager import (
     _LRUCache,
     _make_cache_key,
@@ -21,6 +20,7 @@ from pyramids.base._file_manager import (
     gdal_mdarray_open,
 )
 from pyramids.netcdf import NetCDF
+
 from tests._marks import requires_dask
 
 pytestmark = pytest.mark.netcdf_lazy

@@ -11,8 +11,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
 from pyramids.netcdf import NetCDF
+
 from pyramids_lazy._lazy import (
     _auto_chunks,
     _default_chunks,

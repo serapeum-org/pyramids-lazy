@@ -12,8 +12,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
 from pyramids.netcdf import GeoReference, LazyNetCDF, NetCDF
+
 from tests._marks import requires_dask
 
 pytestmark = pytest.mark.netcdf_lazy
