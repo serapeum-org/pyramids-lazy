@@ -12,36 +12,20 @@ import math
 import os
 from typing import Any
 
-from pyramids.lazy_support import extra_hint, import_pyarrow
+from pyramids.lazy_support import import_pyarrow
 
 from pyramids_lazy._lazy_collection import LazyFeatureCollection
+from pyramids_lazy._optional import import_dask_geopandas, parquet_hint
 
 #: Target bytes per dask partition when the caller gives neither npartitions nor chunksize.
 #: ``pyramids.configure_lazy_vector`` tunes this (reconciled with core at the cutover step).
 _LAZY_TARGET_BYTES_PER_PARTITION: int = 128 * 1024 * 1024
 
 
-def _import_dask_geopandas():
-    """Import and return ``dask_geopandas`` or raise a pyramids-branded ImportError."""
-    try:
-        import dask_geopandas
-    except ImportError as exc:
-        raise ImportError(
-            extra_hint(
-                "backend='dask' requires the optional 'dask-geopandas' dependency.",
-                "parquet",
-            )
-        ) from exc
-    return dask_geopandas
-
-
 def _require_pyarrow() -> None:
     """Raise a pyramids-branded ImportError if pyarrow is absent."""
     import_pyarrow(
-        extra_hint(
-            "GeoParquet support requires the optional 'pyarrow' dependency.",
-            "parquet",
-        )
+        parquet_hint("GeoParquet support requires the optional 'pyarrow' dependency.")
     )
 
 
@@ -103,7 +87,7 @@ def read_file_dask(
             "filter post-load via .clip / .loc / .compute, or "
             "switch to read_parquet(backend='dask', filters=...)"
         )
-    dask_geopandas = _import_dask_geopandas()
+    dask_geopandas = import_dask_geopandas()
     partition_kwargs = _resolve_lazy_partitioning(resolved, npartitions, chunksize)
     dask_gdf = dask_geopandas.read_file(resolved, **partition_kwargs)
     return LazyFeatureCollection.from_dask_gdf(dask_gdf)
@@ -120,7 +104,7 @@ def read_parquet_dask(
     extra_kwargs: dict[str, Any] | None = None,
 ) -> LazyFeatureCollection:
     """Dask backend for ``FeatureCollection.read_parquet``: wrap dask_geopandas as a LazyFC."""
-    dask_geopandas = _import_dask_geopandas()
+    dask_geopandas = import_dask_geopandas()
     dask_kwargs = _compact(
         {
             "columns": columns,

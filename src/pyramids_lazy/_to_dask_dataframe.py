@@ -120,7 +120,7 @@ def to_dask_dataframe(
     require_optional(
         "dask.dataframe",
         "to_dask_dataframe() needs dask.dataframe, which requires pyarrow — install the "
-        "`parquet` extra (e.g. `pip install pyramids-core[parquet]`).",
+        "`parquet` extra (e.g. `pip install pyramids-lazy[parquet]`).",
     )
     import dask.array as da
     import dask.dataframe as dd

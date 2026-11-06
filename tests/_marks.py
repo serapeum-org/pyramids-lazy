@@ -58,7 +58,7 @@ HAS_PYSTAC_CLIENT = _has("pystac_client")
 # Per-extra installed? flag. Values are True when EVERY underlying
 # module of that extra is importable — so `netcdf_lazy` requires
 # kerchunk AND h5py AND the lazy stack, all of which now ship in
-# `pip install pyramids-core[lazy]`.
+# `pip install pyramids-lazy`.
 _HAS_VIZ = HAS_CLEOPATRA
 _HAS_LAZY = HAS_DASK_ARRAY and HAS_ZARR
 _HAS_INTEROP = HAS_INTEROP
@@ -72,20 +72,20 @@ requires_plot = pytest.mark.skipif(
     not _HAS_VIZ, reason="pyramids-core[viz] not installed"
 )
 requires_lazy = pytest.mark.skipif(
-    not _HAS_LAZY, reason="pyramids-core[lazy] not installed"
+    not _HAS_LAZY, reason="dask + zarr (pyramids-lazy) not installed"
 )
 requires_interop = pytest.mark.skipif(
     not _HAS_INTEROP, reason="the optional interop dependency is not installed"
 )
 requires_netcdf_lazy = pytest.mark.skipif(
-    not _HAS_NETCDF_LAZY, reason="kerchunk + h5py (pyramids-core[lazy]) not installed"
+    not _HAS_NETCDF_LAZY, reason="kerchunk + h5py (pyramids-lazy) not installed"
 )
 requires_parquet = pytest.mark.skipif(
-    not _HAS_PARQUET, reason="pyramids-core[parquet] not installed"
+    not _HAS_PARQUET, reason="pyramids-lazy[parquet] not installed"
 )
 requires_parquet_lazy = pytest.mark.skipif(
     not _HAS_PARQUET_LAZY,
-    reason="dask-geopandas (pyramids-core[parquet]) not installed",
+    reason="dask-geopandas (pyramids-lazy[parquet]) not installed",
 )
 requires_stac = pytest.mark.skipif(
     not _HAS_STAC, reason="pyramids-core[stac] not installed"
@@ -102,7 +102,7 @@ requires_dask_array = pytest.mark.skipif(
 # gate on both so `to_dask_dataframe` tests skip in a lazy-only env rather than erroring on import.
 requires_dask_dataframe = pytest.mark.skipif(
     not (HAS_DASK_ARRAY and HAS_PYARROW),
-    reason="dask.dataframe needs dask + pyarrow (pyramids-core[parquet])",
+    reason="dask.dataframe needs dask + pyarrow (pyramids-lazy[parquet])",
 )
 
 # Legacy aliases for existing callsites that import the older names.

@@ -17,9 +17,14 @@ from __future__ import annotations
 import functools
 from typing import TYPE_CHECKING, Any, cast
 
-import dask_geopandas
 import geopandas
 from pyramids.lazy_support import to_fsspec_url
+
+from pyramids_lazy._optional import import_dask_geopandas
+
+#: Branded at module scope: subclassing the frame below needs dask-geopandas at import time, so a
+#: bare `import dask_geopandas` here would surface a raw ModuleNotFoundError instead of the hint.
+dask_geopandas = import_dask_geopandas()
 
 if TYPE_CHECKING:
     from pathlib import Path
