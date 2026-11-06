@@ -75,13 +75,17 @@ class LazyComputeBackend:
         self, collection: Any, store: Any, **kwargs: Any
     ) -> Any:
         """Back ``DatasetCollection.to_zarr``."""
-        raise NotImplementedError(_WIP.format(op="write_collection_to_zarr"))
+        from pyramids_lazy._collection_zarr import write_collection_to_zarr
+
+        return write_collection_to_zarr(collection, store, **kwargs)
 
     def read_collection_from_zarr(
         self, collection_cls: Any, store: Any, **kwargs: Any
     ) -> Any:
         """Back ``DatasetCollection.from_zarr`` (returns a ``DatasetCollection``)."""
-        raise NotImplementedError(_WIP.format(op="read_collection_from_zarr"))
+        from pyramids_lazy._collection_zarr import read_collection_from_zarr
+
+        return read_collection_from_zarr(collection_cls, store, **kwargs)
 
     def read_vector_lazy(self, source: Any, **kwargs: Any) -> Any:
         """Back ``FeatureCollection.read_file(backend="dask")``."""
