@@ -1,0 +1,51 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      # pyramids-core provides the compute-backend seam AND the vendored-GDAL + conda dask/zarr
+      # stack the plugin's tests need. Checked out at the workspace root so its pixi manifest drives
+      # the env. Pinned to the seam branch until it is released; switch to the released pyramids-core
+      # (pip install) once the seam lands on PyPI/conda-forge.
+      - name: Check out pyramids-core (seam branch)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: serapeum-org/pyramids-core
+          ref: refactor/lazy-extraction-phase0
+
+      - name: Check out this plugin
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: pyramids-lazy
+
+      - name: Set up Python (pyramids-core's pixi dev env)
+        uses: serapeum-org/github-actions/actions/python-setup/pixi@961524686fb512c05ca8e4c7bfe81ba68eef4dda # pixi/v1.5.1
+        with:
+          environments: dev
+          activate-environment: dev
+          cache: true
+          version: v0.73.0
+
+      - name: Run pyramids-lazy tests through the compute backend
+        shell: bash
+        # The plugin is pure Python; put its src on PYTHONPATH and run its tests inside core's dev env
+        # (GDAL + dask + zarr + dask-geopandas). The seam resolves the backend via its first-party
+        # fallback (import pyramids_lazy), so no install of the plugin is needed.
+        run: >-
+          PYTHONPATH="$GITHUB_WORKSPACE/pyramids-lazy/src"
+          pixi run -e dev python -m pytest pyramids-lazy/tests -vvv

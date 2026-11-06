@@ -21,7 +21,11 @@ def _write_nc(path):
     is both GDAL-readable (for the lazy array reads) and h5py-scannable (for kerchunk).
     """
     with h5py.File(path, "w") as f:
-        for name, vals in [("time", [0.0, 1.0]), ("y", [2.0, 1.0, 0.0]), ("x", [0.0, 1.0, 2.0, 3.0])]:
+        for name, vals in [
+            ("time", [0.0, 1.0]),
+            ("y", [2.0, 1.0, 0.0]),
+            ("x", [0.0, 1.0, 2.0, 3.0]),
+        ]:
             dim = f.create_dataset(name, data=np.array(vals, dtype="float64"))
             dim.make_scale(name)
         temp = f.create_dataset(
@@ -41,7 +45,9 @@ def test_read_array_lazy_returns_dask_array(nc_file):
     """build_lazy_array (read_array_lazy) returns a lazy dask array of the variable's shape."""
     import dask.array as da
 
-    arr = backend.read_array_lazy(None, chunks="auto", path=nc_file, variable_name="temp")
+    arr = backend.read_array_lazy(
+        None, chunks="auto", path=nc_file, variable_name="temp"
+    )
     assert isinstance(arr, da.Array)
     assert arr.shape == (2, 3, 4)
     assert np.asarray(arr).sum() == float(np.arange(2 * 3 * 4).sum())

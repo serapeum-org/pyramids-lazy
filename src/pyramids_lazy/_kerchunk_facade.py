@@ -31,8 +31,8 @@ from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
-
 from pyramids.lazy_support import lazy_extra_hint
+
 from pyramids_lazy._kerchunk_builder import build_single_manifest, combine_manifests
 
 _KERCHUNK_IMPORT_ERROR = lazy_extra_hint(

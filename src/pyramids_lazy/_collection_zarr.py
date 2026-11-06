@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
-
 from pyramids.dataset import Dataset
 from pyramids.lazy_support import (
     ZARR_SCHEMA_VERSION,

@@ -25,7 +25,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-
 from pyramids.lazy_support import import_h5py, lazy_extra_hint
 
 _H5PY_IMPORT_ERROR = lazy_extra_hint(

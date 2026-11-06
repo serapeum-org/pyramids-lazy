@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 import dask_geopandas
 import geopandas
-
 from pyramids.lazy_support import to_fsspec_url
 
 if TYPE_CHECKING:

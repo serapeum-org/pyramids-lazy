@@ -13,7 +13,6 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
-
 from pyramids.lazy_support import (
     _frame_axes,
     _frame_values,

@@ -28,7 +28,6 @@ import warnings
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
-
 from pyramids.lazy_support import _is_in_memory, _public_spatial_names, import_dask
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -230,8 +229,7 @@ class LazyNetCDF:
         """
         if self._records is not None:
             return self._records
-        from pyramids.lazy_support import crs_spec
-        from pyramids.lazy_support import _read_no_data
+        from pyramids.lazy_support import _read_no_data, crs_spec
 
         source = self._source
         pinned = source._source_var_name
@@ -263,8 +261,7 @@ class LazyNetCDF:
         Returns:
             NetCDF: The eager variable the deferred ops computed to.
         """
-        from pyramids.lazy_support import as_numpy
-        from pyramids.lazy_support import _Applied, _variable_from_applied
+        from pyramids.lazy_support import _Applied, _variable_from_applied, as_numpy
 
         records = self._current_records()
         (rec,) = records.values()
@@ -345,9 +342,10 @@ class LazyNetCDF:
             LazyNetCDF | NetCDF: A lazy cube for a pinned variable; an eager coarsened cube for a
             multi-variable container.
         """
-        from pyramids.lazy_support import COUNTING_REDUCERS, REDUCERS
         from pyramids.lazy_support import (
             _BOUNDARIES,
+            COUNTING_REDUCERS,
+            REDUCERS,
             _check_how,
             _check_quantile,
             _check_window,
@@ -406,13 +404,14 @@ class LazyNetCDF:
         Returns:
             LazyNetCDF | NetCDF: A lazy cube for a pinned variable; an eager rolled cube otherwise.
         """
-        from pyramids.lazy_support import COUNTING_REDUCERS, REDUCERS
-        from pyramids.lazy_support import _rolled_array
         from pyramids.lazy_support import (
+            COUNTING_REDUCERS,
+            REDUCERS,
             _check_how,
             _check_min_periods,
             _check_quantile,
             _check_window,
+            _rolled_array,
         )
 
         _check_how(how, {*REDUCERS, *COUNTING_REDUCERS})
@@ -448,8 +447,7 @@ class LazyNetCDF:
         Returns:
             LazyNetCDF | NetCDF: A lazy cube for a pinned variable; an eager diffed cube otherwise.
         """
-        from pyramids.lazy_support import _diffed_array
-        from pyramids.lazy_support import _DIFF_LABELS, _check_order
+        from pyramids.lazy_support import _DIFF_LABELS, _check_order, _diffed_array
 
         order = _check_order(n)
         if label not in _DIFF_LABELS:
@@ -497,8 +495,7 @@ class LazyNetCDF:
         Returns:
             LazyNetCDF | NetCDF: A lazy cube for a pinned variable; an eager shifted cube otherwise.
         """
-        from pyramids.lazy_support import _Shift
-        from pyramids.lazy_support import _check_fill_value, _check_periods
+        from pyramids.lazy_support import _check_fill_value, _check_periods, _Shift
 
         steps = _check_periods(periods)
         _check_fill_value(fill_value)
@@ -562,8 +559,7 @@ class LazyNetCDF:
         Returns:
             LazyNetCDF | NetCDF: A lazy cube for a pinned variable; an eager result otherwise.
         """
-        from pyramids.lazy_support import _Interpolate
-        from pyramids.lazy_support import _check_limit
+        from pyramids.lazy_support import _check_limit, _Interpolate
 
         if len(self._current_records()) != 1:
             self._warn_materialize("interpolate_na")
@@ -588,10 +584,10 @@ class LazyNetCDF:
         Returns:
             LazyNetCDF | NetCDF: A lazy cube for a pinned variable; an eager result otherwise.
         """
-        from pyramids.lazy_support import _InterpTo
         from pyramids.lazy_support import (
             _INTERP_MIN_POINTS,
             _interp_targets,
+            _InterpTo,
             _refuse_spatial_band_op,
             _resolve_interp_kind,
         )
@@ -635,8 +631,7 @@ class LazyNetCDF:
             LazyNetCDF | NetCDF: A lazy cube when every padded dimension is a band dimension of a
             single variable; an eager padded cube otherwise.
         """
-        from pyramids.lazy_support import _Pad
-        from pyramids.lazy_support import _pad_before_after
+        from pyramids.lazy_support import _Pad, _pad_before_after
 
         records = self._current_records()
         band_names = next(iter(records.values())).band_names if records else []
@@ -979,9 +974,8 @@ class LazyNetCDF:
             LazyNetCDF: The cube with the cell-wise op applied, still lazy.
         """
         import dask.array as da
-
-        from pyramids.lazy_support import GeoReference
         from pyramids.dataset import Dataset
+        from pyramids.lazy_support import GeoReference
 
         name, rec = next(iter(self._current_records().items()))
         ndv = rec.no_data
