@@ -89,11 +89,15 @@ class LazyComputeBackend:
 
     def read_vector_lazy(self, source: Any, **kwargs: Any) -> Any:
         """Back ``FeatureCollection.read_file(backend="dask")``."""
-        raise NotImplementedError(_WIP.format(op="read_vector_lazy"))
+        from pyramids_lazy._vector_read import read_file_dask
+
+        return read_file_dask(source, **kwargs)
 
     def read_vector_parquet_lazy(self, source: Any, **kwargs: Any) -> Any:
         """Back ``FeatureCollection.read_parquet(backend="dask")``."""
-        raise NotImplementedError(_WIP.format(op="read_vector_parquet_lazy"))
+        from pyramids_lazy._vector_read import read_parquet_dask
+
+        return read_parquet_dask(source, **kwargs)
 
 
 #: The singleton core resolves through the entry point. A single object, per the Protocol contract.
