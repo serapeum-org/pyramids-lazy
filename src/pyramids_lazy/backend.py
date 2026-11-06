@@ -34,8 +34,15 @@ class LazyComputeBackend:
     def read_array_lazy(
         self, dataset: Any, *, chunks: Any, lock: Any = None, **kwargs: Any
     ) -> Any:
-        """Lazy dask-backed read of a raster/variable (``Dataset``/``NetCDF`` ``read_array``)."""
-        raise NotImplementedError(_WIP.format(op="read_array_lazy"))
+        """Lazy dask-backed read of a raster/variable (``Dataset``/``NetCDF`` ``read_array``).
+
+        ``dataset`` is accepted for the Protocol; the object-specific prep (path, variable name,
+        spatial-dim orientation, manager hook, cloud env) is done by core and forwarded in
+        ``kwargs`` to :func:`build_lazy_array`.
+        """
+        from pyramids_lazy._lazy import build_lazy_array
+
+        return build_lazy_array(chunks=chunks, lock=lock, **kwargs)
 
     def build_lazy_cube(self, netcdf: Any, chunks: Any) -> Any:
         """Build the lazy cube view for ``NetCDF.chunk``."""
@@ -49,15 +56,21 @@ class LazyComputeBackend:
 
     def to_kerchunk(self, source: Any, output_path: Any, **kwargs: Any) -> dict:
         """Back ``NetCDF.to_kerchunk`` (single-file kerchunk manifest)."""
-        raise NotImplementedError(_WIP.format(op="to_kerchunk"))
+        from pyramids_lazy._kerchunk_facade import to_kerchunk
+
+        return to_kerchunk(source, output_path, **kwargs)
 
     def combine_kerchunk(self, paths: Any, output_path: Any, **kwargs: Any) -> dict:
         """Back ``NetCDF.combine_kerchunk`` / ``DatasetCollection.to_kerchunk``."""
-        raise NotImplementedError(_WIP.format(op="combine_kerchunk"))
+        from pyramids_lazy._kerchunk_facade import combine_kerchunk
+
+        return combine_kerchunk(paths, output_path, **kwargs)
 
     def open_mfdataset(self, paths: Any, variable: Any, **kwargs: Any) -> Any:
         """Back ``NetCDF.open_mfdataset`` (dask-stacked multi-file read)."""
-        raise NotImplementedError(_WIP.format(op="open_mfdataset"))
+        from pyramids_lazy._mfdataset import open_mfdataset
+
+        return open_mfdataset(paths, variable, **kwargs)
 
     def write_dataset_to_zarr(self, dataset: Any, store: Any, **kwargs: Any) -> Any:
         """Back ``Dataset.to_zarr``."""
