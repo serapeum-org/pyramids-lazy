@@ -470,7 +470,7 @@ def _metadata_dict(ds: Dataset) -> dict[str, Any]:
         "dtype": str(written_dtype),
         "shape": [int(ds.band_count), int(ds.rows), int(ds.columns)],
     }
-    if agreed is not None and _representable(agreed, written_dtype):
+    if agreed is not None and _representable(agreed, str(written_dtype)):
         metadata["_FillValue"] = agreed
     return metadata
 

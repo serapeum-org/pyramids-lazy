@@ -22,14 +22,17 @@ from pyramids.lazy_support import to_fsspec_url
 
 from pyramids_lazy._optional import import_dask_geopandas
 
-#: Branded at module scope: subclassing the frame below needs dask-geopandas at import time, so a
-#: bare `import dask_geopandas` here would surface a raw ModuleNotFoundError instead of the hint.
-dask_geopandas = import_dask_geopandas()
-
 if TYPE_CHECKING:
     from pathlib import Path
 
+    # Type-checking sees the real module, so `dask_geopandas.GeoDataFrame` resolves as the base
+    # class below; at run time the branded guard supplies it instead (see the comment there).
+    import dask_geopandas
     from pyramids.feature.collection import FeatureCollection
+else:
+    # Subclassing the frame below needs dask-geopandas at import time, so a bare
+    # `import dask_geopandas` here would raise a raw ModuleNotFoundError instead of the hint.
+    dask_geopandas = import_dask_geopandas()
 
 
 def _rebuild_lazy_fc(parent_reduce: tuple) -> LazyFeatureCollection:
