@@ -25,6 +25,9 @@ classifiers = [
 # No GDAL here: the plugin inherits pyramids-core's vendored GDAL (constraint C2). Declaring GDAL
 # would risk a second, ABI-mismatched libgdal on the path.
 dependencies = [
+    # A floor cannot express "must publish the pyramids.lazy_support facade", which no released
+    # core does yet; pyramids_lazy._seam checks it at import. Raise this to the first release
+    # that ships the facade.
     "pyramids-core>=0.74.0",
     "dask>=2024.1.0",
     "distributed>=2024.1.0",
@@ -57,8 +60,92 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [dependency-groups]
-dev = ["pytest>=8.0.0", "pytest-cov>=5.0.0"]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+    "mypy>=1.11.0",
+    "ruff>=0.15.22",
+    # The seam this backend implements is unreleased; branch pin until pyramids-core ships it.
+    "pyramids-core @ git+https://github.com/serapeum-org/pyramids-core.git@refactor/lazy-extraction-phase0",
+]
+
+# GDAL and the HDF5-linking libs must come from conda-forge so they share one native stack.
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["win-64", "linux-64", "osx-64", "osx-arm64"]
+
+[tool.pixi.dependencies]
+gdal = "*"
+libgdal-netcdf = "*"
+geopandas = "*"
+"dask-core" = ">=2024.1.0"
+distributed = ">=2024.1.0"
+zarr = ">=3"
+fsspec = ">=2024.1.0"
+s3fs = ">=2024.1.0"
+kerchunk = ">=0.2.10"
+h5py = ">=3.8.0,<3.17"
+hdf5 = "1.14.*"
+dask-geopandas = ">=0.5.0"
+pyarrow = ">=10.0.0"
+
+[tool.pixi.pypi-dependencies]
+pyramids-lazy = { path = ".", editable = true }
+
+[tool.pixi.environments]
+dev = { features = ["dev"], solve-group = "default" }
+
+[tool.pixi.feature.dev.tasks]
+test = { cmd = "pytest -vvv", description = "Run the test suite" }
+lint = { cmd = "ruff check . && ruff format --check .", description = "Lint and format check" }
+typecheck = { cmd = "mypy", description = "Type-check the package" }
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+# "." makes the relocated-from-core ``tests`` package importable (the suite uses
+# ``from tests._marks import ...`` etc.); "src" exposes ``pyramids_lazy``.
+pythonpath = [".", "src"]
 testpaths = ["tests"]
+faulthandler_timeout = 120
+# Marker set carried over from pyramids-core so the relocated extras-gated tests register and
+# auto-skip (via tests/_marks.py + conftest) when an extra's headline dep is absent.
+markers = [
+    "vfs: mark a test as a virtual file system (deselect with '-m \"not vfs\"')",
+    "slow: mark test as slow (deselect with '-m \"not slow\"')",
+    "fast: mark test as fast (deselect with '-m \"not fast\"')",
+    "core: extras-free test (auto-applied when no extras marker is present)",
+    "plot: tests requiring the [viz] extra (cleopatra) — plotting tests",
+    "lazy: tests requiring the [lazy] extra (dask, distributed, zarr, fsspec)",
+    "interop: tests requiring the optional interop peer dependency",
+    "netcdf_lazy: tests requiring kerchunk + h5py",
+    "parquet: tests requiring the [parquet] extra (pyarrow)",
+    "parquet_lazy: tests requiring dask-geopandas",
+    "stac: tests requiring the [stac] extra (pystac-client)",
+    "live: live network test against a real external service",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.format]
+quote-style = "preserve"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP"]
+ignore = ["E203", "E226", "E266", "E501", "E701", "E722", "E741", "E731"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["E", "F", "W", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "src"
+packages = ["pyramids_lazy"]
+explicit_package_bases = true
+# pyramids-core is only typed via its own package; the plugin reaches it through the
+# pyramids.lazy_support facade. Missing third-party stubs collapse to Any.
+ignore_missing_imports = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+exclude = ["tests/"]
+
