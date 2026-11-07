@@ -23,8 +23,10 @@ class LazyExtraNotInstalled(ModuleNotFoundError):
 
 
 _PARQUET_INSTALL = (
-    "Install with one of:\n"
+    "Install the lazy-vector dependencies with one of:\n"
     "  - PyPI:        pip install 'pyramids-lazy[parquet]'\n"
+    # pyramids-lazy is not on conda-forge yet, so name the two conda packages the extra pulls rather
+    # than a `conda install pyramids-lazy[parquet]` that would not resolve.
     "  - conda-forge: conda install -c conda-forge dask-geopandas pyarrow"
 )
 

@@ -65,8 +65,12 @@ dev = [
     "pytest-cov>=5.0.0",
     "mypy>=1.11.0",
     "ruff>=0.15.22",
-    # The seam this backend implements is unreleased; branch pin until pyramids-core ships it.
-    "pyramids-core @ git+https://github.com/serapeum-org/pyramids-core.git@refactor/lazy-extraction-phase0",
+    # pyramids-core publishes the seam this backend implements, unreleased, so it is pinned by
+    # commit (not the branch): with `--locked` CI, a branch ref would make this lock stale and fail
+    # setup the moment core's branch moves, and the commit stops being fetchable once that branch is
+    # deleted. Symmetric with how core pins this package. Bump deliberately when core advances, and
+    # replace the whole entry with `pyramids-core>=<rel>` once core ships the seam.
+    "pyramids-core @ git+https://github.com/serapeum-org/pyramids-core.git@c77328be67828849fb7f01c71510847002172be8",
 ]
 
 # GDAL and the HDF5-linking libs must come from conda-forge so they share one native stack.
@@ -86,14 +90,27 @@ s3fs = ">=2024.1.0"
 kerchunk = ">=0.2.10"
 h5py = ">=3.8.0,<3.17"
 hdf5 = "1.14.*"
+
+# The lazy *vector* path only; kept out of the base deps so an env can be built without it. That
+# env is the shape core's py311-py315 legs run in, and the shape that surfaced the backend-discovery
+# bug the single all-extras env hid.
+[tool.pixi.feature.parquet.dependencies]
 dask-geopandas = ">=0.5.0"
 pyarrow = ">=10.0.0"
+
+# Pin an interpreter so CI can run the 3.11 leg, where runtime_checkable isinstance behaves
+# differently (hasattr vs getattr_static) — the version the backend-discovery bug was specific to.
+[tool.pixi.feature.py311.dependencies]
+python = "3.11.*"
 
 [tool.pixi.pypi-dependencies]
 pyramids-lazy = { path = ".", editable = true }
 
 [tool.pixi.environments]
-dev = { features = ["dev"], solve-group = "default" }
+# dev: everything, including the vector extra. base: the no-[parquet] shape. py311: base on 3.11.
+dev = { features = ["dev", "parquet"], solve-group = "default" }
+base = { features = ["dev"], solve-group = "base" }
+py311 = { features = ["dev", "py311"], solve-group = "py311" }
 
 [tool.pixi.feature.dev.tasks]
 test = { cmd = "pytest -vvv", description = "Run the test suite" }
@@ -105,7 +122,10 @@ typecheck = { cmd = "mypy", description = "Type-check the package" }
 # ``from tests._marks import ...`` etc.); "src" exposes ``pyramids_lazy``.
 pythonpath = [".", "src"]
 testpaths = ["tests"]
-faulthandler_timeout = 120
+faulthandler_timeout = 300
+# Abort (and fail) a hung run rather than only dumping tracebacks: the bare faulthandler_timeout
+# does not fail the run on its own, so removing the old pytest-timeout `timeout` lost that.
+faulthandler_exit_on_timeout = true
 # Marker set carried over from pyramids-core so the relocated extras-gated tests register and
 # auto-skip (via tests/_marks.py + conftest) when an extra's headline dep is absent.
 markers = [

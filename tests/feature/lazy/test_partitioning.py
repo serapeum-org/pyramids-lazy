@@ -21,10 +21,13 @@ from pathlib import Path
 
 import pytest
 
-from pyramids_lazy._vector_read import (
-    _LAZY_TARGET_BYTES_PER_PARTITION,
-    _resolve_lazy_partitioning,
-)
+# _vector_read imports _lazy_collection, which hard-imports dask-geopandas at module scope, so this
+# import runs at collection time — before the parquet_lazy marker can skip. importorskip it (with
+# exc_type=ImportError, since the backend's guard raises a branded ImportError subclass) so a
+# no-[parquet] env skips this module instead of erroring during collection.
+_vr = pytest.importorskip("pyramids_lazy._vector_read", exc_type=ImportError)
+_LAZY_TARGET_BYTES_PER_PARTITION = _vr._LAZY_TARGET_BYTES_PER_PARTITION
+_resolve_lazy_partitioning = _vr._resolve_lazy_partitioning
 
 pytestmark = pytest.mark.parquet_lazy
 
