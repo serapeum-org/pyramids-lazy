@@ -30,6 +30,30 @@ class LazyComputeBackend:
 
     api_version: int = API_VERSION
 
+    @property
+    def lazy_netcdf_type(self) -> type:
+        """The class :meth:`build_lazy_cube` returns.
+
+        Core forwards its public ``pyramids.netcdf.LazyNetCDF`` name (and the ``isinstance`` checks
+        that go with it) to this, instead of importing ``pyramids_lazy`` itself, so the entry-point
+        seam stays honest about which backend is installed.
+        """
+        from pyramids_lazy._lazy_cube import LazyNetCDF
+
+        return LazyNetCDF
+
+    @property
+    def lazy_feature_collection_type(self) -> type:
+        """The class the lazy vector reads return.
+
+        Backs core's public ``pyramids.feature.LazyFeatureCollection`` and ``is_lazy_fc``. Importing
+        the module needs ``dask-geopandas`` (the ``[parquet]`` extra), so this raises the branded
+        hint when that is missing rather than on a later attribute access.
+        """
+        from pyramids_lazy._lazy_collection import LazyFeatureCollection
+
+        return LazyFeatureCollection
+
     def read_array_lazy(
         self, dataset: Any, *, chunks: Any, lock: Any = None, **kwargs: Any
     ) -> Any:
