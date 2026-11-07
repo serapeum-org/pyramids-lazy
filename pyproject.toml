@@ -70,7 +70,7 @@ dev = [
     # setup the moment core's branch moves, and the commit stops being fetchable once that branch is
     # deleted. Symmetric with how core pins this package. Bump deliberately when core advances, and
     # replace the whole entry with `pyramids-core>=<rel>` once core ships the seam.
-    "pyramids-core @ git+https://github.com/serapeum-org/pyramids-core.git@c77328be67828849fb7f01c71510847002172be8",
+    "pyramids-core @ git+https://github.com/serapeum-org/pyramids-core.git@9de391a35e3199643f575fe7436ecdfa4b281896",
 ]
 
 # GDAL and the HDF5-linking libs must come from conda-forge so they share one native stack.
@@ -142,6 +142,13 @@ markers = [
     "stac: tests requiring the [stac] extra (pystac-client)",
     "live: live network test against a real external service",
 ]
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version_provider = "pep621"
+tag_format = "$version"
+changelog_file = "docs/change-log.md"
+update_changelog_on_bump = true
 
 [tool.ruff]
 line-length = 88

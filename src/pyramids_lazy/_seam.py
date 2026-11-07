@@ -48,5 +48,8 @@ def require_core_seam() -> None:
 
 
 # Importing this module IS the check: it runs here, at module scope, so that a plain
-# `import pyramids_lazy._seam` performs it without the caller having to remember a call.
+# `import pyramids_lazy._seam` performs it without the caller having to remember a call. It imports
+# pyramids.lazy_support (and through it much of core), which is safe in one direction only: core
+# never imports pyramids_lazy during its own import — enforced by core's
+# test_core_never_imports_lazy_support — so there is no import-time re-entrancy between the two.
 require_core_seam()

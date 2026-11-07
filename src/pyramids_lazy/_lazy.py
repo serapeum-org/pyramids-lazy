@@ -8,8 +8,8 @@ Design summary:
 
 * :func:`build_lazy_array` is the public entry point used by
   :meth:`NetCDF.read_array` when `chunks` is provided. It
-  constructs a :class:`pyramids.base._file_manager.CachingFileManager`
-  around :func:`pyramids.base._openers.gdal_mdarray_open`, builds a
+  constructs a ``CachingFileManager`` around ``gdal_mdarray_open`` (both reached through the
+  :mod:`pyramids.lazy_support` facade; they live in ``pyramids.base._file_manager``), builds a
   :class:`dask.array.Array` from a low-level task graph (one pickle-safe
   :class:`_MDArrayChunkReader` task per block, assembled with
   `dask.array.Array(graph, …)` — not `map_blocks`) over a grid of block

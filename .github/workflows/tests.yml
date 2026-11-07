@@ -36,4 +36,4 @@ jobs:
       - name: Run tests
         env:
           MPLBACKEND: Agg
-        run: pixi run --locked -e ${{ matrix.environment }} pytest -vvv -p no:cacheprovider
+        run: pixi run --locked -e ${{ matrix.environment }} pytest -vvv -m "not live" -p no:cacheprovider

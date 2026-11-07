@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     # Type-checking sees the real module, so `dask_geopandas.GeoDataFrame` resolves as the base
     # class below; at run time the branded guard supplies it instead (see the comment there).
     import dask_geopandas
-    from pyramids.feature.collection import FeatureCollection
+    from pyramids.feature import FeatureCollection
 else:
     # Subclassing the frame below needs dask-geopandas at import time, so a bare
     # `import dask_geopandas` here would raise a raw ModuleNotFoundError instead of the hint.
@@ -114,7 +114,7 @@ class LazyFeatureCollection(dask_geopandas.GeoDataFrame):
                 result,
                 geopandas.GeoSeries,
             ):
-                from pyramids.feature.collection import FeatureCollection
+                from pyramids.feature import FeatureCollection
 
                 # Skip the wrap when the method (e.g. an overridden `compute`) already
                 # returned a FeatureCollection, avoiding a redundant double-wrap (ARC-63).
@@ -252,7 +252,7 @@ class LazyFeatureCollection(dask_geopandas.GeoDataFrame):
 
                 ```
         """
-        from pyramids.feature.collection import FeatureCollection
+        from pyramids.feature import FeatureCollection
 
         result = FeatureCollection.read_file(
             path,
@@ -371,7 +371,7 @@ class LazyFeatureCollection(dask_geopandas.GeoDataFrame):
     def compute(self, **kwargs: Any) -> FeatureCollection:
         """Materialize the graph and return an eager :class:`FeatureCollection`.
 
-        The `from pyramids.feature.collection import FeatureCollection`
+        The `from pyramids.feature import FeatureCollection`
         import below is inline by necessity — `collection.py` imports
         this module from inside its dask branch, so a top-of-file import
         here would form a cycle. Per `CLAUDE.md`, circular-import
@@ -412,7 +412,7 @@ class LazyFeatureCollection(dask_geopandas.GeoDataFrame):
 
                 ```
         """
-        from pyramids.feature.collection import FeatureCollection
+        from pyramids.feature import FeatureCollection
 
         gdf = super().compute(**kwargs)
         result = FeatureCollection(gdf)

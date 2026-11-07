@@ -23,6 +23,10 @@ from typing import Any
 API_VERSION = 2
 
 
+# Each op method imports its body module function-locally on purpose: `import pyramids_lazy`
+# eagerly pulls only `_lazy_cube` (for LazyNetCDF), so deferring the rest keeps the heavier op
+# modules and their deps (kerchunk, dask-geopandas, pyarrow) out of import until the op runs.
+# Not for a cycle -- there is none -- so no `# noqa`; it is a load-cost choice.
 class LazyComputeBackend:
     """Concrete ``pyramids.compute_backend`` backend for the dask/zarr lazy layer.
 

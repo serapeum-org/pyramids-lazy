@@ -1,6 +1,6 @@
 """Lazy (dask-geopandas) vector reads for FeatureCollection.
 
-Moved out of ``pyramids.feature._read`` (the ``backend="dask"`` branches of ``read_file`` and
+Originally the ``backend="dask"`` branches of core's ``read_file`` and
 ``read_parquet``) into the compute backend. Both return a :class:`LazyFeatureCollection`. Core
 primitives come through the ``pyramids.lazy_support`` facade; ``dask_geopandas`` / ``pyarrow`` are the
 plugin's own dependencies.
@@ -18,7 +18,7 @@ from pyramids_lazy._lazy_collection import LazyFeatureCollection
 from pyramids_lazy._optional import import_dask_geopandas, parquet_hint
 
 #: Target bytes per dask partition when the caller gives neither npartitions nor chunksize.
-#: ``pyramids.configure_lazy_vector`` tunes this (reconciled with core at the cutover step).
+#: ``pyramids.configure_lazy_vector`` tunes this through the backend; core holds no copy of the knob.
 _LAZY_TARGET_BYTES_PER_PARTITION: int = 128 * 1024 * 1024
 
 

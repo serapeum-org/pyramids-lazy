@@ -16,50 +16,13 @@ import numpy as np
 from pyramids.lazy_support import (
     _frame_axes,
     _frame_values,
+    _frame_variables,
     _is_container,
     _is_in_memory,
     _read_no_data,
     import_dask,
     require_optional,
 )
-
-
-def _frame_variables(nc: Any, variables: Any) -> list[str]:
-    """The data variables that become columns, in order (never empty). See NetCDF.to_dataframe."""
-    if _is_container(nc):
-        subject = "container"
-        available = list(nc._spatial_variable_names(nc._working_group()))
-        if not available:
-            raise ValueError(
-                "to_dataframe() needs at least one gridded variable, and this "
-                "container has none."
-            )
-    else:
-        subject = "variable"
-        available = [nc._source_var_name or "variable"]
-    if variables is None:
-        names = available
-    else:
-        names = [variables] if isinstance(variables, str) else list(variables)
-        unknown = [name for name in names if name not in available]
-        if unknown:
-            raise ValueError(
-                f"to_dataframe() cannot take {unknown!r} as columns: this {subject}'s "
-                f"gridded variables are {available}."
-            )
-        repeated = sorted({name for name in names if names.count(name) > 1})
-        if repeated:
-            raise ValueError(
-                f"to_dataframe() was asked for {repeated!r} more than once, and a "
-                f"name can only become one column. Pass each name at most once."
-            )
-        if not names:
-            raise ValueError(
-                f"to_dataframe() was given an empty selection, and a frame needs at "
-                f"least one column. Pass `variables=None` for all of them, or one of "
-                f"{available}."
-            )
-    return names
 
 
 def _lazy_value_columns(

@@ -31,7 +31,7 @@ import numpy as np
 from pyramids.lazy_support import _is_in_memory, _public_spatial_names, import_dask
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from pyramids.netcdf.netcdf import NetCDF
+    from pyramids.netcdf import NetCDF
 
 _DASK_MISSING = "The lazy NetCDF cube needs dask; install the `lazy` extra."
 _MISSING = (
@@ -1273,6 +1273,18 @@ def build_lazy_cube(nc: NetCDF, chunks: Any = "auto") -> LazyNetCDF:
     Every gridded variable is read lazily through ``nc.read_array`` with ``chunks`` and wrapped in a
     :class:`LazyNetCDF`. Only a file-backed cube can be chunked -- the lazy read reopens the store per
     block -- so an in-memory / in-place-rebuilt cube is refused.
+
+    Args:
+        nc: The file-backed NetCDF container (or pinned single variable) to view lazily.
+        chunks: The dask chunk spec forwarded to ``nc.read_array`` for every variable; ``"auto"``
+            lets dask choose block sizes from the stored chunking.
+
+    Returns:
+        LazyNetCDF: A lazy view whose variables are dask arrays over ``nc``.
+
+    Raises:
+        ValueError: ``nc`` is in-memory (no on-disk store to reopen per block), so it cannot be
+            chunked; write it with ``to_file()`` first or operate eagerly.
     """
     if _is_in_memory(nc):
         raise ValueError(

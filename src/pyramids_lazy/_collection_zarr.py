@@ -162,7 +162,11 @@ def _append_to_zarr(
     import dask
     import zarr
 
-    assert collection._files is not None
+    if collection._files is None:
+        raise ValueError(
+            "append-to-zarr needs the collection's file list; it is None, which means the "
+            "collection was not built from files."
+        )
 
     if append_dim != "time":
         raise ValueError(
