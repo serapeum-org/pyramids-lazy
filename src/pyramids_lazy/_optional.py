@@ -8,6 +8,20 @@ be branded without ``_vector_read`` and ``_lazy_collection`` importing each othe
 
 from __future__ import annotations
 
+
+class LazyExtraNotInstalled(ModuleNotFoundError):
+    """A dependency from one of this backend's optional extras is missing.
+
+    Subclasses :class:`ModuleNotFoundError`, not just :class:`ImportError`, deliberately. Tooling
+    treats the two differently: :func:`pytest.importorskip` skips on ``ModuleNotFoundError`` and
+    **re-raises** every other ``ImportError`` so a real breakage is never swallowed, and plenty of
+    library code guards optional imports with ``except ModuleNotFoundError``. Raising a plain
+    ``ImportError`` here therefore turned "this extra is not installed" into a hard error for every
+    such caller -- it aborted collection across pyramids-core's whole matrix once. Being a
+    ``ModuleNotFoundError`` keeps those callers working while the message stays branded.
+    """
+
+
 _PARQUET_INSTALL = (
     "Install with one of:\n"
     "  - PyPI:        pip install 'pyramids-lazy[parquet]'\n"
@@ -38,12 +52,15 @@ def import_dask_geopandas():
         The imported ``dask_geopandas`` module.
 
     Raises:
-        ImportError: When ``dask_geopandas`` is not installed, naming ``pyramids-lazy[parquet]``.
+        LazyExtraNotInstalled: When ``dask_geopandas`` is not installed, naming
+            ``pyramids-lazy[parquet]``. A ``ModuleNotFoundError`` subclass, so optional-import
+            guards and :func:`pytest.importorskip` keep treating it as "absent" rather than
+            "broken".
     """
     try:
         import dask_geopandas as module
     except ImportError as exc:
-        raise ImportError(
+        raise LazyExtraNotInstalled(
             parquet_hint(
                 "The lazy vector path requires the optional 'dask-geopandas' dependency."
             )

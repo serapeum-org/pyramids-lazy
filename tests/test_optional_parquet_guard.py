@@ -41,3 +41,27 @@ class TestTheGuardSurvivesAColdImport:
         """A cold `import pyramids_lazy._lazy_collection` names the plugin's parquet extra."""
         with pytest.raises(ImportError, match=r"pyramids-lazy\[parquet\]"):
             import pyramids_lazy._lazy_collection  # noqa: F401
+
+
+class TestTheGuardsExceptionType:
+    """The exception type is part of the contract, not an implementation detail."""
+
+    def test_it_is_a_module_not_found_error(self):
+        """The branded error subclasses ModuleNotFoundError, not merely ImportError.
+
+        Test scenario:
+            `pytest.importorskip` skips on ModuleNotFoundError and re-raises any other
+            ImportError, and optional-import guards commonly catch ModuleNotFoundError. A plain
+            ImportError here turns "extra not installed" into a hard error for all of them, which
+            once aborted collection across pyramids-core's entire matrix.
+        """
+        from pyramids_lazy._optional import LazyExtraNotInstalled
+
+        assert issubclass(LazyExtraNotInstalled, ModuleNotFoundError), (
+            "must stay a ModuleNotFoundError subclass"
+        )
+
+    def test_a_bare_importorskip_skips_on_it(self, without_dask_geopandas):
+        """importorskip with no exc_type skips, rather than re-raising, on a cold import."""
+        with pytest.raises(pytest.skip.Exception):
+            pytest.importorskip("pyramids_lazy._vector_read")
