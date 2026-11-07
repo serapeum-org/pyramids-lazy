@@ -18,7 +18,9 @@ from typing import Any
 
 #: The contract version this backend implements. Must stay ``>=`` core's
 #: ``COMPUTE_BACKEND_API_VERSION``; additive Protocol methods do not bump it, a breaking change does.
-API_VERSION = 1
+#: v2: the required ``lazy_netcdf_type`` / ``lazy_feature_collection_type`` accessors (core's
+#: public-class forwarding seam), published as methods below.
+API_VERSION = 2
 
 
 class LazyComputeBackend:
