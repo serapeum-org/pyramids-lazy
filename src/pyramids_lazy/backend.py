@@ -30,9 +30,8 @@ class LazyComputeBackend:
 
     api_version: int = API_VERSION
 
-    @property
     def lazy_netcdf_type(self) -> type:
-        """The class :meth:`build_lazy_cube` returns.
+        """Return the class :meth:`build_lazy_cube` produces.
 
         Core forwards its public ``pyramids.netcdf.LazyNetCDF`` name (and the ``isinstance`` checks
         that go with it) to this, instead of importing ``pyramids_lazy`` itself, so the entry-point
@@ -42,13 +41,18 @@ class LazyComputeBackend:
 
         return LazyNetCDF
 
-    @property
     def lazy_feature_collection_type(self) -> type:
-        """The class the lazy vector reads return.
+        """Return the class the lazy vector reads produce.
 
-        Backs core's public ``pyramids.feature.LazyFeatureCollection`` and ``is_lazy_fc``. Importing
-        the module needs ``dask-geopandas`` (the ``[parquet]`` extra), so this raises the branded
-        hint when that is missing rather than on a later attribute access.
+        Backs core's public ``pyramids.feature.LazyFeatureCollection`` and ``is_lazy_fc``.
+
+        A method, NOT a property: ``runtime_checkable`` isinstance evaluates data members with
+        ``getattr``, so as a property this body ran whenever core merely type-checked the backend.
+        Importing the module needs ``dask-geopandas`` (the ``[parquet]`` extra), so that made the
+        whole backend fail its structural check in every env without that extra -- and core, which
+        treats a failing backend as one to skip, then fell back to eager execution for raster and
+        cube work that never needed vectors at all. As a method the import is deferred to the call,
+        where the branded hint is the right answer.
         """
         from pyramids_lazy._lazy_collection import LazyFeatureCollection
 
