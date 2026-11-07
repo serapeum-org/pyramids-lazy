@@ -7,7 +7,6 @@ import warnings
 from pathlib import Path
 from typing import Iterator, List, Tuple
 
-
 import numpy as np
 import pandas as pd
 import pytest
