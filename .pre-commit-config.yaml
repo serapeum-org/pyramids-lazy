@@ -94,6 +94,8 @@ repos:
         # src-layout path: the package lives at src/pyramids_lazy/.
         files: ^src/pyramids_lazy/
 
+  # beautysh + shell-lint are dormant parity scaffolding: the only shell script in the tree is the
+  # excluded tests/data/netcdf/download.sh, so both are no-ops until a first-party `.sh` lands.
   - repo: https://github.com/lovesegfault/beautysh
     rev: v6.2.1
     hooks:
