@@ -31,11 +31,12 @@ jobs:
           # pixi.lock is lock-file format v7; match tests.yml / lint.yml.
           version: v0.73.0
 
-      # py311 is the floor of `requires-python`, so it resolves the oldest dependency set the
-      # project supports — the one most likely to carry a known advisory. `--exclude-editable`
-      # drops this package itself (no release to audit); the grep keeps only `name==version`
-      # lines, since pip-audit rejects a requirements file holding direct URLs or local paths
-      # (pyramids-core is a git pin here, so it is excluded from the audit until core releases).
+      # py311 is the project's Python floor (`requires-python`); the job audits the LOCKED dependency
+      # set resolved for that env — pixi installs the lock's versions, not the oldest resolvable ones,
+      # so this is the py311 lock's packages (not an oldest-compatible resolution). `--exclude-editable`
+      # drops this package itself (no release to audit); the grep keeps only `name==version` lines,
+      # since pip-audit rejects a requirements file holding direct URLs or local paths (pyramids-core
+      # is a git pin here, so it is excluded from the audit until core releases).
       - name: Audit dependencies with pip-audit
         run: |
           pixi run -e py311 python -m pip freeze --exclude-editable \
