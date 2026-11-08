@@ -9,6 +9,11 @@
 # run against whatever Python is active, so run `pre-commit` from inside the pixi dev
 # env (`pixi run -e dev pre-commit run ...`). CI (.github/workflows/lint.yml) SKIPs
 # them — they need the native GDAL stack — and runs the whole suite in tests.yml.
+#
+# `fail_fast` stops the run at the first failing hook. Locally that is the point — don't run the
+# slow pytest/doctest hooks once a fast hook has already failed. The trade-off is that the CI
+# pre-commit job (`pre-commit run --all-files`) then reports only the first failing hook per run,
+# so a push that trips ruff won't also show the pydocstyle/file-hygiene results until ruff is fixed.
 fail_fast: true
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -25,9 +30,11 @@ repos:
         exclude: ^tests/data/
       - id: check-added-large-files
         name: "[file -  check] large file"
-        # The largest committed fixture (tests/data/irvine_gcp2.pix) is ~7.4 MB, so
-        # the ceiling sits just above it: a genuinely oversized new file is still
-        # caught, the existing data set passes.
+        # Guards newly-added (staged) files at commit time — without `--enforce-all` it does not
+        # re-check the already-committed tree, so in the CI `--all-files` run it effectively checks
+        # nothing. The ceiling sits just above the largest committed fixture
+        # (tests/data/irvine_gcp2.pix, 7405 KB), so a genuinely oversized new file is still caught
+        # while the existing data set is never flagged.
         args: [--maxkb=8000]
       - id: check-json
         name: "[json -  check] validate json"
