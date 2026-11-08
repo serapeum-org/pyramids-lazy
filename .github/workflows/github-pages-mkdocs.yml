@@ -1,0 +1,37 @@
+name: Deploy MkDocs
+
+# Ported from pyramids-mesh. DORMANT until a documentation site exists: it builds and deploys an
+# MkDocs site, but this repo has no `mkdocs.yml` or `docs/` tree yet, so the action has nothing to
+# build. It is therefore manual-dispatch only (the push / pull_request / release triggers mesh uses
+# are intentionally omitted) and will stay a no-op you can trigger for a smoke test.
+#
+# To bring it live: add `mkdocs.yml` + a `docs/` tree, keep the `docs` dependency group populated
+# (already added to pyproject.toml), set the ACTIONS_DEPLOY_TOKEN secret, then restore the
+# `on: push:/pull_request:/release:/workflow_run:` triggers and the deploy-pr / deploy-release jobs
+# from pyramids-mesh's github-pages-mkdocs.yml.
+
+permissions:
+  contents: write
+  pages: write
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-main:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # serapeum-org/github-actions is a monorepo: one commit carries the release tag for every
+      # action in it, so 38c11108 is the dereferenced commit for mkdocs/v1.3.1 (and
+      # github-release/v1.5.0, pypi-release/v1.0.3). Verify with
+      #   git ls-remote --tags https://github.com/serapeum-org/github-actions
+      - uses: serapeum-org/github-actions/actions/mkdocs-deploy@38c111084f99d5ff5f4a1e63bedce48fe33a10c0 # mkdocs/v1.3.1
+        with:
+          trigger: 'main'
+          package-manager: 'pixi'
+          install-groups: 'docs'
+          deploy-token: ${{ secrets.ACTIONS_DEPLOY_TOKEN }}

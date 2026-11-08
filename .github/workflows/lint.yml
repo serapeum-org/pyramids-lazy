@@ -8,11 +8,47 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  # ruff (lint + format), pydocstyle and the file-hygiene hooks, run through pre-commit so the
+  # same config the developer runs locally is what CI enforces. The three `language: system`
+  # hooks (pytest-check, doctest, notebook-check) need the native GDAL stack, so they are SKIPped
+  # here and covered by tests.yml / the `static` job below. Those hooks run in pre-commit's own
+  # isolated environments and read their config from pyproject.toml / this repo, so no pixi env is
+  # needed in this job.
+  pre-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+          restore-keys: pre-commit-
+
+      - run: python -m pip install pre-commit
+
+      - name: Run pre-commit hooks
+        run: pre-commit run --all-files --show-diff-on-failure --color=always
+        env:
+          # The three native-stack system hooks run in tests.yml and the `static` job instead.
+          SKIP: pytest-check,doctest,notebook-check
+
+  # mypy + src doctests. Need the full `dev` pixi env (an importable package and the vendored
+  # osgeo that `import pyramids` activates) but are not platform- or Python-version-sensitive, so
+  # one runner covers them.
   static:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -24,12 +60,11 @@ jobs:
           cache: true
           version: v0.73.0
 
-      - name: Lint and format check
-        run: pixi run -e dev lint
-
       - name: Type check
         run: pixi run -e dev typecheck
 
       # The moved modules carry their own `>>>` examples; without this they execute nowhere.
       - name: Doctests (src)
+        env:
+          MPLBACKEND: Agg
         run: pixi run -e dev pytest --doctest-modules src -p no:cacheprovider
