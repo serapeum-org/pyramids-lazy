@@ -10,11 +10,15 @@
 # env (`pixi run -e dev pre-commit run ...`). CI (.github/workflows/lint.yml) SKIPs
 # them — they need the native GDAL stack — and runs the whole suite in tests.yml.
 #
-# `fail_fast` stops the run at the first failing hook. Locally that is the point — don't run the
-# slow pytest/doctest hooks once a fast hook has already failed. The trade-off is that the CI
-# pre-commit job (`pre-commit run --all-files`) then reports only the first failing hook per run,
-# so a push that trips ruff won't also show the pydocstyle/file-hygiene results until ruff is fixed.
-fail_fast: true
+# `fail_fast: false`: the shared CI pre-commit job (`pre-commit run --all-files`) reports every
+# failing hook in one run rather than stopping at the first. mesh sets `fail_fast: true` to skip the
+# slow local pytest/doctest hooks after a fast hook fails, but in CI those three are SKIPped anyway,
+# so CI would pay the diagnostic cost for a benefit it does not receive.
+fail_fast: false
+# Install both hook stages on `pre-commit install`, so the commit-msg hooks below (all
+# commit-msg-stage) actually run on `git commit` — without this only the pre-commit stage is wired
+# and they silently never run.
+default_install_hook_types: [pre-commit, commit-msg]
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
