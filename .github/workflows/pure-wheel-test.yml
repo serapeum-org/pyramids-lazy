@@ -154,7 +154,9 @@ jobs:
         run: python -c "import pyramids_lazy; import ${{ matrix.extra.module }}"
 
       - name: Install test runner
-        run: pip install pytest pytest-env pytest-mock
+        # --only-binary=:all: here too: the whole workflow proves everything installs from published
+        # wheels, so the test runner must not quietly build from an sdist (matches test-wheel-core).
+        run: "pip install pytest pytest-env pytest-mock --only-binary=:all:"
 
       - name: Run the suite with the [${{ matrix.extra.name }}] extra present
         shell: bash
