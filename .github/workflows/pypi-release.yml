@@ -69,7 +69,9 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          TAG=$(grep -m1 '^version' pyproject.toml | sed 's/.*"\(.*\)"/\1/')
+          # Anchor on `version` followed by `=` so it cannot match `version_provider` under
+          # [tool.commitizen]; `-m1` then takes the [project] version line.
+          TAG=$(grep -m1 '^version[[:space:]]*=' pyproject.toml | sed 's/.*"\(.*\)"/\1/')
           ERR="${RUNNER_TEMP}/gh-release-check.err"
           if gh api "repos/${REPO}/releases/tags/${TAG}" >/dev/null 2>"${ERR}"; then
             echo "Published release ${TAG} found — proceeding."
