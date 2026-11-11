@@ -971,7 +971,7 @@ def classify_zarr_store(
       ``spatial_ref`` node); it is not a single raster.
     - ``"other"`` -- anything else: a foreign / xarray-written store, a plain file that
       merely ends in ``.zarr``, a store that cannot be opened here (e.g. a remote store
-      needing credentials this call cannot forward), or an install without the optional
+      needing credentials this call was not given), or an install without the optional
       ``zarr`` package. The caller should let GDAL handle it.
 
     This is the backend side of core's ``read_file`` Zarr routing: ``Dataset.read_file`` first
@@ -1005,21 +1005,25 @@ def classify_zarr_store(
     try:
         zarr = _require_zarr()
         root = zarr.open_group(_resolve_store(store, storage_options), mode="r")
+        # Read the confirming metadata inside the guard too: `.get` / `in` / `.ndim` lazily load
+        # child metadata, so a store whose root opens but whose `data` / `spatial_ref` nodes are
+        # corrupt or unreadable must also fall back rather than surface an opaque error.
+        data = root.get("data", None)
+        has_spatial_ref = "spatial_ref" in root
+        ndim = getattr(data, "ndim", None)
     except Exception as exc:  # noqa: BLE001
         # Report "other" for any reason the store cannot be opened and confirmed here -- the
-        # optional `zarr` package being absent, a plain file, a missing group, or credentials
-        # this call cannot forward -- so read_file falls back to GDAL (a zarr-less install
-        # reads a `.zarr` through GDAL exactly as before this routing existed) rather than
-        # surfacing an opaque error. A genuinely corrupted pyramids store also lands here and
-        # is handed to GDAL, which raises its own read error; the reason is logged for triage.
+        # optional `zarr` package being absent, a plain file, a missing group, credentials this
+        # call was not given, or child metadata that raises on access -- so read_file falls back to
+        # GDAL (a zarr-less install reads a `.zarr` through GDAL exactly as before this routing
+        # existed) rather than surfacing an opaque error. A genuinely corrupted pyramids store also
+        # lands here and is handed to GDAL, which raises its own read error; logged for triage.
         logger.debug("classify_zarr_store: %r -> 'other' (%s)", store, exc)
         return "other"
-    data = root.get("data", None)
     # A pyramids GeoZarr store always writes the `data` array beside a `spatial_ref` node; a
     # foreign store (other variable names, no spatial_ref) is left for GDAL to read.
-    if data is None or "spatial_ref" not in root:
+    if data is None or not has_spatial_ref:
         return "other"
-    ndim = getattr(data, "ndim", None)
     if ndim == 4:
         return "cube"
     if ndim == 3:
