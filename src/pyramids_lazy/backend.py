@@ -123,6 +123,18 @@ class LazyComputeBackend:
 
         return read_dataset_from_zarr(store, **kwargs)
 
+    def classify_zarr_store(self, store: Any, storage_options: Any = None) -> str:
+        """Back core's ``Dataset.read_file`` Zarr routing: classify a ``.zarr`` store.
+
+        Returns ``"single"`` / ``"cube"`` / ``"other"``. Core applies the cheap suffix gate itself
+        and asks the backend to look inside a ``.zarr``; opening the store needs the optional
+        ``zarr`` package, which lives here, so the classification does too. An unreadable or foreign
+        store is reported as ``"other"`` (never raises) so core falls back to GDAL.
+        """
+        from pyramids_lazy._zarr import classify_zarr_store
+
+        return classify_zarr_store(store, storage_options)
+
     def write_collection_to_zarr(
         self, collection: Any, store: Any, **kwargs: Any
     ) -> Any:
