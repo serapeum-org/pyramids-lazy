@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import zarr
 from pyramids.base._errors import OptionalPackageDoesNotExist
 from pyramids.base.georeference import GeoReference
 from pyramids.dataset import Dataset, DatasetCollection
@@ -19,12 +20,9 @@ from pyramids.dataset import Dataset, DatasetCollection
 from pyramids_lazy import _zarr as zarr_ops
 from pyramids_lazy._zarr import classify_zarr_store, is_cube_store
 
+# These tests exercise real Zarr IO, so the whole module needs the lazy `zarr` stack; `zarr` is
+# imported directly (no graceful fallback) because the `lazy` marker already gates collection on it.
 pytestmark = pytest.mark.lazy
-
-try:
-    import zarr
-except ImportError:  # pragma: no cover - the lazy-marked tests are skipped without zarr
-    zarr = None
 
 
 @pytest.fixture
@@ -104,6 +102,42 @@ class TestClassifyZarrStore:
         root.create_array("data", shape=(2, 3), dtype="f4")
         root.create_array("spatial_ref", shape=(), dtype="i4")
         assert classify_zarr_store(store) == "other"
+
+    def test_data_array_without_spatial_ref_is_other(self, tmp_path):
+        """A store with a 3-D ``data`` array but no ``spatial_ref`` node is ``"other"``.
+
+        This exercises the second half of the ``data is None or "spatial_ref" not in root`` guard: a
+        foreign store that happens to name a 3-D array ``data`` (which would otherwise look like a
+        single raster) but carries no grid-mapping node is left to GDAL, not mis-claimed as pyramids.
+        """
+        store = str(tmp_path / "no_sref.zarr")
+        root = zarr.open_group(store, mode="w")
+        root.create_array("data", shape=(1, 2, 3), dtype="f4")
+        assert classify_zarr_store(store) == "other"
+
+    def test_confirm_step_failure_degrades_to_other(self, monkeypatch):
+        """A store whose root opens but whose child-metadata access raises still returns ``"other"``.
+
+        ``root.get("data")`` / ``"spatial_ref" in root`` lazily load child metadata and can raise on a
+        corrupt store; that confirm-step failure must fall back to ``"other"`` (GDAL), not propagate --
+        i.e. the confirm reads run inside the ``try/except``. A fake zarr group whose member access
+        raises proves it (this would propagate if the confirm step sat outside the guard).
+        """
+
+        class _BadRoot:
+            def get(self, *args, **kwargs):
+                raise RuntimeError("corrupt child metadata")
+
+            def __contains__(self, key):
+                raise RuntimeError("corrupt child metadata")
+
+        class _FakeZarr:
+            @staticmethod
+            def open_group(store, mode="r"):
+                return _BadRoot()
+
+        monkeypatch.setattr(zarr_ops, "_require_zarr", lambda: _FakeZarr)
+        assert zarr_ops.classify_zarr_store("x.zarr") == "other"
 
     def test_storage_options_reach_resolve_store(self, monkeypatch):
         """A non-empty ``storage_options`` is forwarded through to ``_resolve_store``.
