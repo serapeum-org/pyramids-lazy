@@ -92,6 +92,41 @@ class TestClassifyZarrStore:
         root.create_array("spatial_ref", shape=(), dtype="i4")
         assert classify_zarr_store(store) == "other"
 
+    def test_data_array_with_unexpected_rank_is_other(self, tmp_path):
+        """A ``data`` *array* that is neither 3-D nor 4-D (beside ``spatial_ref``) is ``"other"``.
+
+        classify only claims a 3-D single raster or a 4-D cube; a degenerate 2-D ``data`` array with a
+        ``spatial_ref`` node has an unexpected rank, so it falls through to ``"other"`` (GDAL) rather
+        than being mis-claimed as single or cube.
+        """
+        store = str(tmp_path / "rank2.zarr")
+        root = zarr.open_group(store, mode="w")
+        root.create_array("data", shape=(2, 3), dtype="f4")
+        root.create_array("spatial_ref", shape=(), dtype="i4")
+        assert classify_zarr_store(store) == "other"
+
+    def test_storage_options_reach_resolve_store(self, monkeypatch):
+        """A non-empty ``storage_options`` is forwarded through to ``_resolve_store``.
+
+        classify hands ``storage_options`` to ``_resolve_store``; a stub captures the value (then
+        raises, so the result is ``"other"``) to prove the plumbing without a real fsspec backend.
+        """
+        captured = {}
+
+        def _fake_resolve(store, storage_options):
+            captured["storage_options"] = storage_options
+            raise RuntimeError("stop after capturing the forwarded options")
+
+        monkeypatch.setattr(zarr_ops, "_resolve_store", _fake_resolve)
+        opts = {"key": "secret"}
+        result = zarr_ops.classify_zarr_store("s3://bucket/x.zarr", opts)
+        assert captured["storage_options"] is opts, (
+            "storage_options must reach _resolve_store"
+        )
+        assert result == "other", (
+            f"a failed resolve must classify as 'other', got {result!r}"
+        )
+
     def test_returns_other_when_zarr_missing(self, tmp_path, monkeypatch):
         """A zarr-less install classifies every ``.zarr`` as ``"other"`` — never a raise.
 
@@ -148,3 +183,18 @@ class TestBackendMethod:
         plain = tmp_path / "plain.zarr"
         plain.write_bytes(b"not a zarr store")
         assert LazyComputeBackend().classify_zarr_store(str(plain)) == "other"
+
+    def test_backend_classify_accepts_storage_options_positionally(
+        self, small_dataset, tmp_path
+    ):
+        """The backend method accepts and forwards the 2nd positional arg core passes.
+
+        Core calls ``backend.classify_zarr_store(store, storage_options)`` positionally; an empty
+        options dict for a local store must still classify it ``"single"`` (the arg is accepted and
+        forwarded without disturbing a plain-path resolution).
+        """
+        from pyramids_lazy.backend import LazyComputeBackend
+
+        single = str(tmp_path / "single.zarr")
+        small_dataset.to_zarr(single)
+        assert LazyComputeBackend().classify_zarr_store(single, {}) == "single"
