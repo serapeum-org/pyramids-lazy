@@ -975,8 +975,8 @@ def classify_zarr_store(
       ``zarr`` package. The caller should let GDAL handle it.
 
     This is the backend side of core's ``read_file`` Zarr routing: ``Dataset.read_file`` first
-    applies the cheap, backend-free suffix gate ``pyramids.dataset.ops._zarr.is_zarr_store`` and,
-    only for a ``.zarr``, asks the installed compute backend to classify it here. Only
+    applies its own cheap, backend-free suffix check and, only for a ``.zarr``, asks the installed
+    compute backend to classify it here. Only
     pyramids-written stores are claimed, so a foreign ``.zarr`` GDAL can already read is left to
     GDAL rather than mis-routed. The store is opened read-only for metadata only; any failure to
     open and confirm it -- including the optional ``zarr`` package being absent -- is reported as
@@ -1012,9 +1012,7 @@ def classify_zarr_store(
         # reads a `.zarr` through GDAL exactly as before this routing existed) rather than
         # surfacing an opaque error. A genuinely corrupted pyramids store also lands here and
         # is handed to GDAL, which raises its own read error; the reason is logged for triage.
-        logging.getLogger(__name__).debug(
-            "classify_zarr_store: %r -> 'other' (%s)", store, exc
-        )
+        logger.debug("classify_zarr_store: %r -> 'other' (%s)", store, exc)
         return "other"
     data = root.get("data", None)
     # A pyramids GeoZarr store always writes the `data` array beside a `spatial_ref` node; a
