@@ -1,17 +1,160 @@
-# Fast hooks only (ruff lint + format). Tests run in CI (they need pyramids-core's GDAL env).
+# Full hook set, ported from pyramids-mesh and adapted to pyramids-lazy.
+#
+# Lint/format stays on ruff (this repo's choice), not mesh's black + flake8 + isort;
+# ruff covers all three. Everything else from mesh's set is here: the file-hygiene
+# hooks, pydocstyle (Google convention), shell formatters/linters, the commit-msg
+# checks, and the local pytest/doctest/nbval hooks.
+#
+# The local hooks (pytest-check, doctest, notebook-check) are `language: system`: they
+# run against whatever Python is active, so run `pre-commit` from inside the pixi dev
+# env (`pixi run -e dev pre-commit run ...`). CI (.github/workflows/lint.yml) SKIPs
+# them — they need the native GDAL stack — and runs the whole suite in tests.yml.
+#
+# `fail_fast: false`: the shared CI pre-commit job (`pre-commit run --all-files`) reports every
+# failing hook in one run rather than stopping at the first. mesh sets `fail_fast: true` to skip the
+# slow local pytest/doctest hooks after a fast hook fails, but in CI those three are SKIPped anyway,
+# so CI would pay the diagnostic cost for a benefit it does not receive.
+fail_fast: false
+# Install both hook stages on `pre-commit install`, so the commit-msg hooks below (all
+# commit-msg-stage) actually run on `git commit` — without this only the pre-commit stage is wired
+# and they silently never run.
+default_install_hook_types: [pre-commit, commit-msg]
 repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: end-of-file-fixer
+        name: "[file - format] end of file"
+        # Committed fixtures under tests/data are byte-faithful real data (GDAL
+        # sidecars, NetCDF, GeoJSON); never rewrite them.
+        exclude: ^tests/data/
+      - id: trailing-whitespace
+        name: "[file - format] trim trailing whitespace"
+        args: [--markdown-linebreak-ext=md]
+        exclude: ^tests/data/
+      - id: check-added-large-files
+        name: "[file -  check] large file"
+        # Guards newly-added (staged) files at commit time — without `--enforce-all` it does not
+        # re-check the already-committed tree, so in the CI `--all-files` run it effectively checks
+        # nothing. The ceiling sits just above the largest committed fixture
+        # (tests/data/irvine_gcp2.pix, 7405 KB), so a genuinely oversized new file is still caught
+        # while the existing data set is never flagged.
+        args: [--maxkb=8000]
+      - id: check-json
+        name: "[json -  check] validate json"
+        # tests/data/*.json are fixtures (a vector-tile metadata doc, an H3 vector
+        # dump); leave their exact bytes alone.
+        exclude: ^tests/data/
+      - id: check-merge-conflict
+        name: "[git  -  check] merge conflict"
+      - id: debug-statements
+        name: "[py   -  check] debug statements"
+      - id: detect-private-key
+        name: "[cred -  check] private keys"
+      - id: mixed-line-ending
+        name: "[file - format] mixed line ending"
+        args: [--fix=auto]
+        exclude: ^tests/data/
+      - id: pretty-format-json
+        name: "[json - format] pretty json"
+        args: [--autofix, --indent=4, --no-sort-keys]
+        exclude: ^tests/data/
+      - id: requirements-txt-fixer
+        name: "[reqs - format] fix requirements.txt"
+      - id: check-yaml
+        name: "[yaml -  check] validate yaml"
+        # --unsafe checks syntax only: a future mkdocs.yml would carry `!!python/name:`
+        # tags that a safe load refuses to construct, and `fail_fast` would then stop
+        # the rest of the hooks.
+        args: [--unsafe]
+      - id: check-toml
+        name: "[toml -  check] validate toml"
+
+  # Keep ruff as the Python linter + formatter (replaces mesh's black/flake8/isort).
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.22
     hooks:
       - id: ruff
+        name: "[py   -   lint] ruff"
         args: [--fix]
       - id: ruff-format
+        name: "[py   - format] ruff-format"
 
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+  - repo: https://github.com/PyCQA/pydocstyle
+    rev: 6.3.0
     hooks:
-      - id: trailing-whitespace
-      - id: end-of-file-fixer
-      - id: check-yaml
-      - id: check-toml
-      - id: check-merge-conflict
+      - id: pydocstyle
+        name: "[py   -  check] pydocstyle"
+        # Google-style docstrings throughout (Args:/Returns:/Raises:), so the Google
+        # convention is the right rule set. D403 is ignored for the one verbatim
+        # relocated docstring that opens with "dask's ..." — relocated bodies are not
+        # re-typed here (see CLAUDE.md), so the rule is relaxed rather than the code
+        # edited.
+        args: [--convention=google, --add-ignore=D403]
+        # src-layout path: the package lives at src/pyramids_lazy/.
+        files: ^src/pyramids_lazy/
+
+  # beautysh + shell-lint are dormant parity scaffolding: the only shell script in the tree is the
+  # excluded tests/data/netcdf/download.sh, so both are no-ops until a first-party `.sh` lands.
+  - repo: https://github.com/lovesegfault/beautysh
+    rev: v6.2.1
+    hooks:
+      - id: beautysh
+        name: "[bash - format] beautysh"
+        # beautysh 6.2.1 imports `pkg_resources`, which modern setuptools (>=81) and Python 3.12
+        # no longer provide by default — without this it crashes on import. Only our own shell
+        # scripts are in scope; the tests/data helper is byte-faithful fixture territory.
+        additional_dependencies: ["setuptools"]
+        exclude: ^tests/data/
+
+  # pre-commit-shell: checks shell scripts against shellcheck.
+  - repo: https://github.com/detailyang/pre-commit-shell
+    rev: 1.0.5
+    hooks:
+      - id: shell-lint
+        name: "[bash -   lint] shell-lint"
+        exclude: ^tests/data/
+
+  - repo: https://github.com/rlindsgaard/pre-commit-commit-msg-hooks
+    rev: 0.1.0
+    hooks:
+      - id: check-description-max-length
+        name: "[msg  - format] description max length"
+      - id: check-second-line-empty
+        name: "[msg  - format] second line empty"
+      - id: check-summary-capitalized
+        name: "[msg  - format] summary capitalized"
+      - id: check-summary-imperative
+        name: "[msg  - format] summary imperative"
+      - id: check-summary-max-length
+        name: "[msg  - format] summary max length"
+      - id: check-summary-punctuation
+        name: "[msg  - format] summary punctuation"
+
+  - repo: local
+    hooks:
+      - id: pytest-check
+        name: pytest-check
+        entry: pytest -v --cov=src/pyramids_lazy --cov-report=term-missing -m "not live"
+        language: system
+        pass_filenames: false
+        always_run: true
+
+  - repo: local
+    hooks:
+      - id: doctest
+        name: doctest
+        entry: python -c "import matplotlib; matplotlib.use('Agg'); import pytest; import sys; sys.exit(pytest.main(['--doctest-modules', 'src']))"
+        language: system
+        always_run: true
+        pass_filenames: false
+
+  - repo: local
+    hooks:
+      - id: notebook-check
+        name: nbval
+        entry: pytest --nbval --nbval-lax --verbose
+        language: system
+        # No notebooks in this repo yet, so this stays a no-op until one is added
+        # (unlike mesh's `always_run`, which would collect nothing and fail here).
+        files: \.ipynb$

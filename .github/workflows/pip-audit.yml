@@ -1,0 +1,45 @@
+name: pip-audit
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: serapeum-org/github-actions/actions/python-setup/pixi@38c111084f99d5ff5f4a1e63bedce48fe33a10c0 # pixi/v1.2.1
+        with:
+          environments: py311
+          activate-environment: py311
+          cache: true
+          # pixi.lock is lock-file format v7; match tests.yml / lint.yml.
+          version: v0.73.0
+
+      # py311 is the project's Python floor (`requires-python`); the job audits the LOCKED dependency
+      # set resolved for that env — pixi installs the lock's versions, not the oldest resolvable ones,
+      # so this is the py311 lock's packages (not an oldest-compatible resolution). `--exclude-editable`
+      # drops this package itself (no release to audit); the grep keeps only `name==version` lines,
+      # since pip-audit rejects a requirements file holding direct URLs or local paths (pyramids-core
+      # is a git pin here, so it is excluded from the audit until core releases).
+      - name: Audit dependencies with pip-audit
+        run: |
+          pixi run -e py311 python -m pip freeze --exclude-editable \
+            | grep -E '^[A-Za-z0-9_.-]+==' > "${RUNNER_TEMP}/pip-audit-reqs.txt"
+          echo "Auditing $(wc -l < "${RUNNER_TEMP}/pip-audit-reqs.txt") pinned packages against the advisory DB"
+          pipx run pip-audit --requirement "${RUNNER_TEMP}/pip-audit-reqs.txt" --desc

@@ -7,6 +7,12 @@ on:
 
 permissions:
   contents: read
+  # Codecov's tokenless (OIDC) upload needs an id-token.
+  id-token: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   tests:
@@ -16,24 +22,46 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        # dev: every extra (incl. the [parquet] vector stack). base: the no-[parquet] shape that
-        # core's py3xx legs run in and that hid the backend-discovery bug. py311: base on 3.11, where
-        # runtime_checkable isinstance behaves differently. pyramids-core comes from the dev group.
-        environment: [dev, base, py311]
+        # Full-stack (dev + the [parquet] vector extra) across every supported Python.
+        environment: [py311, py312, py313, py314]
+        # The no-[parquet] shape (on 3.11, where the backend-discovery bug was specific) runs as one
+        # extra leg on ubuntu — enough to cover the parquet-less resolution without running it across
+        # the whole matrix.
+        include:
+          - os: ubuntu-latest
+            environment: base
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
-        uses: serapeum-org/github-actions/actions/python-setup/pixi@961524686fb512c05ca8e4c7bfe81ba68eef4dda # pixi/v1.5.1
+        uses: serapeum-org/github-actions/actions/python-setup/pixi@38c111084f99d5ff5f4a1e63bedce48fe33a10c0 # pixi/v1.2.1
         with:
           environments: ${{ matrix.environment }}
           activate-environment: ${{ matrix.environment }}
           cache: true
           version: v0.73.0
 
-      # --locked asserts the committed pixi.lock matches pyproject (catches a drifted lock at setup).
-      - name: Run tests
+      # The `main` task runs the suite with coverage (--cov-report=xml); --locked asserts the
+      # committed pixi.lock matches pyproject (catches a drifted lock at setup).
+      - name: Run tests with coverage
         env:
           MPLBACKEND: Agg
-        run: pixi run --locked -e ${{ matrix.environment }} pytest -vvv -m "not live" -p no:cacheprovider
+        run: pixi run --locked -e ${{ matrix.environment }} main
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
+
+      - name: Test Jupyter notebooks
+        # rc 4 (usage/collection error) and 5 (no tests collected) are tolerated: there are no
+        # example notebooks yet, so `pixi run notebooks` collects nothing — a no-op until a
+        # docs/examples tree lands. Any real nbval failure still exits non-zero and fails the job.
+        shell: bash
+        run: |
+          set +e
+          pixi run -e ${{ matrix.environment }} notebooks
+          rc=$?
+          if [ $rc -eq 4 ] || [ $rc -eq 5 ]; then exit 0; fi
+          exit $rc

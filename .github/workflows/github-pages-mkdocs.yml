@@ -1,0 +1,76 @@
+name: Deploy MkDocs
+
+# MkDocs deploy workflow, ported from pyramids-mesh: the main-branch site and versioned release
+# docs (mike). It runs on push-to-main and on release. PR-preview deploys (mesh's deploy-pr job)
+# are intentionally omitted here, so a pull request never runs a docs deploy.
+#
+# NOTE: this repo has no `mkdocs.yml` / `docs/` site yet, so the deploy jobs need that site (and the
+# `ACTIONS_DEPLOY_TOKEN` secret) before they can succeed — but neither fires on a PR, so PR checks
+# stay clean until then.
+
+permissions:
+  contents: write
+  pages: write
+
+on:
+  push:
+    branches:
+      - main
+  release:
+    types:
+      - published
+  workflow_run:
+    workflows: ['github-release']
+    types: [completed]
+
+jobs:
+  deploy-main:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: serapeum-org/github-actions/actions/mkdocs-deploy@38c111084f99d5ff5f4a1e63bedce48fe33a10c0 # mkdocs/v1.3.1
+        with:
+          trigger: 'main'
+          package-manager: 'pixi'
+          install-groups: 'docs'
+          deploy-token: ${{ secrets.ACTIONS_DEPLOY_TOKEN }}
+
+  deploy-release:
+    # Security: when triggered via `workflow_run`, require that the upstream workflow ran from the
+    # base repository (not a fork) so untrusted code never runs in a context holding the deploy token.
+    if: >-
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_run'
+       && github.event.workflow_run.conclusion == 'success'
+       && github.event.workflow_run.head_repository.fork == false)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          # head_branch (not head_sha): github-release pushes the version-bump + pixi.lock commits
+          # AFTER the workflow_run head_sha is captured, so the branch tip carries the released
+          # version while head_sha would check out the pre-bump tree. The fork guard in `if:` above
+          # keeps this from checking out untrusted code.
+          ref: ${{ github.event.workflow_run.head_branch || github.ref }}
+
+      - name: Extract version from pyproject.toml
+        id: version
+        # Anchor on `version` followed by `=` so it cannot match `version_provider` under
+        # [tool.commitizen]; same fix as pypi-release.yml.
+        run: |
+          VERSION=$(grep -m1 '^version[[:space:]]*=' pyproject.toml | sed 's/.*"\(.*\)"/\1/')
+          echo "tag=$VERSION" >> $GITHUB_OUTPUT
+
+      - uses: serapeum-org/github-actions/actions/mkdocs-deploy@38c111084f99d5ff5f4a1e63bedce48fe33a10c0 # mkdocs/v1.3.1
+        with:
+          trigger: 'release'
+          package-manager: 'pixi'
+          install-groups: 'docs'
+          deploy-token: ${{ secrets.ACTIONS_DEPLOY_TOKEN }}
+          release-tag: ${{ github.event.release.tag_name || steps.version.outputs.tag }}
+          mike-alias: 'latest'

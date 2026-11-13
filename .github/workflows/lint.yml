@@ -8,28 +8,85 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  # ruff (lint + format), pydocstyle and the file-hygiene hooks, run through pre-commit so the
+  # same config the developer runs locally is what CI enforces. The three `language: system`
+  # hooks (pytest-check, doctest, notebook-check) need the native GDAL stack, so they are SKIPped
+  # here and covered by tests.yml / the `static` job below. Those hooks run in pre-commit's own
+  # isolated environments and read their config from pyproject.toml / this repo, so no pixi env is
+  # needed in this job.
+  pre-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+          restore-keys: pre-commit-
+
+      - run: python -m pip install pre-commit==4.5.1
+
+      - name: Run pre-commit hooks
+        run: pre-commit run --all-files --show-diff-on-failure --color=always
+        env:
+          # The three native-stack system hooks run in tests.yml and the `static` job instead.
+          SKIP: pytest-check,doctest,notebook-check
+
+  # mypy + src doctests. Need the full `dev` pixi env (an importable package and the vendored
+  # osgeo that `import pyramids` activates) but are not platform- or Python-version-sensitive, so
+  # one runner covers them.
   static:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: serapeum-org/github-actions/actions/python-setup/pixi@961524686fb512c05ca8e4c7bfe81ba68eef4dda # pixi/v1.5.1
+        uses: serapeum-org/github-actions/actions/python-setup/pixi@38c111084f99d5ff5f4a1e63bedce48fe33a10c0 # pixi/v1.2.1
         with:
           environments: dev
           activate-environment: dev
           cache: true
           version: v0.73.0
 
-      - name: Lint and format check
-        run: pixi run -e dev lint
-
       - name: Type check
         run: pixi run -e dev typecheck
 
       # The moved modules carry their own `>>>` examples; without this they execute nowhere.
       - name: Doctests (src)
+        env:
+          MPLBACKEND: Agg
         run: pixi run -e dev pytest --doctest-modules src -p no:cacheprovider
+
+  # The repo's secret gate. gitleaks is the single secret scanner (matching pyramids / pyramids-eo /
+  # pyramids-mesh). There is no local gitleaks pre-commit hook, so this job is the only thing that
+  # runs it: it scans the whole working tree — every tracked file — with the .github/gitleaks.toml
+  # allowlist.
+  gitleaks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Scan for secrets (gitleaks)
+        # Pinned binary + SHA256 verification (avoids the gitleaks-action org-license requirement).
+        # `gitleaks dir` exits non-zero on a leak, which fails the job.
+        run: |
+          VER=8.30.0
+          SHA=79a3ab579b53f71efd634f3aaf7e04a0fa0cf206b7ed434638d1547a2470a66e
+          curl -sSL --proto '=https' --proto-redir '=https' -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz"
+          echo "${SHA}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+          ./gitleaks dir . -c .github/gitleaks.toml --redact --no-banner
