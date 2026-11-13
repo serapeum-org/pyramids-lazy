@@ -130,21 +130,35 @@ hdf5 = "1.14.*"
 dask-geopandas = ">=0.5.0"
 pyarrow = ">=10.0.0"
 
-# Pin an interpreter so CI can run the 3.11 leg, where runtime_checkable isinstance behaves
-# differently (hasattr vs getattr_static) — the version the backend-discovery bug was specific to.
+# Interpreter pins, one feature per supported Python so CI can run a per-version matrix. 3.11 is the
+# floor, where runtime_checkable isinstance behaves differently (hasattr vs getattr_static) — the
+# version the backend-discovery bug was specific to. 3.13/3.14 carry a build glob excluding the
+# free-threaded interpreter (conda build string `_cp313t` / `_cp314t`), which ships no matching
+# GDAL/h5py stack; the plain `_cp313` / `_cp314` glob anchors on the non-free-threaded build.
 [tool.pixi.feature.py311.dependencies]
 python = "3.11.*"
+[tool.pixi.feature.py312.dependencies]
+python = "3.12.*"
+[tool.pixi.feature.py313.dependencies]
+python = { version = "3.13.*", build = "*_cp313" }
+[tool.pixi.feature.py314.dependencies]
+python = { version = "3.14.*", build = "*_cp314" }
 
 [tool.pixi.pypi-dependencies]
 pyramids-lazy = { path = ".", editable = true }
 
 [tool.pixi.environments]
-# dev: everything, including the vector extra. base: the no-[parquet] shape. py311: base on 3.11.
-# docs: dev plus the MkDocs stack, in its own solve-group so the docs libraries never perturb the
-# dev/base/py311 locks.
+# Per-Python full-stack legs (dev + the [parquet] vector extra) across every supported interpreter,
+# plus `base` — the no-[parquet] shape on 3.11 that surfaced the backend-discovery bug the all-extras
+# env hid (it shares py311's solve-group as the parquet-less subset). `dev` is the local
+# newest-float convenience env; `docs` adds the MkDocs stack in its own solve-group so the docs
+# libraries never perturb the test locks.
 dev = { features = ["dev", "parquet"], solve-group = "default" }
-base = { features = ["dev"], solve-group = "base" }
-py311 = { features = ["dev", "py311"], solve-group = "py311" }
+base = { features = ["dev", "py311"], solve-group = "py311" }
+py311 = { features = ["dev", "parquet", "py311"], solve-group = "py311" }
+py312 = { features = ["dev", "parquet", "py312"], solve-group = "py312" }
+py313 = { features = ["dev", "parquet", "py313"], solve-group = "py313" }
+py314 = { features = ["dev", "parquet", "py314"], solve-group = "py314" }
 docs = { features = ["dev", "docs"], solve-group = "docs" }
 
 [tool.pixi.feature.dev.tasks]
