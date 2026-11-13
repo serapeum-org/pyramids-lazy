@@ -1,0 +1,25 @@
+# Gitleaks configuration for the CI secret scan (`gitleaks dir` in .github/workflows/lint.yml).
+# gitleaks is the repo's single secret scanner, matching pyramids / pyramids-eo / pyramids-mesh.
+# There is no local gitleaks pre-commit hook here, so this file is read only by that job. It keeps
+# gitleaks' full built-in ruleset and only allowlists paths that are registries or fixtures rather
+# than source secrets.
+title = "pyramids-lazy"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Non-source paths: working notes, lockfile hashes, and binary fixtures"
+paths = [
+  # Planning / review notes are working documents, not shipped code.
+  '''(^|/)planning/''',
+  # PR review artifacts written into the repo root are working documents.
+  '''pr-diff-review-.*\.md$''',
+  # The dependency lockfile is package hashes, not credentials.
+  '''pixi\.lock$''',
+  # Committed sample fixtures are real raster/vector/NetCDF samples, not source secrets: the binary
+  # NetCDF/HDF5/GeoTIFF payloads and the key=value metadata they carry (CRS WKT, GDAL sidecars) trip
+  # the generic high-entropy / api-key rules as false positives.
+  '''(^|/)tests/data/''',
+  '''(^|/)examples/data/''',
+]
