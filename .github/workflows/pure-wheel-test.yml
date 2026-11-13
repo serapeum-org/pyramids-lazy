@@ -1,16 +1,21 @@
 name: Pure Wheel - Build & Test
 
-# Ported from pyramids-mesh. DORMANT until pyramids-core ships the `pyramids.lazy_support` facade
-# to PyPI: this builds the wheel and installs it with `--only-binary=:all:`, which pulls the
-# RELEASED pyramids-core — but `pyramids_lazy._seam` requires the (still unreleased) facade, so
-# `import pyramids_lazy` raises "upgrade pyramids-core" today. For that reason the push-to-main
-# trigger is removed; it runs only on manual dispatch and when github-release calls it as a gate.
-# Re-add `push: branches: [main]` once a released pyramids-core satisfies the seam.
+# Ported from pyramids-mesh. Builds the wheel and installs it with `--only-binary=:all:`, so every
+# runtime dependency must come from a published wheel, then imports it and runs the suite across the
+# OS/Python matrix. Runs on merge to main, manual dispatch, and when github-release calls it as a
+# release gate.
+#
+# HEADS-UP: until pyramids-core publishes the `pyramids.lazy_support` facade to PyPI, this installs
+# the RELEASED pyramids-core and `import pyramids_lazy` raises "upgrade pyramids-core" — so the
+# push-to-main run (and the github-release gate) will FAIL until core ships that facade. That is the
+# intended signal that a lazy release is not yet possible.
 
 permissions:
   contents: read
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       branch:
