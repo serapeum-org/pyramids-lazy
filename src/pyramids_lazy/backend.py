@@ -5,8 +5,11 @@
 ``pyramids.base._compute_backend.require_compute_backend`` and routes every lazy/dask operation
 through it, so the dask/zarr stack stays out of a bare ``pyramids-core`` install.
 
-The method set mirrors the ``ComputeBackend`` Protocol core publishes -- that Protocol is the
-authoritative contract. All v1 operations are implemented: each method forwards to the relocated body
+The core-facing methods mirror the ``ComputeBackend`` Protocol core publishes -- that Protocol is the
+authoritative contract -- with one deliberate addition: ``classify_zarr_store`` is an *additive*
+capability core consumes duck-typed (via ``getattr``), kept off the ``runtime_checkable`` Protocol so
+an older backend that lacks it still passes core's structural ``isinstance`` check. All v1 operations
+are implemented: each method forwards to the relocated body
 in a sibling ``pyramids_lazy`` module (``_zarr``, ``_collection_zarr``, ``_vector_read``, ``_lazy``,
 ``_mfdataset``, ``_kerchunk_facade``, ``_lazy_cube``, ``_to_dask_dataframe``), which import every core
 primitive through the ``pyramids.lazy_support`` facade.
@@ -31,7 +34,9 @@ class LazyComputeBackend:
     """Concrete ``pyramids.compute_backend`` backend for the dask/zarr lazy layer.
 
     See ``pyramids.base._compute_backend.ComputeBackend`` for the authoritative method contract and
-    signatures; every method here mirrors it one-for-one.
+    signatures; every Protocol method is implemented here one-for-one. ``classify_zarr_store`` is an
+    additional, duck-typed extension core reaches via ``getattr`` -- deliberately not a Protocol
+    member, so a backend predating it is not rejected by core's structural check.
     """
 
     api_version: int = API_VERSION
@@ -122,6 +127,20 @@ class LazyComputeBackend:
         from pyramids_lazy._zarr import read_dataset_from_zarr
 
         return read_dataset_from_zarr(store, **kwargs)
+
+    def classify_zarr_store(
+        self, store: Any, storage_options: dict[str, Any] | None = None
+    ) -> str:
+        """Back core's ``Dataset.read_file`` Zarr routing: classify a ``.zarr`` store.
+
+        Returns ``"single"`` / ``"cube"`` / ``"other"``. Core applies the cheap suffix gate itself
+        and asks the backend to look inside a ``.zarr``; opening the store needs the optional
+        ``zarr`` package, which lives here, so the classification does too. An unreadable or foreign
+        store is reported as ``"other"`` (never raises) so core falls back to GDAL.
+        """
+        from pyramids_lazy._zarr import classify_zarr_store
+
+        return classify_zarr_store(store, storage_options)
 
     def write_collection_to_zarr(
         self, collection: Any, store: Any, **kwargs: Any
