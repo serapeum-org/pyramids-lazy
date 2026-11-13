@@ -1,12 +1,12 @@
 name: Deploy MkDocs
 
-# Full MkDocs deploy workflow, ported from pyramids-mesh: PR previews, the main-branch site, and
-# versioned release docs (mike). It runs live on PR / push-to-main / release.
+# MkDocs deploy workflow, ported from pyramids-mesh: the main-branch site and versioned release
+# docs (mike). It runs on push-to-main and on release. PR-preview deploys (mesh's deploy-pr job)
+# are intentionally omitted here, so a pull request never runs a docs deploy.
 #
-# NOTE: this repo has no `mkdocs.yml` / `docs/` site yet, so the `deploy-pr` job WILL fail (red) on
-# every pull request until that site lands and the `ACTIONS_DEPLOY_TOKEN` secret is set. That is the
-# intended, accepted state — the workflow is wired now so it activates the moment the docs site is
-# added, without a second pass.
+# NOTE: this repo has no `mkdocs.yml` / `docs/` site yet, so the deploy jobs need that site (and the
+# `ACTIONS_DEPLOY_TOKEN` secret) before they can succeed — but neither fires on a PR, so PR checks
+# stay clean until then.
 
 permissions:
   contents: write
@@ -16,9 +16,6 @@ on:
   push:
     branches:
       - main
-  pull_request:
-    branches:
-      - '**'
   release:
     types:
       - published
@@ -27,25 +24,6 @@ on:
     types: [completed]
 
 jobs:
-  deploy-pr:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-
-      # serapeum-org/github-actions is a monorepo: one commit carries the release tag for every
-      # action in it, so 38c11108 is the dereferenced commit for mkdocs/v1.3.1 (and
-      # github-release/v1.5.0, pypi-release/v1.0.3). Verify with
-      #   git ls-remote --tags https://github.com/serapeum-org/github-actions
-      - uses: serapeum-org/github-actions/actions/mkdocs-deploy@38c111084f99d5ff5f4a1e63bedce48fe33a10c0 # mkdocs/v1.3.1
-        with:
-          trigger: 'pull_request'
-          package-manager: 'pixi'
-          install-groups: 'docs'
-          deploy-token: ${{ secrets.ACTIONS_DEPLOY_TOKEN }}
-
   deploy-main:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
