@@ -40,7 +40,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The OGR-Parquet vector-lazy subset: dask-geopandas + pyarrow only.
+# The OGR-Parquet vector-lazy subset: dask-geopandas + pyarrow only. pixi maps the `parquet`
+# pixi feature (used by the py311–py314 / dev environments) to this same-named extra, so the
+# deps live here only — do not re-declare them under [tool.pixi.feature.parquet.*].
 parquet = ["pyarrow>=10.0.0", "dask-geopandas>=0.5.0"]
 
 # How pyramids-core discovers this backend. core's require_compute_backend() resolves the
@@ -130,14 +132,6 @@ macos = "14.0"
 # `dev` onto 3.15, for which h5py ships no wheel yet, so its source build fails without conda HDF5.
 [tool.pixi.dependencies]
 python = ">=3.11,<3.15"
-
-# The lazy *vector* path only (the `[parquet]` extra): kept out of the base deps so an env can be
-# built without it — the shape that surfaced the backend-discovery bug the all-extras env hid.
-# Resolved from PyPI (not conda) so geopandas never drags a conda libgdal in; mirrors
-# `pip install pyramids-lazy[parquet]`.
-[tool.pixi.feature.parquet.pypi-dependencies]
-dask-geopandas = ">=0.5.0"
-pyarrow = ">=10.0.0"
 
 # Interpreter pins, one feature per supported Python so CI can run a per-version matrix. 3.11 is the
 # floor, where runtime_checkable isinstance behaves differently (hasattr vs getattr_static) — the
