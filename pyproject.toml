@@ -82,10 +82,10 @@ dev = [
     "commitizen>=4.8.4",
     "build>=1.0.0",
     "twine>=5.0.0",
-    # pyramids-core 0.79.0 ships the `pyramids.lazy_support` seam this backend implements, so the
-    # dev/test envs resolve it from PyPI like any other dependency — no more git-commit pin. Kept
-    # in step with the runtime floor in [project].dependencies above.
-    "pyramids-core>=0.79.0",
+    # pyramids-core is intentionally NOT listed here: it is a runtime dependency (see
+    # [project.dependencies]), and the editable self-install pulls it into every pixi env already.
+    # This group only carries dev/release tooling. (It previously pinned core by git commit to test
+    # the seam before core shipped it; that pin is obsolete now core 0.79.0 is on PyPI.)
 ]
 # The MkDocs + mike documentation stack. Resolved by the `docs` pixi environment and the
 # github-pages-mkdocs workflow; mirrors pyramids-mesh. No docs site exists yet, so this group
