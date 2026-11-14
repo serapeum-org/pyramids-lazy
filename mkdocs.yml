@@ -90,7 +90,11 @@ markdown_extensions:
           class: mermaid
           format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.inlinehilite
-  - pymdownx.snippets
+  # base_path reaches the repo root so docs/LICENSE.md can include the real LICENSE.md instead of
+  # duplicating it; check_paths makes a broken include fail the build rather than render empty.
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
   - pymdownx.tabbed:
       alternate_style: true
   - admonition
