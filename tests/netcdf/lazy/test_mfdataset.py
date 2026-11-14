@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 from pyramids.netcdf import NetCDF
 
+from pyramids_lazy._mfdataset import _resolve_paths
 from tests._marks import requires_dask
 from tests.netcdf.lazy.conftest import THREE_D_NC_FIXTURE as FIXTURE
 
@@ -161,6 +162,24 @@ class TestMissingPath:
         missing = str(tmp_path / "does_not_exist.nc")
         with pytest.raises(FileNotFoundError):
             NetCDF.open_mfdataset([missing], variable="values")
+
+    @requires_dask
+    def test_a_bare_string_matching_nothing_falls_back_to_the_literal_path(
+        self, tmp_path
+    ):
+        """A string input whose glob expands to nothing is retried as one explicit path.
+
+        Test scenario:
+            ``_resolve_paths`` glob-expands a string input; an empty expansion must not silently
+            stack zero files but fall back to the string itself, so a missing file passed as a
+            bare string surfaces as ``FileNotFoundError`` exactly as the list form does.
+        """
+        missing = str(tmp_path / "does_not_exist.nc")
+        assert _resolve_paths(missing) == [missing], (
+            "an empty glob expansion must fall back to the input itself"
+        )
+        with pytest.raises(FileNotFoundError):
+            NetCDF.open_mfdataset(missing, variable="values")
 
 
 class TestImportError:
