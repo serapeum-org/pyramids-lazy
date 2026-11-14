@@ -103,28 +103,29 @@ docs = [
     "mkdocs-mermaid2-plugin>=1.2.1",
 ]
 
-# GDAL and the HDF5-linking libs must come from conda-forge so they share one native stack.
+# Only the interpreter comes from conda-forge. Every runtime library — including all GDAL/HDF5-
+# linking ones — comes from PyPI (the editable self-install below pulls [project.dependencies],
+# and pyramids-core arrives as its wheel). This mirrors a real `pip install pyramids-lazy`: GDAL
+# is inherited solely from pyramids-core's vendored wheel (constraint C2 at the top of
+# [project.dependencies]). Declaring conda `gdal` / `libgdal-netcdf` / `hdf5` here would put a
+# second, ABI-mismatched libgdal on the path — the vendored libgdal would try to load conda's
+# driver plugins and fail to register netCDF/HDF5, which broke cross-process NetCDF reads on
+# Windows (the spawn worker does not re-run conftest's vendored-GDAL bootstrap).
 [tool.pixi.workspace]
 channels = ["conda-forge"]
 platforms = ["win-64", "linux-64", "osx-64", "osx-arm64"]
 
+# The interpreter is the one thing PyPI cannot supply to a pixi env, so it is the only conda
+# package. Pinned as a floor so the `dev` / `docs` environments (which carry no per-version py*
+# feature) still resolve a Python; the py311–py314 features pin an exact minor for the CI matrix.
 [tool.pixi.dependencies]
-gdal = "*"
-libgdal-netcdf = "*"
-geopandas = "*"
-"dask-core" = ">=2024.1.0"
-distributed = ">=2024.1.0"
-zarr = ">=3"
-fsspec = ">=2024.1.0"
-s3fs = ">=2024.1.0"
-kerchunk = ">=0.2.10"
-h5py = ">=3.8.0,<3.17"
-hdf5 = "1.14.*"
+python = ">=3.11,<4"
 
-# The lazy *vector* path only; kept out of the base deps so an env can be built without it. That
-# env is the shape core's py311-py315 legs run in, and the shape that surfaced the backend-discovery
-# bug the single all-extras env hid.
-[tool.pixi.feature.parquet.dependencies]
+# The lazy *vector* path only (the `[parquet]` extra): kept out of the base deps so an env can be
+# built without it — the shape that surfaced the backend-discovery bug the all-extras env hid.
+# Resolved from PyPI (not conda) so geopandas never drags a conda libgdal in; mirrors
+# `pip install pyramids-lazy[parquet]`.
+[tool.pixi.feature.parquet.pypi-dependencies]
 dask-geopandas = ">=0.5.0"
 pyarrow = ">=10.0.0"
 
