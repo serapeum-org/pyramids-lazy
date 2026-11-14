@@ -7,7 +7,7 @@ This page covers installation of **pyramids-lazy** and its dependencies.
 | Distribution name | `pyramids-lazy` |
 | Python import name | `pyramids_lazy` |
 | Current version | `0.1.0` |
-| Supported Python | **3.11 – 3.14** |
+| Supported Python | declared `>=3.11,<4`; **3.11 – 3.14** are the versions CI tests |
 | License | GPL v3 |
 
 ```bash
@@ -51,9 +51,12 @@ they are local tooling and are deliberately not published in the package metadat
 
 ## From source
 
-The repository is a pixi workspace. The native stack (GDAL, the HDF5-linking libraries,
-dask-geopandas, pyarrow) comes from conda-forge so that everything linking HDF5 shares one build;
-`h5py >=3.8.0,<3.17` paired with `hdf5 1.14.*` is that ABI pairing.
+The repository is a pixi workspace. Its only conda dependency is the interpreter
+(`python >=3.11,<3.15`, with one pinned feature per supported version so CI can run a per-version
+matrix); everything else — including `pyramids-core`, dask, zarr, kerchunk, h5py and the `parquet`
+extra — is resolved from PyPI through `[tool.pixi.pypi-dependencies]` and the PEP 735 groups.
+GDAL therefore arrives with the `pyramids-core` wheel, which vendors it, exactly as in a plain
+`pip install`.
 
 ```bash
 git clone https://github.com/serapeum-org/pyramids-lazy.git
