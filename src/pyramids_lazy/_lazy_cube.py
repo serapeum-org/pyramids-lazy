@@ -117,7 +117,9 @@ class LazyNetCDF:
         self._source = source
         self._arrays = dict(arrays)
         self._dim_names = dict(dim_names)
-        self._records = records
+        # Copied, not aliased, to match `arrays` / `dim_names` above: views share a source cube but
+        # never a mutable mapping.
+        self._records = None if records is None else dict(records)
         self._materialize_warned = False
 
     @property
@@ -232,11 +234,26 @@ class LazyNetCDF:
         import dask
 
         names = list(self._arrays)
-        persisted = dask.persist(*(self._arrays[name] for name in names), **kwargs)
-        arrays = dict(zip(names, persisted))
-        # Carry _records through, as unify_chunks does: without them compute() takes its
-        # "untransformed" branch and returns self._source.copy(), silently discarding a composed op.
-        return LazyNetCDF(self._source, arrays, self._dim_names, self._records)
+        record_items = list(self._records.items()) if self._records is not None else []
+        # One dask.persist call for both mappings: the record's array is the graph `_rebuild` and
+        # every `_compose_*` actually read, so persisting only `_arrays` would leave them
+        # recomputing from the store while this view claimed to be in memory. Persisting together
+        # also keeps shared parts of the graph shared.
+        realised = dask.persist(
+            *(self._arrays[name] for name in names),
+            *(record.array for _, record in record_items),
+            **kwargs,
+        )
+        arrays = dict(zip(names, realised[: len(names)]))
+        records = None
+        if self._records is not None:
+            # Carry _records through, as unify_chunks does: without them compute() takes its
+            # "untransformed" branch and returns self._source.copy(), discarding a composed op.
+            records = {
+                name: record._replace(array=array)
+                for (name, record), array in zip(record_items, realised[len(names) :])
+            }
+        return LazyNetCDF(self._source, arrays, self._dim_names, records)
 
     def unify_chunks(self) -> LazyNetCDF:
         """Re-chunk every variable to a common chunking across their shared dimensions.

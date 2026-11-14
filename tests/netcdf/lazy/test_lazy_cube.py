@@ -261,6 +261,29 @@ class TestPersistUnify:
         assert clipped.persist()._records is not None
 
     @requires_dask
+    def test_persist_also_persists_the_record_graph(self):
+        """`persist()` persists the record's array too, so a rebuild does not recompute it."""
+        lazy = NetCDF.read_file(str(MULTIVAR)).get_variable("pr").chunk("auto")
+        persisted = lazy.clip(0.0, 5e-6).persist()
+        name = next(iter(persisted._arrays))
+
+        record_keys = len(persisted._records[name].array.dask)
+
+        assert record_keys == len(persisted._arrays[name].dask)
+        assert record_keys == 1
+
+    @requires_dask
+    def test_persist_does_not_share_the_records_dict_with_the_source_view(self):
+        """Each view owns its records mapping, so mutating one never reaches another."""
+        lazy = NetCDF.read_file(str(MULTIVAR)).get_variable("pr").chunk("auto")
+        clipped = lazy.clip(0.0, 5e-6)
+
+        persisted = clipped.persist()
+        persisted._records.clear()
+
+        assert clipped._records != {}
+
+    @requires_dask
     def test_persist_of_an_untransformed_view_carries_no_records(self):
         """A view straight from `chunk()` has no composed op, so `persist()` adds none."""
         persisted = NetCDF.read_file(str(FIX)).chunk("auto").persist()
