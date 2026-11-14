@@ -12,8 +12,25 @@ plus an `api_version` core checks before using it.
 | Authoritative Protocol | `pyramids.base._compute_backend.ComputeBackend` |
 
 Every method is a thin forwarder that imports its implementation module **inside the method body**,
-so the dask/zarr stack is imported only when an operation is actually used — importing
-`pyramids_lazy` itself does not drag in dask.
+so an operation's own module (`_zarr`, `_kerchunk_facade`, `_vector_read`, …) is loaded only when
+that operation is first used.
+
+That is a statement about the per-operation modules, not about dask. Importing `pyramids_lazy` does
+pull dask in: the package re-exports `LazyNetCDF` eagerly, `_lazy_cube` imports
+`pyramids.lazy_support` at module scope, and that facade imports dask itself — plus
+`dask_geopandas` and `pyarrow` when the `[parquet]` extra is installed. Measured:
+
+Measured in two separate interpreters:
+
+```bash
+$ python -c "import sys, pyramids;      print(len(sys.modules), 'dask' in sys.modules)"
+306 False
+$ python -c "import sys, pyramids_lazy; print(len(sys.modules), 'dask' in sys.modules)"
+1868 True
+```
+
+What the deferred imports buy is therefore narrower than "no dask on import": zarr stays out until
+a Zarr operation runs, and the per-operation modules stay unloaded until used.
 
 ## Why a singleton
 
