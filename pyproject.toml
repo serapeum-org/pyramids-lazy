@@ -25,10 +25,10 @@ classifiers = [
 # No GDAL here: the plugin inherits pyramids-core's vendored GDAL (constraint C2). Declaring GDAL
 # would risk a second, ABI-mismatched libgdal on the path.
 dependencies = [
-    # A floor cannot express "must publish the pyramids.lazy_support facade", which no released
-    # core does yet; pyramids_lazy._seam checks it at import. Raise this to the first release
-    # that ships the facade.
-    "pyramids-core>=0.74.0",
+    # pyramids-core 0.79.0 is the first release to publish the `pyramids.lazy_support` facade this
+    # backend implements; pyramids_lazy._seam checks it at import. A floor cannot express "must
+    # publish the facade", so it is pinned to that first-shipping release.
+    "pyramids-core>=0.79.0",
     "dask>=2024.1.0",
     "distributed>=2024.1.0",
     "zarr>=3",
@@ -82,12 +82,10 @@ dev = [
     "commitizen>=4.8.4",
     "build>=1.0.0",
     "twine>=5.0.0",
-    # pyramids-core publishes the seam this backend implements, unreleased, so it is pinned by
-    # commit (not the branch): with `--locked` CI, a branch ref would make this lock stale and fail
-    # setup the moment core's branch moves, and the commit stops being fetchable once that branch is
-    # deleted. Symmetric with how core pins this package. Bump deliberately when core advances, and
-    # replace the whole entry with `pyramids-core>=<rel>` once core ships the seam.
-    "pyramids-core @ git+https://github.com/serapeum-org/pyramids-core.git@9de391a35e3199643f575fe7436ecdfa4b281896",
+    # pyramids-core 0.79.0 ships the `pyramids.lazy_support` seam this backend implements, so the
+    # dev/test envs resolve it from PyPI like any other dependency — no more git-commit pin. Kept
+    # in step with the runtime floor in [project].dependencies above.
+    "pyramids-core>=0.79.0",
 ]
 # The MkDocs + mike documentation stack. Resolved by the `docs` pixi environment and the
 # github-pages-mkdocs workflow; mirrors pyramids-mesh. No docs site exists yet, so this group
