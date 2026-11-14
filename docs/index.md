@@ -59,6 +59,10 @@ Two further constraints are worth knowing before changing anything here:
 
 ## Status
 
-`0.1.0`, released to PyPI. The v2 backend contract covers the raster (`Dataset`), raster-cube
-(`NetCDF`) and vector (`FeatureCollection`) lazy operations. `MeshDataset`'s own lazy surface is
-intentionally outside it and is deferred to a later contract revision.
+`0.1.0`, on PyPI. The v2 backend contract covers the raster (`Dataset`), raster-cube (`NetCDF`) and
+vector (`FeatureCollection`) lazy operations.
+
+`MeshDataset`'s own lazy surface — `open_mfdataset` / `to_dask_dataframe` / `to_zarr` / `from_zarr`
+on a mesh — is not part of the v2 contract. That is narrower than "mesh does not use this backend":
+mesh's xarray interop (`pyramids/netcdf/ugrid/interop_xarray.py`) does call `read_array_lazy`
+through it, so a mesh lazy read already depends on this package being installed.

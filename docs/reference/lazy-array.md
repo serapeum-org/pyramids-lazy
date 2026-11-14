@@ -1,7 +1,11 @@
 # Lazy raster reads
 
-Backs `Dataset.read_array(chunks=…)` and `NetCDF.read_array(chunks=…)`. Returns a
-`dask.array.Array` instead of a NumPy array, without dask being imported until the call happens.
+Backs `NetCDF.read_array(chunks=…)`. Returns a `dask.array.Array` instead of a NumPy array,
+without dask being imported until the call happens.
+
+`Dataset.read_array` does **not** route here — it takes no `chunks` argument at all, and core's
+lazy raster path for a plain `Dataset` stays in core. Every `read_array_lazy` call site in core
+lives under `pyramids/netcdf/` (`netcdf.py`, `engines/interop.py`, `ugrid/interop_xarray.py`).
 
 | | |
 |---|---|
@@ -10,10 +14,10 @@ Backs `Dataset.read_array(chunks=…)` and `NetCDF.read_array(chunks=…)`. Retu
 | Returns | `dask.array.Array` |
 
 ```python
-from pyramids.dataset import Dataset
+from pyramids.netcdf import NetCDF
 
-ds = Dataset.read_file("dem.tif")
-arr = ds.read_array(chunks={"x": 512, "y": 512})
+cube = NetCDF.read_file("era5.nc")
+arr = cube.read_array(variable="pr", chunks={"rows": 64, "cols": 64})
 arr.mean().compute()
 ```
 

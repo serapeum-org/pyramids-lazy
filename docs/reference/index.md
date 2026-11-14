@@ -9,10 +9,10 @@ installing the package is the whole integration: `pyramids` then dispatches ever
 it.
 
 ```python
-from pyramids.dataset import Dataset
+from pyramids.netcdf import NetCDF
 
-ds = Dataset.read_file("dem.tif")
-arr = ds.read_array(chunks={"x": 512, "y": 512})  # → this package's read_array_lazy
+cube = NetCDF.read_file("era5.nc")
+arr = cube.read_array(variable="pr", chunks="auto")  # → this package's read_array_lazy
 ```
 
 So the backend contract below is the surface that matters. Each method forwards to one
@@ -20,7 +20,7 @@ implementation module, and each module has its own page.
 
 | Backend method | Backs | Page |
 |---|---|---|
-| `read_array_lazy` | `Dataset` / `NetCDF.read_array(chunks=…)` | [Lazy raster reads](lazy-array.md) |
+| `read_array_lazy` | `NetCDF.read_array(chunks=…)` (not `Dataset`) | [Lazy raster reads](lazy-array.md) |
 | `build_lazy_cube` | `NetCDF.chunk()` | [Lazy NetCDF cube](lazy-netcdf.md) |
 | `to_dask_dataframe` | `NetCDF.to_dask_dataframe()` | [Dask dataframe view](dask-dataframe.md) |
 | `open_mfdataset` | `NetCDF.open_mfdataset()` | [Multi-file reads](mfdataset.md) |
