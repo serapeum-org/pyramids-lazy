@@ -116,10 +116,12 @@ channels = ["conda-forge"]
 platforms = ["win-64", "linux-64", "osx-64", "osx-arm64"]
 
 # The interpreter is the one thing PyPI cannot supply to a pixi env, so it is the only conda
-# package. Pinned as a floor so the `dev` / `docs` environments (which carry no per-version py*
-# feature) still resolve a Python; the py311–py314 features pin an exact minor for the CI matrix.
+# package. Bounded to the supported range (3.11–3.14, matching the py* features and the project
+# classifiers) so the `dev` / `docs` environments — which carry no per-version py* feature — pick
+# a supported Python with PyPI wheels for the whole native stack. An open `<4` upper bound floats
+# `dev` onto 3.15, for which h5py ships no wheel yet, so its source build fails without conda HDF5.
 [tool.pixi.dependencies]
-python = ">=3.11,<4"
+python = ">=3.11,<3.15"
 
 # The lazy *vector* path only (the `[parquet]` extra): kept out of the base deps so an env can be
 # built without it — the shape that surfaced the backend-discovery bug the all-extras env hid.
