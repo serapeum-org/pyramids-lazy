@@ -133,9 +133,11 @@ class TestComputeLoad:
     def test_load_on_a_transformed_cube_returns_the_rebuilt_result(self):
         """A composed op leaves no untransformed source to alias, so `load()` rebuilds like `compute()`."""
         nc = NetCDF.read_file(str(MULTIVAR))
-        clipped = nc.get_variable("pr").chunk("auto").clip(0.0, 5e-6)
+        source = nc.get_variable("pr")
+        clipped = source.chunk("auto").clip(0.0, 5e-6)
         loaded = clipped.load()
-        assert loaded is not nc, "a transformed cube must not alias the source"
+        # `source`, not `nc`: the pinned variable is what an untransformed view would alias.
+        assert loaded is not source, "a transformed cube must not alias the source"
         np.testing.assert_allclose(
             np.asarray(loaded.read_array()),
             np.asarray(clipped.compute().read_array()),
@@ -307,23 +309,20 @@ class TestPersistUnify:
         )
 
     @requires_dask
-    def test_unify_chunks_keeps_the_transformation_records(self):
-        """A transformed single-variable view is already unified, and keeps its composed op."""
+    def test_unify_chunks_is_the_documented_no_op_for_a_transformed_view(self):
+        """A composed view holds exactly one variable, so `unify_chunks()` returns it unchanged."""
         clipped = (
             NetCDF.read_file(str(MULTIVAR))
             .get_variable("pr")
             .chunk("auto")
             .clip(0.0, 5e-6)
         )
-        unified = clipped.unify_chunks()
-        assert unified._records is not None, (
-            "unify_chunks() must not discard a composed op"
-        )
-        np.testing.assert_allclose(
-            np.asarray(unified.compute().read_array()),
-            np.asarray(clipped.compute().read_array()),
-            equal_nan=True,
-        )
+
+        # Identity, not `_records is not None`: the latter inspects the very same object and so
+        # holds however `unify_chunks` behaves. Every compose path yields one variable, which is
+        # below the `len(self._arrays) < 2` short-circuit, so the records-passing branch below it
+        # is unreachable from the public API.
+        assert clipped.unify_chunks() is clipped
 
     @requires_dask
     def test_unify_chunks_is_a_noop_for_a_single_variable(self):

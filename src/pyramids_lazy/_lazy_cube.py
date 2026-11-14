@@ -227,7 +227,8 @@ class LazyNetCDF:
                 ```
 
         See Also:
-            unify_chunks: Reconciles shared-dimension chunking, carrying a composed op through too.
+            unify_chunks: Reconciles shared-dimension chunking across two or more variables; a
+                composed (single-variable) view is already unified, so it is returned unchanged.
             compute: Materialises the view — the rebuilt transformed cube once an op has composed.
         """
         import_dask(_DASK_MISSING)
