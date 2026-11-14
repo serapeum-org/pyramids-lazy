@@ -3,9 +3,15 @@
 Backs `NetCDF.read_array(chunks=…)`. Returns a `dask.array.Array` instead of a NumPy array,
 without dask being imported until the call happens.
 
-`Dataset.read_array` does **not** route here — it takes no `chunks` argument at all, and core's
-lazy raster path for a plain `Dataset` stays in core. Every `read_array_lazy` call site in core
-lives under `pyramids/netcdf/` (`netcdf.py`, `engines/interop.py`, `ugrid/interop_xarray.py`).
+`Dataset.read_array` does **not** route here. It accepts `chunks=` and returns a
+`dask.array.Array`, but it is served by core's own in-core lazy raster path
+(`pyramids.dataset.engines.IO.read_array`, which never calls `require_compute_backend`). Every
+`read_array_lazy` call site in core lives under `pyramids/netcdf/` (`netcdf.py`,
+`engines/interop.py`, `ugrid/interop_xarray.py`).
+
+So a lazy `Dataset` read needs `dask` but not this package, whereas a lazy `NetCDF` read needs this
+package. `Dataset`'s Zarr and kerchunk operations *do* come here — see
+[Zarr (Dataset)](zarr.md).
 
 | | |
 |---|---|
