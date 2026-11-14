@@ -88,7 +88,9 @@ jobs:
           version: v0.84.2
 
       - name: Build the docs site (strict)
-        run: pixi run -e docs mkdocs build --strict
+        # --locked, like tests.yml's `main`: without it a drifted pixi.lock is silently re-solved
+        # and the docs gate would pass against dependencies the lock does not describe.
+        run: pixi run --locked -e docs mkdocs build --strict
 
   # The repo's secret gate. gitleaks is the single secret scanner (matching pyramids / pyramids-eo /
   # pyramids-mesh). There is no local gitleaks pre-commit hook, so this job is the only thing that
