@@ -47,35 +47,23 @@ HAS_DASK = _has("dask")
 HAS_DASK_ARRAY = _has("dask.array")
 HAS_DASK_GEOPANDAS = _has("dask_geopandas")
 HAS_ZARR = _has("zarr")
-HAS_INTEROP = _has("xarray")
 HAS_KERCHUNK = _has("kerchunk")
 HAS_H5PY = _has("h5py")
 HAS_PYARROW = _has("pyarrow")
-HAS_CLEOPATRA = _has("cleopatra")
-HAS_PYSTAC_CLIENT = _has("pystac_client")
 
 
 # Per-extra installed? flag. Values are True when EVERY underlying
 # module of that extra is importable — so `netcdf_lazy` requires
 # kerchunk AND h5py AND the lazy stack, all of which now ship in
 # `pip install pyramids-lazy`.
-_HAS_VIZ = HAS_CLEOPATRA
 _HAS_LAZY = HAS_DASK_ARRAY and HAS_ZARR
-_HAS_INTEROP = HAS_INTEROP
 _HAS_NETCDF_LAZY = _HAS_LAZY and HAS_KERCHUNK and HAS_H5PY
 _HAS_PARQUET = HAS_PYARROW
 _HAS_PARQUET_LAZY = _HAS_LAZY and _HAS_PARQUET and HAS_DASK_GEOPANDAS
-_HAS_STAC = HAS_PYSTAC_CLIENT
 
 
-requires_plot = pytest.mark.skipif(
-    not _HAS_VIZ, reason="pyramids-core[viz] not installed"
-)
 requires_lazy = pytest.mark.skipif(
     not _HAS_LAZY, reason="dask + zarr (pyramids-lazy) not installed"
-)
-requires_interop = pytest.mark.skipif(
-    not _HAS_INTEROP, reason="the optional interop dependency is not installed"
 )
 requires_netcdf_lazy = pytest.mark.skipif(
     not _HAS_NETCDF_LAZY, reason="kerchunk + h5py (pyramids-lazy) not installed"
@@ -86,9 +74,6 @@ requires_parquet = pytest.mark.skipif(
 requires_parquet_lazy = pytest.mark.skipif(
     not _HAS_PARQUET_LAZY,
     reason="dask-geopandas (pyramids-lazy[parquet]) not installed",
-)
-requires_stac = pytest.mark.skipif(
-    not _HAS_STAC, reason="pyramids-core[stac] not installed"
 )
 
 
@@ -119,13 +104,8 @@ requires_pyarrow = requires_parquet
 # in `tests/conftest.py`. A test annotated with `@pytest.mark.<name>`
 # auto-gains the matching skip when its extra is not installed.
 EXTRA_MARKERS: dict[str, pytest.MarkDecorator] = {
-    # `plot` is the canonical gate for the [viz] extra; no separate
-    # `viz` marker is registered to avoid duplicate surface.
-    "plot": requires_plot,
     "lazy": requires_lazy,
-    "interop": requires_interop,
     "netcdf_lazy": requires_netcdf_lazy,
     "parquet": requires_parquet,
     "parquet_lazy": requires_parquet_lazy,
-    "stac": requires_stac,
 }
