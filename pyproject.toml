@@ -48,6 +48,7 @@ lazy = "pyramids_lazy.backend:backend"
 [project.urls]
 Homepage = "https://github.com/serapeum-org/pyramids-lazy"
 Repository = "https://github.com/serapeum-org/pyramids-lazy"
+Documentation = "https://serapeum-org.github.io/pyramids-lazy/"
 
 [build-system]
 requires = ["setuptools>=80.0.0", "wheel"]
