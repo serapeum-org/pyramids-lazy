@@ -3,6 +3,9 @@ site_description: "The lazy / dask compute backend for pyramids: lazy reads, laz
 site_url: https://serapeum-org.github.io/pyramids-lazy/
 repo_url: https://github.com/serapeum-org/pyramids-lazy
 repo_name: serapeum-org/pyramids-lazy
+# Without this, content.action.edit builds edit links against the default `master`, and this
+# repo's default branch is `main` — every page's edit pencil would 404.
+edit_uri: edit/main/docs/
 
 theme:
   name: material
@@ -45,18 +48,14 @@ theme:
     toggle:
       icon: material/weather-night
       name: Switch to system preference
-  primary: indigo
-  accent: indigo
   icon:
     repo: fontawesome/brands/github
 
 
 plugins:
   - search
-  - mkdocs-jupyter:
-      execute: false  # notebooks are pre-executed; render the stored outputs
-      include_source: true
-      ignore: ["**/.ipynb_checkpoints/**"]
+  # mkdocs-jupyter is intentionally not registered: this site has no notebooks yet. The dependency
+  # stays in the `docs` group, and this block comes back with the first docs/examples notebook.
   - autorefs
   - mkdocstrings:
       default_handler: python
@@ -90,7 +89,6 @@ markdown_extensions:
         - name: mermaid
           class: mermaid
           format: !!python/name:pymdownx.superfences.fence_code_format
-  - pymdownx.tabbed
   - pymdownx.inlinehilite
   - pymdownx.snippets
   - pymdownx.tabbed:
@@ -133,4 +131,3 @@ extra:
       link: https://github.com/serapeum-org/pyramids-lazy
   version:
       provider: mike
-  version_selector: true
