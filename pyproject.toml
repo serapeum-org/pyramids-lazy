@@ -25,9 +25,6 @@ classifiers = [
 # No GDAL here: the plugin inherits pyramids-core's vendored GDAL (constraint C2). Declaring GDAL
 # would risk a second, ABI-mismatched libgdal on the path.
 dependencies = [
-    # pyramids-core 0.79.0 is the first release to publish the `pyramids.lazy_support` facade this
-    # backend implements; pyramids_lazy._seam checks it at import. A floor cannot express "must
-    # publish the facade", so it is pinned to that first-shipping release.
     "pyramids-core>=0.79.0",
     "dask>=2024.1.0",
     "distributed>=2024.1.0",
@@ -40,9 +37,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The OGR-Parquet vector-lazy subset: dask-geopandas + pyarrow only. pixi maps the `parquet`
-# pixi feature (used by the py311–py314 / dev environments) to this same-named extra, so the
-# deps live here only — do not re-declare them under [tool.pixi.feature.parquet.*].
+# The OGR-Parquet vector-lazy subset. pixi's `parquet` feature maps to this same-named extra.
 parquet = ["pyarrow>=10.0.0", "dask-geopandas>=0.5.0"]
 
 # How pyramids-core discovers this backend. core's require_compute_backend() resolves the
@@ -84,10 +79,6 @@ dev = [
     "commitizen>=4.8.4",
     "build>=1.0.0",
     "twine>=5.0.0",
-    # pyramids-core is intentionally NOT listed here: it is a runtime dependency (see
-    # [project.dependencies]), and the editable self-install pulls it into every pixi env already.
-    # This group only carries dev/release tooling. (It previously pinned core by git commit to test
-    # the seam before core shipped it; that pin is obsolete now core 0.79.0 is on PyPI.)
 ]
 # The MkDocs + mike documentation stack. Resolved by the `docs` pixi environment and the
 # github-pages-mkdocs workflow; mirrors pyramids-mesh. No docs site exists yet, so this group
@@ -105,23 +96,9 @@ docs = [
     "mkdocs-mermaid2-plugin>=1.2.1",
 ]
 
-# Only the interpreter comes from conda-forge. Every runtime library — including all GDAL/HDF5-
-# linking ones — comes from PyPI (the editable self-install below pulls [project.dependencies],
-# and pyramids-core arrives as its wheel). This mirrors a real `pip install pyramids-lazy`: GDAL
-# is inherited solely from pyramids-core's vendored wheel (constraint C2 at the top of
-# [project.dependencies]). Declaring conda `gdal` / `libgdal-netcdf` / `hdf5` here would put a
-# second, ABI-mismatched libgdal on the path — the vendored libgdal would try to load conda's
-# driver plugins and fail to register netCDF/HDF5, which broke cross-process NetCDF reads on
-# Windows (the spawn worker does not re-run conftest's vendored-GDAL bootstrap).
 [tool.pixi.workspace]
 channels = ["conda-forge"]
-# The osx platforms raise the macOS floor to 14.0 (pixi's default is __osx=13.0). The PyPI pyproj
-# 3.7.2 arm64 cp311 wheel — the only pyproj that still supports Python 3.11 — is tagged
-# `macosx_14_0_arm64`, so under the 13.0 default it was rejected and the resolver fell back to the
-# sdist, which fails to build without the PROJ C library (no longer installed from conda).
-# macos-latest runners are macOS 14+, so this only makes the arm64 wheels eligible; it never
-# excludes a lower-tagged wheel. (Per-platform virtual package, replacing the deprecated
-# [tool.pixi.system-requirements] table.)
+# macOS floor 14.0 so the pyproj cp311 arm64 wheel (tagged macosx_14_0) resolves instead of its sdist.
 platforms = [
     "win-64",
     "linux-64",
@@ -129,11 +106,7 @@ platforms = [
     { platform = "osx-arm64", macos = "14.0" },
 ]
 
-# The interpreter is the one thing PyPI cannot supply to a pixi env, so it is the only conda
-# package. Bounded to the supported range (3.11–3.14, matching the py* features and the project
-# classifiers) so the `dev` / `docs` environments — which carry no per-version py* feature — pick
-# a supported Python with PyPI wheels for the whole native stack. An open `<4` upper bound floats
-# `dev` onto 3.15, for which h5py ships no wheel yet, so its source build fails without conda HDF5.
+# Interpreter only; <3.15 keeps the version-less dev/docs envs off 3.15 (no cp315 h5py wheel yet).
 [tool.pixi.dependencies]
 python = ">=3.11,<3.15"
 
