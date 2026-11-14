@@ -81,8 +81,7 @@ dev = [
     "twine>=5.0.0",
 ]
 # The MkDocs + mike documentation stack. Resolved by the `docs` pixi environment and the
-# github-pages-mkdocs workflow; mirrors pyramids-mesh. No docs site exists yet, so this group
-# is dormant until a `mkdocs.yml` + `docs/` tree land (see the workflow header).
+# github-pages-mkdocs workflow; mirrors pyramids-mesh. The site lives at `mkdocs.yml` + `docs/`.
 docs = [
     "mkdocs>=1.5.3",
     "mkdocs-material>=9.5.3",
@@ -139,7 +138,10 @@ py311 = { features = ["dev", "parquet", "py311"], solve-group = "py311" }
 py312 = { features = ["dev", "parquet", "py312"], solve-group = "py312" }
 py313 = { features = ["dev", "parquet", "py313"], solve-group = "py313" }
 py314 = { features = ["dev", "parquet", "py314"], solve-group = "py314" }
-docs = { features = ["dev", "docs"], solve-group = "docs" }
+# `parquet` is in here because the API reference documents LazyFeatureCollection, whose module
+# hard-imports dask_geopandas -- mkdocstrings imports what it documents, so a docs build without
+# the extra fails on that one page.
+docs = { features = ["dev", "docs", "parquet"], solve-group = "docs" }
 
 [tool.pixi.feature.dev.tasks]
 test = { cmd = "pytest -vvv", description = "Run the test suite" }

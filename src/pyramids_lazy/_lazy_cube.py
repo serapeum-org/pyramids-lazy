@@ -178,7 +178,7 @@ class LazyNetCDF:
             return self._rebuild()
         return self._source
 
-    def persist(self, **kwargs: Any):
+    def persist(self, **kwargs: Any) -> LazyNetCDF:
         """Realise the dask graph in worker memory, staying lazy.
 
         Returns a new :class:`LazyNetCDF` whose arrays are `dask.persist`-ed — the graph is kept but
@@ -195,7 +195,7 @@ class LazyNetCDF:
         arrays = dict(zip(names, persisted))
         return LazyNetCDF(self._source, arrays, self._dim_names)
 
-    def unify_chunks(self):
+    def unify_chunks(self) -> LazyNetCDF:
         """Re-chunk every variable to a common chunking across their shared dimensions.
 
         A no-op when the view holds fewer than two variables. Two variables chunked differently on a

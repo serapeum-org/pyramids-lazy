@@ -8,6 +8,8 @@ be branded without ``_vector_read`` and ``_lazy_collection`` importing each othe
 
 from __future__ import annotations
 
+from types import ModuleType
+
 
 class LazyExtraNotInstalled(ModuleNotFoundError):
     """A dependency from one of this backend's optional extras is missing.
@@ -43,7 +45,7 @@ def parquet_hint(lead: str) -> str:
     return f"{lead} {_PARQUET_INSTALL}"
 
 
-def import_dask_geopandas():
+def import_dask_geopandas() -> ModuleType:
     """Import and return ``dask_geopandas``, or raise a branded ``ImportError``.
 
     Called at module scope by every module that needs ``dask_geopandas``, so the branded hint is
