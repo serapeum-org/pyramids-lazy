@@ -13,7 +13,7 @@ coordinates as columns beside the value columns, on a flat index — reading val
 from pyramids.netcdf import NetCDF
 
 cube = NetCDF.read_file("era5.nc")
-df = cube.to_dask_dataframe(variables=["t2m"], dropna=True, chunks={"time": 24})
+df = cube.to_dask_dataframe(variables=["t2m"], dropna=True, chunks="auto")
 df.groupby("time").t2m.mean().compute()
 ```
 

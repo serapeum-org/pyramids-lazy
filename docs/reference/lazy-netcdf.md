@@ -14,10 +14,17 @@ per gridded variable, alongside the eager cube it was built from.
 from pyramids.netcdf import NetCDF
 
 cube = NetCDF.read_file("era5.nc")
-lazy = cube.chunk({"time": 24})
-lazy.chunksizes
-eager = lazy.mean(dim="time").compute()
+lazy = cube.chunk({"rows": 256, "cols": 256})
+lazy.chunksizes  # per-variable chunking, keyed by the file's own dimension names
+eager = lazy.compute()
 ```
+
+`chunk` takes the same spec as `read_array`: `"auto"`, a single int, a sequence per axis, or a dict
+keyed by `rows` / `cols` / `columns` / `bands` (case-insensitive) or by integer axis index. It is
+**not** keyed by the file's dimension names — `{"time": 24}` raises `ValueError`.
+
+Reductions are not composed lazily yet: `reduce(dim, how=…)` materialises the cube and runs
+eagerly, warning that it has done so. Call `compute()` first if you want that to be explicit.
 
 ## A wrapper, not a subclass
 

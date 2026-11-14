@@ -19,7 +19,7 @@ backend at runtime and routes its lazy operations to it:
 from pyramids.netcdf import NetCDF
 
 cube = NetCDF.read_file("era5.nc")
-lazy = cube.chunk({"time": 24})  # dispatched to this package's build_lazy_cube
+lazy = cube.chunk({"rows": 256, "cols": 256})  # → this package's build_lazy_cube
 ```
 
 Resolution happens two ways, both landing on the same singleton:

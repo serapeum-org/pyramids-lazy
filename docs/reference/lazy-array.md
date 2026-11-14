@@ -25,8 +25,10 @@ the path and window, opens the dataset through a `CachingFileManager`, and reads
 window. The manager is the reason a worker handling many blocks of one file opens it once, and the
 reason the handle is shared process-globally rather than per task.
 
-`chunks` accepts `"auto"`, a single int, a sequence per axis, or a dict keyed by dimension name or
-index; normalization to an explicit per-axis tuple happens here. Spatial-dimension orientation
+`chunks` accepts `"auto"`, a single int, a sequence per axis, or a dict keyed by `rows` / `cols` /
+`columns` / `bands` (case-insensitive) or by integer axis index; normalization to an explicit
+per-axis tuple happens here. The keys are axis roles, **not** the file's dimension names, so
+`{"time": 24}` or `{"x": 512}` raises `ValueError`. Spatial-dimension orientation
 (flips and axis moves needed to present a plane north-up) is applied lazily, inside the graph,
 so it costs nothing until compute.
 
