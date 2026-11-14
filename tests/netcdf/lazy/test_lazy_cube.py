@@ -228,6 +228,26 @@ class TestPersistUnify:
         assert persisted.chunks == lazy.chunks
 
     @requires_dask
+    def test_persist_preserves_a_composed_transformation(self):
+        """`persist()` keeps the composed op, so `compute()` is not the untransformed source."""
+        lazy = NetCDF.read_file(str(MULTIVAR)).get_variable("pr").chunk("auto")
+        cap = 5e-6
+        clipped = lazy.clip(0.0, cap)
+
+        direct = np.asarray(clipped.compute().read_array())
+        persisted = np.asarray(clipped.persist().compute().read_array())
+
+        assert np.nanmax(direct) <= cap
+        np.testing.assert_allclose(persisted, direct)
+
+    @requires_dask
+    def test_persist_carries_the_transformation_records(self):
+        """The composed-op records survive `persist()`, as they already do `unify_chunks()`."""
+        lazy = NetCDF.read_file(str(MULTIVAR)).get_variable("pr").chunk("auto")
+        clipped = lazy.clip(0.0, 5e-6)
+        assert clipped.persist()._records is not None
+
+    @requires_dask
     def test_unify_chunks_is_a_noop_for_a_single_variable(self):
         """With one variable there is nothing to reconcile, so the view is returned unchanged."""
         nc = NetCDF.read_file(str(FIX))

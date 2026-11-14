@@ -193,7 +193,9 @@ class LazyNetCDF:
         names = list(self._arrays)
         persisted = dask.persist(*(self._arrays[name] for name in names), **kwargs)
         arrays = dict(zip(names, persisted))
-        return LazyNetCDF(self._source, arrays, self._dim_names)
+        # Carry _records through, as unify_chunks does: without them compute() takes its
+        # "untransformed" branch and returns self._source.copy(), silently discarding a composed op.
+        return LazyNetCDF(self._source, arrays, self._dim_names, self._records)
 
     def unify_chunks(self) -> LazyNetCDF:
         """Re-chunk every variable to a common chunking across their shared dimensions.
