@@ -31,6 +31,10 @@ theme:
     - announce.dismiss
   palette:
   - media: "(prefers-color-scheme)"
+    # Without these the auto entry falls back to Material's default indigo, so a visitor whose OS
+    # preference is "no preference" saw indigo while the light/dark entries render teal and black.
+    primary: teal
+    accent: purple
     toggle:
       icon: material/brightness-auto
       name: Switch to light mode
@@ -70,7 +74,8 @@ plugins:
             # members come from a base class rather than the class itself; mkdocstrings
             # defaults this to false, which silently drops them.
             inherited_members: true
-  - table-reader
+  # table-reader is intentionally not registered: nothing on this site reads a CSV/TSV into a table.
+  # Its dependency stays in the `docs` group, which mirrors pyramids-mesh deliberately.
   - tags
   - mike:
       alias_type: symlink

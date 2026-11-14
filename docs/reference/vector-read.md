@@ -8,7 +8,7 @@ Backs `FeatureCollection.read_file(backend="dask")` and
 |---|---|
 | Backend methods | `read_vector_lazy`, `read_vector_parquet_lazy` |
 | Module | `pyramids_lazy._vector_read` |
-| Extra required | `parquet` (`pyarrow`, `dask-geopandas`) |
+| Needs | `read_file` → `dask-geopandas`; `read_parquet` → `dask-geopandas` **and** `pyarrow` |
 | Returns | `LazyFeatureCollection` |
 
 ```python

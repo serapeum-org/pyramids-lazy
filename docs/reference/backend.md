@@ -1,7 +1,9 @@
 # Backend contract
 
-The object `pyramids-core` resolves and dispatches to. One instance, one method per lazy operation,
-plus an `api_version` core checks before using it.
+The object `pyramids-core` resolves and dispatches to. One instance exposing one method per lazy
+operation, two class accessors (`lazy_netcdf_type` and `lazy_feature_collection_type`, which hand
+core the classes it forwards its own public names to) and an `api_version` core checks before
+using it.
 
 | | |
 |---|---|
