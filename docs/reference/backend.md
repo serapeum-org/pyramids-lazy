@@ -19,7 +19,11 @@ so the dask/zarr stack is imported only when an operation is actually used — i
 
 The Protocol describes a single object rather than a class discovered per source, mirroring core's
 plot-backend seam rather than its raster/vector driver seam. Both discovery paths resolve to the
-same module-level `backend` instance, so a test that patches one sees the other.
+same module-level `backend` instance.
+
+That is a statement about which object they return, not about patching. Core caches the backend it
+resolved, so a test that replaces `pyramids_lazy.backend` after resolution will not be seen by core
+until the cache is cleared (`clear_compute_backend_cache`).
 
 ## API
 

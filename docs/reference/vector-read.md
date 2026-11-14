@@ -21,10 +21,23 @@ fc.geometry.area.mean().compute()
 
 ## Partitioning
 
-Partitioning is resolved before the read: an explicit `npartitions` or a target partition size is
-translated into the row-group or chunk layout the underlying reader wants, so a caller does not
-have to know whether the source is OGR-readable or already Parquet. Passing neither leaves the
-reader's own default in place rather than guessing a split.
+Partitioning is resolved before the read, and the knobs are passed straight through to
+`dask_geopandas` rather than translated:
+
+- an explicit `npartitions` wins; failing that, an explicit `chunksize` is used;
+- with neither, the split **is** guessed — a remote path (`/vsi`, `http(s)`, `s3`, `gs`, `az`) gets
+  `npartitions=1`, and a local file gets `ceil(filesize / target_bytes_per_partition)`, falling
+  back to `1` if the size cannot be read.
+
+So a default read of a local file is already partitioned by size; pass `npartitions` explicitly
+when you want a particular layout.
+
+## Filters are refused, not ignored
+
+`read_file(backend="dask")` raises `ValueError` if given `bbox`, `mask`, `rows`, `columns`, `where`
+or `layer` — `dask_geopandas.read_file` has no pushdown for them, and silently dropping a filter
+would return more rows than asked for. Filter after loading (`.clip` / `.loc` / `.compute`), or use
+`read_parquet(backend="dask", filters=…)`.
 
 These are the `backend="dask"` branches lifted out of core's `pyramids.feature._read`; the eager
 branches stay in core, which is why a minimal install never evaluates this module.
