@@ -85,7 +85,7 @@ jobs:
           package-manager: pixi
           # Must match the pixi pinned in tests.yml: this job runs `pixi lock` and commits the
           # result, so a floating version could write a lock format the matrix cannot read.
-          package-manager-version: v0.73.0
+          package-manager-version: v0.84.2
           install-groups: "dev"
 
       - name: Update lockfile after version bump

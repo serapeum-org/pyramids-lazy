@@ -29,7 +29,7 @@ jobs:
           activate-environment: py311
           cache: true
           # pixi.lock is lock-file format v7; match tests.yml / lint.yml.
-          version: v0.73.0
+          version: v0.84.2
 
       # py311 is the project's Python floor (`requires-python`); the job audits the LOCKED dependency
       # set resolved for that env — pixi installs the lock's versions, not the oldest resolvable ones,

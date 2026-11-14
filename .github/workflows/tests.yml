@@ -42,7 +42,7 @@ jobs:
           environments: ${{ matrix.environment }}
           activate-environment: ${{ matrix.environment }}
           cache: true
-          version: v0.73.0
+          version: v0.84.2
 
       # The `main` task runs the suite with coverage (--cov-report=xml); --locked asserts the
       # committed pixi.lock matches pyproject (catches a drifted lock at setup).
