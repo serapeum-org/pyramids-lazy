@@ -115,6 +115,14 @@ docs = [
 channels = ["conda-forge"]
 platforms = ["win-64", "linux-64", "osx-64", "osx-arm64"]
 
+# Raise the macOS floor from pixi's default (__osx=13.0) to 14.0. The PyPI pyproj 3.7.2 arm64
+# cp311 wheel — the only pyproj that still supports Python 3.11 — is tagged `macosx_14_0_arm64`,
+# so under the 13.0 default it was rejected and the resolver fell back to the sdist, which fails
+# to build without the PROJ C library (no longer installed from conda). macos-latest runners are
+# macOS 14+, so this only makes the arm64 wheels eligible; it never excludes a lower-tagged wheel.
+[tool.pixi.system-requirements]
+macos = "14.0"
+
 # The interpreter is the one thing PyPI cannot supply to a pixi env, so it is the only conda
 # package. Bounded to the supported range (3.11–3.14, matching the py* features and the project
 # classifiers) so the `dev` / `docs` environments — which carry no per-version py* feature — pick
