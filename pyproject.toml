@@ -170,17 +170,11 @@ faulthandler_exit_on_timeout = true
 # Marker set carried over from pyramids-core so the relocated extras-gated tests register and
 # auto-skip (via tests/_marks.py + conftest) when an extra's headline dep is absent.
 markers = [
-    "vfs: mark a test as a virtual file system (deselect with '-m \"not vfs\"')",
-    "slow: mark test as slow (deselect with '-m \"not slow\"')",
-    "fast: mark test as fast (deselect with '-m \"not fast\"')",
     "core: extras-free test (auto-applied when no extras marker is present)",
-    "plot: tests requiring the [viz] extra (cleopatra) — plotting tests",
-    "lazy: tests requiring the [lazy] extra (dask, distributed, zarr, fsspec)",
-    "interop: tests requiring the optional interop peer dependency",
+    "lazy: tests requiring the dask/zarr lazy stack",
     "netcdf_lazy: tests requiring kerchunk + h5py",
     "parquet: tests requiring the [parquet] extra (pyarrow)",
     "parquet_lazy: tests requiring dask-geopandas",
-    "stac: tests requiring the [stac] extra (pystac-client)",
     "live: live network test against a real external service",
 ]
 
