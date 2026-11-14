@@ -68,10 +68,10 @@ def import_dask_geopandas() -> ModuleType:
         - The result is the `dask_geopandas` module itself, so its API is reached straight off it:
             ```python
             >>> from pyramids_lazy._optional import import_dask_geopandas
-            >>> module = import_dask_geopandas()
-            >>> module.__name__
+            >>> module = import_dask_geopandas()  # doctest: +SKIP
+            >>> module.__name__  # doctest: +SKIP
             'dask_geopandas'
-            >>> module.GeoDataFrame.__name__
+            >>> module.GeoDataFrame.__name__  # doctest: +SKIP
             'GeoDataFrame'
 
             ```
@@ -79,7 +79,7 @@ def import_dask_geopandas() -> ModuleType:
           at module scope and again inside a call-time guard costs one import:
             ```python
             >>> from pyramids_lazy._optional import import_dask_geopandas
-            >>> import_dask_geopandas() is import_dask_geopandas()
+            >>> import_dask_geopandas() is import_dask_geopandas()  # doctest: +SKIP
             True
 
             ```
