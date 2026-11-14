@@ -948,6 +948,10 @@ class LazyNetCDF:
             result = result._subset_band(dim_name, dim_indices)
         if drop:
             for dim_name in scalar_dims:
+                # The False arm is unreachable through the public API and is left as a guard:
+                # `indexers` is a dict, so a dimension cannot repeat, `_subset_band` preserves
+                # dimensions, and `squeeze(dim)` drops only the dimension it is given — so a
+                # scalar selector's dimension is always still present when the loop reaches it.
                 if (
                     dim_name
                     in next(iter(result._current_records().values())).band_names

@@ -8,9 +8,11 @@ be branded without ``_vector_read`` and ``_lazy_collection`` importing each othe
 
 from __future__ import annotations
 
-# Imported at runtime, not under TYPE_CHECKING: `types` costs ~0.9 ms to import and this module is
-# only reached on the [parquet] path, whereas deferring it makes
-# `typing.get_type_hints(import_dask_geopandas)` raise NameError.
+# Imported at runtime rather than under TYPE_CHECKING. Both sides are nearly free, so this is a
+# tie broken towards the simpler code: `types` costs ~0.9 ms (measured with -X importtime) on a
+# module only reached via the [parquet] path, and keeping it here leaves the annotation resolvable
+# by `typing.get_type_hints`, which deferring would turn into a NameError. Nothing in this repo
+# calls `get_type_hints` today — it is kept as a property of the annotation, not for a caller.
 from types import ModuleType
 
 

@@ -5,8 +5,10 @@ This module covers the two paths that one leaves out:
 
 - **the v1 lazy/eager boundary** — a multi-variable container cannot compose at the cube level, so
   every array-native op materialises the cube, warns once and runs eagerly;
-- **argument validation** — the checks each op runs *before* it looks at the records, so a bad
-  `boundary=` / `label=` / `decimals=` / `method=` is refused without touching the store.
+- **argument validation** — a bad `boundary=` / `label=` / `decimals=` / `method=` is refused with
+  a specific error rather than producing a wrong result. These tests assert the error, not the
+  point at which it is raised: some checks (`squeeze`, `isel`, `sel`) necessarily consult the
+  cube's dimensions first.
 """
 
 from __future__ import annotations
@@ -167,7 +169,7 @@ class TestSingleVariableBoundary:
 
 
 class TestArgumentValidation:
-    """Each op validates its arguments before it looks at the records or touches the store."""
+    """Each op refuses an invalid argument with its own specific error."""
 
     @requires_dask
     @pytest.mark.parametrize(
