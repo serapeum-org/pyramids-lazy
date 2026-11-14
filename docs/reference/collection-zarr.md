@@ -7,12 +7,12 @@ Backs `DatasetCollection.to_zarr()` and `DatasetCollection.from_zarr()`. The 4-D
 |---|---|
 | Backend methods | `write_collection_to_zarr`, `read_collection_from_zarr` |
 | Module | `pyramids_lazy._collection_zarr` |
-| Returns | a `DatasetCollection` on read |
+| Returns | a `DatasetCollection` on read; `None` (or a `Delayed`) on write |
 
 ```python
-from pyramids.dataset.collection import DatasetCollection
+from pyramids.dataset import DatasetCollection
 
-cube = DatasetCollection.read_separate_files("rasters/*.tif", with_order=False)
+cube = DatasetCollection.read_multiple_files("rasters", with_order=False)
 cube.to_zarr("cube.zarr")
 back = DatasetCollection.from_zarr("cube.zarr")
 ```
@@ -22,8 +22,10 @@ back = DatasetCollection.from_zarr("cube.zarr")
 A collection can be extended along an existing axis without rewriting the store: the new data is
 written into a region of the existing arrays, and the collection metadata (`_meta`, `_files`) is
 re-finalised afterwards so a later read reconstructs the full cube. The region is translated to
-per-axis slices, so an append that does not line up on the chunk grid is refused rather than
-silently writing a partial chunk.
+per-axis slices, and an unknown dimension name is refused with a `ValueError`.
+
+Chunk-grid alignment is **not** validated. A region that straddles a chunk boundary is written as
+given, so it is the caller's job to append on the chunk grid.
 
 As with the single-`Dataset` path, the pyramids geobox is persisted as GeoZarr attributes so
 standard readers can reconstruct it.

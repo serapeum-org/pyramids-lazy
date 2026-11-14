@@ -7,7 +7,7 @@ recognise a Zarr store.
 |---|---|
 | Backend methods | `write_dataset_to_zarr`, `read_dataset_from_zarr`, `classify_zarr_store` |
 | Module | `pyramids_lazy._zarr` |
-| Returns | a `Dataset` on read; the resolved store on write |
+| Returns | a `Dataset` on read; `None` on write, or a `dask.delayed.Delayed` when `compute=False` |
 
 ```python
 from pyramids.dataset import Dataset
