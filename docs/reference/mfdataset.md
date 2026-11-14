@@ -7,13 +7,16 @@ single lazy `dask.array.Array` of shape `(n_files, *variable_shape)`.
 |---|---|
 | Backend method | `open_mfdataset` |
 | Module | `pyramids_lazy._mfdataset` |
-| Returns | a lazy `NetCDF` over the stacked variable |
+| Returns | `dask.array.Array` of shape `(n_files, *variable_shape)` |
+
+It returns the stacked dask array itself, **not** a `NetCDF` wrapping it — there is no cube to call
+`read_array()` on:
 
 ```python
 from pyramids.netcdf import NetCDF
 
-cube = NetCDF.open_mfdataset("noah_2009*.nc", variable="precipitation")
-cube.read_array().sum(axis=0).compute()
+arr = NetCDF.open_mfdataset("noah_2009*.nc", variable="precipitation")
+arr.sum(axis=0).compute()
 ```
 
 ## Deliberately narrow
@@ -23,7 +26,10 @@ hydrology and meteorology case — open 365 daily files, stack one gridded varia
 time — that narrowness is the whole point: no metadata inference means no failure modes when one
 file in the set disagrees with the others.
 
-Metadata extraction across the file set can fan out in parallel; the pixel data stays lazy.
+The per-file reads are sequential, and the `parallel=` argument is **deprecated and inert** —
+passing it emits a `DeprecationWarning` and changes nothing. It needs to do nothing: every per-file
+read is already lazy, so the scheduler parallelises the per-chunk reads at compute time without an
+eager `dask.delayed` fan-out.
 
 ## API
 

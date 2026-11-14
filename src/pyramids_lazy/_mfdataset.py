@@ -1,4 +1,4 @@
-"""Multi-file NetCDF opener with optional parallel metadata fan-out.
+"""Multi-file NetCDF opener stacking one variable into a lazy dask array.
 
 `NetCDF.open_mfdataset(paths, variable,...)` opens many
 NetCDF files and stacks a single named variable into a single lazy
