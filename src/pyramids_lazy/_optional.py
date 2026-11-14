@@ -63,6 +63,26 @@ def import_dask_geopandas() -> ModuleType:
             ``pyramids-lazy[parquet]``. A ``ModuleNotFoundError`` subclass, so optional-import
             guards and :func:`pytest.importorskip` keep treating it as "absent" rather than
             "broken".
+
+    Examples:
+        - The result is the `dask_geopandas` module itself, so its API is reached straight off it:
+            ```python
+            >>> from pyramids_lazy._optional import import_dask_geopandas
+            >>> module = import_dask_geopandas()
+            >>> module.__name__
+            'dask_geopandas'
+            >>> module.GeoDataFrame.__name__
+            'GeoDataFrame'
+
+            ```
+        - Every call hands back the single module object `sys.modules` already holds, so calling it
+          at module scope and again inside a call-time guard costs one import:
+            ```python
+            >>> from pyramids_lazy._optional import import_dask_geopandas
+            >>> import_dask_geopandas() is import_dask_geopandas()
+            True
+
+            ```
     """
     try:
         import dask_geopandas as module

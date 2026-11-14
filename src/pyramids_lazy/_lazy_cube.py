@@ -184,8 +184,49 @@ class LazyNetCDF:
         Returns a new :class:`LazyNetCDF` whose arrays are `dask.persist`-ed — the graph is kept but
         its results are held in memory / across the cluster, so later reads do not recompute it.
 
+        A composed array-native op survives the round trip: the deferred per-variable records are
+        carried onto the new view, exactly as `unify_chunks()` carries them, so `persist().compute()`
+        rebuilds the *transformed* cube instead of falling back to the untransformed source. A view
+        straight from `NetCDF.chunk()` carries no records, and `persist()` invents none.
+
+        Args:
+            **kwargs: Forwarded verbatim to `dask.persist` — for example `scheduler="threads"` or
+                `optimize_graph=False`.
+
         Returns:
-            LazyNetCDF: A lazy view over the persisted arrays.
+            LazyNetCDF: A lazy view over the persisted arrays, keeping this view's chunking and its
+            composed op.
+
+        Examples:
+            - Persisting stays lazy and keeps the chunking:
+                ```python
+                >>> from pyramids.netcdf import NetCDF
+                >>> cube = NetCDF.read_file("tests/data/netcdf/cf__5v__1d4-4d1__y-asc.nc")
+                >>> lazy = cube.get_variable("temperature").chunk("auto")
+                >>> lazy.chunks
+                {'time': (4,), 'pressure_level': (3,), 'lat': (5,), 'lon': (6,)}
+                >>> lazy.persist().chunks == lazy.chunks
+                True
+                >>> cube.close()
+
+                ```
+            - A composed reduction survives persisting: the view computes to the time-collapsed
+              result, not back to the four-step source it was read from:
+                ```python
+                >>> from pyramids.netcdf import NetCDF
+                >>> cube = NetCDF.read_file("tests/data/netcdf/cf__5v__1d4-4d1__y-asc.nc")
+                >>> lazy = cube.get_variable("temperature").chunk("auto")
+                >>> lazy.compute().read_array().shape
+                (4, 3, 5, 6)
+                >>> lazy.reduce("time", "mean").persist().compute().read_array().shape
+                (3, 5, 6)
+                >>> cube.close()
+
+                ```
+
+        See Also:
+            unify_chunks: Reconciles shared-dimension chunking, carrying a composed op through too.
+            compute: Materialises the view — the rebuilt transformed cube once an op has composed.
         """
         import_dask(_DASK_MISSING)
         import dask
@@ -200,8 +241,9 @@ class LazyNetCDF:
     def unify_chunks(self) -> LazyNetCDF:
         """Re-chunk every variable to a common chunking across their shared dimensions.
 
-        A no-op when the view holds fewer than two variables. Two variables chunked differently on a
-        shared dimension come out sharing one chunking afterward.
+        A no-op when the view holds fewer than two variables — that view is returned unchanged. Two
+        variables chunked differently on a shared dimension come out sharing one chunking afterward.
+        A composed array-native op is carried onto the result, as it is through `persist()`.
 
         Returns:
             LazyNetCDF: A lazy view whose variables agree on their shared-dimension chunking.
