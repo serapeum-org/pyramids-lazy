@@ -5,10 +5,10 @@ name: Pure Wheel - Build & Test
 # OS/Python matrix. Runs on merge to main, manual dispatch, and when github-release calls it as a
 # release gate.
 #
-# HEADS-UP: until pyramids-core publishes the `pyramids.lazy_support` facade to PyPI, this installs
-# the RELEASED pyramids-core and `import pyramids_lazy` raises "upgrade pyramids-core" — so the
-# push-to-main run (and the github-release gate) will FAIL until core ships that facade. That is the
-# intended signal that a lazy release is not yet possible.
+# The import step installs the RELEASED pyramids-core from PyPI and runs `pyramids_lazy._seam`
+# against it. This was blocked until core shipped the `pyramids.lazy_support` facade; pyramids-core
+# 0.79.0 now publishes it, and the runtime floor (`pyramids-core>=0.79.0`) guarantees pip resolves a
+# core that carries the facade, so this gate passes.
 
 permissions:
   contents: read
@@ -104,7 +104,7 @@ jobs:
 
       - name: Verify package import
         # import pyramids_lazy runs its `_seam` facade check against the installed pyramids-core.
-        # This is the step blocked until core releases the facade (see the header).
+        # Satisfied once core ships `pyramids.lazy_support` (>=0.79.0); see the header.
         run: python -c "import pyramids_lazy; print(pyramids_lazy.__version__)"
 
       - name: Install test runner

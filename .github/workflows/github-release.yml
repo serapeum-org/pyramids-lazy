@@ -1,9 +1,9 @@
 name: github-release
 
 # Manual release cutter (commitizen bump -> tag -> GitHub release), ported from pyramids-mesh.
-# Dispatch-only, so it never runs on ordinary CI. It gates on pure-wheel-test, which cannot pass
-# until pyramids-core publishes the `pyramids.lazy_support` facade to PyPI (see that workflow's
-# header); do not cut a release before then.
+# Dispatch-only, so it never runs on ordinary CI. It gates on pure-wheel-test, which installs the
+# released pyramids-core from PyPI; that gate is unblocked now core 0.79.0 ships the
+# `pyramids.lazy_support` facade this backend requires.
 
 permissions:
   contents: read
