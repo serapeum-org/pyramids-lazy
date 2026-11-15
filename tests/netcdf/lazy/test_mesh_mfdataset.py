@@ -317,7 +317,7 @@ class TestAccessors:
         assert lazy.mesh is not None
         assert lazy.crs == head.crs
         assert sorted(lazy.data_variable_names) == ["d", "z"]
-        assert set(lazy.variables) == {"d"}
+        assert set(lazy.temporal_variables) == {"d"}
         assert lazy.chunks == {"d": lazy["d"].chunks}
         assert "d" in lazy and "z" in lazy
         assert "absent" not in lazy

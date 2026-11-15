@@ -401,8 +401,12 @@ class LazyMeshDataset:
         return list(self._var_arrays)
 
     @property
-    def variables(self) -> dict:
-        """The lazy time-stacked dask array of each temporal variable, keyed by name."""
+    def temporal_variables(self) -> dict:
+        """The lazy time-stacked dask array of each temporal variable, keyed by name.
+
+        Only temporal variables appear here -- static ones are not stacked (see
+        :attr:`temporal_variable_names`); :attr:`data_variable_names` lists both.
+        """
         return dict(self._var_arrays)
 
     @property
