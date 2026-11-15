@@ -8,8 +8,12 @@ name: github-release
 # Release-branch model: `release-branch` is the branch the release is cut on (the entry point). Leave
 # it empty and the `prepare` job creates one from the tip of main and uses it for everything, exactly
 # as if it had been passed. `prepare` runs FIRST so pure-wheel-test and the bump/tag/release all run
-# on that ONE branch (test what you release). The branch is then merged into main with a MERGE COMMIT,
-# so the tagged commit is always an ancestor of main and the tag is never orphaned (as 0.1.1 was).
+# on that ONE branch. (pure-wheel-test builds the pre-bump tip; the bump only adds the
+# version/changelog/lockfile commit, so the tested and released trees differ only by that commit.)
+# The branch is then merged into main with a MERGE COMMIT, so ON A SUCCESSFUL MERGE the tagged commit
+# is an ancestor of main (fixing the orphaned tag that 0.1.1 hit). If the auto-merge never succeeds
+# the `release` job fails red and the tag + GitHub Release are left on the throwaway branch for manual
+# cleanup; PyPI is not published, because pypi-release gates on this job's success.
 
 permissions:
   contents: read
@@ -137,9 +141,10 @@ jobs:
           install-groups: "dev"
 
       # Land the bump/changelog/tag on main automatically. `--merge` forces a MERGE COMMIT (never
-      # squash/rebase), so the tagged bump commit becomes an ancestor of main and the tag is never
-      # orphaned. main is unprotected and repo auto-merge is disabled, so we merge immediately; the
-      # retry only rides out GitHub still computing mergeability right after create.
+      # squash/rebase), so once this merges the tagged bump commit is an ancestor of main. main is
+      # unprotected and repo auto-merge is disabled, so we merge immediately; the retry only rides out
+      # GitHub still computing mergeability right after create. If the loop exhausts, the job fails and
+      # the tag/Release stay on the throwaway branch (off main) for manual cleanup — see the header.
       - name: Open and merge the release PR into main
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
