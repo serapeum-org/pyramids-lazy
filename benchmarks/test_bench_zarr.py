@@ -37,6 +37,8 @@ def test_write_dataset_to_zarr(benchmark, source_dataset, tmp_path):
 @pytest.mark.benchmark(group="zarr-write")
 def test_write_dataset_to_zarr_with_overviews(benchmark, source_dataset, tmp_path):
     """Zarr write that also builds decimated overview levels [2, 4]."""
+    # Rounds 2..N rebuild overviews over the same source handle (and its .tif.ovr sidecar written on
+    # round 1), so this measures steady-state overview builds, not a cold first build.
     store = str(tmp_path / "ov.zarr")
     benchmark(
         lambda: backend.write_dataset_to_zarr(
