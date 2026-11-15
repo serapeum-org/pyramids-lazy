@@ -29,6 +29,15 @@ Core reaches this through a ``getattr`` probe on the backend singleton (``open_m
 ``lazy_mesh_type``), **not** a ``ComputeBackend`` Protocol method: the Protocol is
 ``runtime_checkable`` and core drops any backend failing its structural ``isinstance`` check, so a
 Protocol addition would reject every already-released plugin. See serapeum-org/pyramids-core#1458.
+
+Coupling note: this reaches core only through the *public* :class:`MeshDataset` class (as the raster
+``_mfdataset`` reaches ``NetCDF``), but then drives it through private members that are **not** on the
+versioned ``pyramids.lazy_support`` facade -- ``_data_variables``, ``_file_name``,
+:meth:`MeshDataset._assert_same_topology`, :meth:`MeshDataset._rebuild`, and the hand-mirrored
+``_TIME_UNITS_ATTR``. These are exactly what core's own ``concat`` / ``open_mfdataset`` use, so they
+are de-facto stable, but a core rename would break this plugin with no ``LAZY_SUPPORT_API_VERSION``
+guard to catch it at import. Graduating them onto the facade is tracked as follow-up; the parity
+tests (whose fixtures stamp files with core's own ``TIME_UNITS_ATTR``) would fail loudly on a drift.
 """
 
 from __future__ import annotations
