@@ -80,6 +80,10 @@ dev = [
     "commitizen>=4.8.4",
     "build>=1.0.0",
     "twine>=5.0.0",
+    # Micro-benchmark harness for the performance suite under benchmarks/ (not a CI gate). Provides
+    # the `benchmark` fixture + marker; only run via the `benchmark` task — benchmarks/ is outside
+    # testpaths, so the normal test tasks never collect it.
+    "pytest-benchmark>=5.1.0",
 ]
 # The MkDocs + mike documentation stack. Resolved by the `docs` pixi environment and the
 # github-pages-mkdocs workflow; mirrors pyramids-mesh. The site lives at `mkdocs.yml` + `docs/`.
@@ -157,6 +161,9 @@ build-dist = { cmd = "python -m build", description = "Build sdist and wheel for
 publish-pypi = { cmd = "twine upload --non-interactive --repository pypi dist/*", depends-on = ["build-dist"], description = "Build and upload to PyPI" }
 cz-changelog = { cmd = "cz changelog", description = "Generate the changelog with commitizen" }
 cz-bump = { cmd = "cz bump", description = "Bump the version with commitizen" }
+# Performance benchmarks (benchmarks/, excluded from the normal test tasks). Extra args forward to
+# pytest-benchmark, e.g. `pixi run -e dev benchmark --benchmark-autosave`.
+benchmark = { cmd = "pytest benchmarks --benchmark-only --benchmark-columns=min,median,mean,stddev,rounds", description = "Run the performance benchmarks" }
 
 [tool.pytest.ini_options]
 # "." makes the relocated-from-core ``tests`` package importable (the suite uses

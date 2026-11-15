@@ -130,6 +130,8 @@ nav:
     - Zarr (DatasetCollection): reference/collection-zarr.md
     - Lazy vector reads: reference/vector-read.md
     - Lazy feature collection: reference/lazy-feature-collection.md
+  - Development:
+    - Testing & benchmarks: how-to/testing.md
   - About:
     - Change-log: change-log.md
     - License: LICENSE.md

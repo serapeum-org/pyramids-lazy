@@ -31,6 +31,18 @@ through the entry point and routes its lazy operations to it automatically.
 <https://serapeum-org.github.io/pyramids-lazy/> — the backend contract, a reference page per lazy
 operation, and installation notes. Built from `mkdocs.yml` + `docs/`.
 
+## Testing & benchmarks
+
+Tests run with `pytest` via `pixi` (`pixi run -e dev main` runs the suite with coverage). See the
+[testing guide](https://serapeum-org.github.io/pyramids-lazy/how-to/testing/) for the markers, the pixi
+environments, and the full CI layout.
+
+- **Coverage:** [Codecov](https://app.codecov.io/gh/serapeum-org/pyramids-lazy)
+- **Performance benchmarks** (`pytest-benchmark`): run locally with `pixi run -e dev benchmark`. The
+  [Benchmarks workflow](https://github.com/serapeum-org/pyramids-lazy/actions/workflows/benchmarks.yml) runs
+  nightly and uploads each run's `benchmark-results.json` as an artifact — see
+  [where to check the results](https://serapeum-org.github.io/pyramids-lazy/how-to/testing/#where-to-check-the-benchmark-results).
+
 ## License
 
 GNU General Public License v3.
