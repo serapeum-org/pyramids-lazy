@@ -163,8 +163,17 @@ jobs:
             --body "Automated release PR. The tag was cut on \`$HEAD_BRANCH\`; this merges it into main with a merge commit so the tagged commit is an ancestor of main and the tag is never orphaned. Do not squash or rebase."
 
           for attempt in 1 2 3 4 5 6; do
-            if gh pr merge "$HEAD_BRANCH" --merge --delete-branch; then
+            if gh pr merge "$HEAD_BRANCH" --merge; then
               echo "Release PR merged into main."
+              exit 0
+            fi
+            # A failed `gh pr merge` can still have landed the merge (transient error after the
+            # merge, or a prior attempt). Treat an already-MERGED PR as success so we never fail a
+            # merge that actually happened — a false failure here would tempt a re-dispatch and
+            # double-bump on top of the already-merged version.
+            STATE="$(gh pr view "$HEAD_BRANCH" --json state --jq .state 2>/dev/null || true)"
+            if [ "$STATE" = "MERGED" ]; then
+              echo "Release PR already merged into main."
               exit 0
             fi
             echo "Merge not ready yet (attempt ${attempt}); waiting for mergeability..."
@@ -172,3 +181,13 @@ jobs:
           done
           echo "::error::Release PR for ${HEAD_BRANCH} could not be merged into main."
           exit 1
+
+      # Best-effort cleanup, kept OUT of the merge step so a branch-deletion hiccup can never fail a
+      # release that already merged. The repo's delete_branch_on_merge usually removes it first.
+      - name: Delete the merged release branch
+        if: ${{ success() && needs.prepare.outputs.branch != 'main' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="${{ needs.prepare.outputs.branch }}"
+          git push origin --delete "$BRANCH" || echo "branch ${BRANCH} already removed; nothing to delete"
