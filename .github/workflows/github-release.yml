@@ -11,9 +11,11 @@ name: github-release
 # on that ONE branch. (pure-wheel-test builds the pre-bump tip; the bump only adds the
 # version/changelog/lockfile commit, so the tested and released trees differ only by that commit.)
 # The branch is then merged into main with a MERGE COMMIT, so ON A SUCCESSFUL MERGE the tagged commit
-# is an ancestor of main (fixing the orphaned tag that 0.1.1 hit). If the auto-merge never succeeds
-# the `release` job fails red and the tag + GitHub Release are left on the throwaway branch for manual
-# cleanup; PyPI is not published, because pypi-release gates on this job's success.
+# is an ancestor of main (fixing the orphaned tag that 0.1.1 hit). On ANY failure before the final
+# merge (the merge-commit preflight, pure-wheel-test, the bump itself, or an exhausted merge loop) the
+# job goes red and the throwaway `release/auto-*` branch is left on origin — with the tag + GitHub
+# Release too, if the failure came after they were cut. PyPI is not published (pypi-release gates on
+# this job's success). Cleanup of abandoned branches/tags on a failed release is tracked in #29.
 
 permissions:
   contents: read
