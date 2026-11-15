@@ -2,9 +2,11 @@
 
 These benchmarks are deliberately *outside* ``testpaths = ["tests"]``, so the ``test`` / ``main`` /
 CI test tasks never collect them. Run them explicitly with ``pixi run -e dev benchmark`` (or
-``pytest benchmarks``). They measure the compute backend's own hot paths — the hand-built dask graph
-(``build_lazy_array``), the only fully-parallel raster Zarr write, and the lazy NetCDF read — for
-regression detection, not profiling.
+``pytest benchmarks``). They cover the compute backend's hot paths — the hand-built dask graph
+(``build_lazy_array``), the only fully-parallel raster Zarr write, and the lazy NetCDF read — plus an
+eager-core read as the eager-vs-lazy baseline, for regression detection, not profiling. The Zarr
+benchmarks call ``backend.*`` directly; the NetCDF ones go through core's ``NetCDF`` wrappers, which
+dispatch into the backend.
 
 Two methodology choices make the numbers comparable run to run:
 

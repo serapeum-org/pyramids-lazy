@@ -37,15 +37,19 @@ Saved runs live under `.benchmarks/` (git-ignored).
 
 ## What is covered
 
-These target the compute backend's own code, not core's eager paths:
+These exercise the backend's lazy paths, plus an eager-core baseline for the eager-vs-lazy comparison.
+The Zarr benchmarks call the `backend.*` ops directly; the NetCDF benchmarks drive them through core's
+public `NetCDF` wrappers (which dispatch into the backend):
 
 - **`test_bench_zarr.py`** — `write_dataset_to_zarr` (plain and with overview levels) and
   `read_dataset_from_zarr`: the only fully-parallel raster Zarr write/read path.
 - **`test_bench_netcdf.py`** — `NetCDF.read_array` **eager vs lazy (dask)** (`read_array_lazy` /
   `build_lazy_array`, build-only and build+compute) and `NetCDF.chunk` (`build_lazy_cube`).
 
-The NetCDF read group keeps the eager read alongside the lazy one in the same comparison group, so a
-run shows the eager-vs-lazy gap directly.
+The NetCDF read group keeps the eager read alongside the lazy ones in one comparison group, so a run
+shows the eager-vs-lazy gap directly. Note that `test_read_array_lazy_build` in that group times only
+graph construction (no compute), so its row is a build cost, not a read — read it next to
+`test_read_array_lazy_compute`, which is the full build-plus-compute.
 
 ## Why this is not a CI gate
 
