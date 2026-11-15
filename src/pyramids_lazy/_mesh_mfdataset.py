@@ -67,6 +67,24 @@ def _stamp_order(stamp: Any) -> tuple:
 
     Returns:
         tuple: ``(year, month, day, hour, minute, second, microsecond)``.
+
+    Examples:
+        - A ``datetime64`` day decomposes into its calendar fields:
+            ```python
+            >>> import numpy as np
+            >>> from pyramids_lazy._mesh_mfdataset import _stamp_order
+            >>> _stamp_order(np.datetime64("2001-01-15"))
+            (2001, 1, 15, 0, 0, 0, 0)
+
+            ```
+        - The tuples order chronologically, so a lexically-earlier file can sort later:
+            ```python
+            >>> import numpy as np
+            >>> from pyramids_lazy._mesh_mfdataset import _stamp_order
+            >>> _stamp_order(np.datetime64("2001-01-10")) > _stamp_order(np.datetime64("2001-01-02"))
+            True
+
+            ```
     """
     moment = stamp if hasattr(stamp, "year") else np.datetime64(stamp, "us").item()
     return (
@@ -95,6 +113,31 @@ def _resolve_mesh_paths(paths: str | Path | list) -> list:
 
     Raises:
         ValueError: ``paths`` is an empty sequence, or a glob pattern that matches no file.
+
+    Examples:
+        - A plain (non-glob) filename passes through as a one-element list:
+            ```python
+            >>> from pyramids_lazy._mesh_mfdataset import _resolve_mesh_paths
+            >>> _resolve_mesh_paths("run_t2.nc")
+            ['run_t2.nc']
+
+            ```
+        - An explicit sequence keeps its given order (sorting happens later, if at all):
+            ```python
+            >>> from pyramids_lazy._mesh_mfdataset import _resolve_mesh_paths
+            >>> _resolve_mesh_paths(["b.nc", "a.nc"])
+            ['b.nc', 'a.nc']
+
+            ```
+        - An empty sequence is refused rather than read as an empty dataset:
+            ```python
+            >>> from pyramids_lazy._mesh_mfdataset import _resolve_mesh_paths
+            >>> _resolve_mesh_paths([])
+            Traceback (most recent call last):
+                ...
+            ValueError: open_mfdataset() got an empty list of paths; there is nothing to open.
+
+            ```
     """
     if isinstance(paths, (str, Path)):
         pattern = str(paths)
@@ -288,6 +331,34 @@ class LazyMeshDataset:
     :class:`~pyramids.netcdf.ugrid.MeshDataset` **identical** to the eager
     ``MeshDataset.open_mfdataset`` result -- the rebuild goes through core's own
     :meth:`MeshDataset._rebuild`.
+
+    Examples:
+        - Build one from a two-step run, inspect it lazily, then materialise and use it. The
+          wrapper is produced by :func:`open_mesh_mfdataset`, never constructed directly:
+            ```python
+            >>> import os, tempfile, numpy as np
+            >>> from pyramids.netcdf.ugrid import MeshDataset
+            >>> from pyramids_lazy._mesh_mfdataset import open_mesh_mfdataset
+            >>> step = MeshDataset.from_arrays(
+            ...     node_x=np.array([0.0, 1.0, 1.0, 0.0]),
+            ...     node_y=np.array([0.0, 0.0, 1.0, 1.0]),
+            ...     face_node_connectivity=np.array([[0, 1, 2], [0, 2, 3]]),
+            ...     data={"d": np.array([[1.0, 2.0]])},
+            ...     data_locations={"d": "face"},
+            ... )
+            >>> step["d"].dimensions = ("time", "mesh2d_nFaces")
+            >>> path = os.path.join(tempfile.mkdtemp(), "step.nc")
+            >>> step.to_file(path)
+            >>> lazy = open_mesh_mfdataset([path, path], sort=False)
+            >>> lazy.data_variable_names
+            ['d']
+            >>> lazy["d"].chunks[0]
+            (1, 1)
+            >>> eager = lazy.compute()
+            >>> eager["d"].data[:, 0].tolist()
+            [1.0, 1.0]
+
+            ```
     """
 
     def __init__(
@@ -446,12 +517,36 @@ def open_mesh_mfdataset(
         AlignmentError: A file sits on a different topology than the head file.
 
     Examples:
-        - Stack a run written one file per day and materialise it:
+        - Stack one temporal step with itself and read the lazy shape, then materialise it. The
+          stack is two time steps long but nothing is read from disk until ``.compute()``:
+            ```python
+            >>> import os, tempfile, numpy as np
+            >>> from pyramids.netcdf.ugrid import MeshDataset
+            >>> from pyramids_lazy._mesh_mfdataset import open_mesh_mfdataset
+            >>> step = MeshDataset.from_arrays(
+            ...     node_x=np.array([0.0, 1.0, 1.0, 0.0]),
+            ...     node_y=np.array([0.0, 0.0, 1.0, 1.0]),
+            ...     face_node_connectivity=np.array([[0, 1, 2], [0, 2, 3]]),
+            ...     data={"d": np.array([[1.0, 2.0]])},
+            ...     data_locations={"d": "face"},
+            ... )
+            >>> step["d"].dimensions = ("time", "mesh2d_nFaces")
+            >>> path = os.path.join(tempfile.mkdtemp(), "step.nc")
+            >>> step.to_file(path)
+            >>> lazy = open_mesh_mfdataset([path, path], sort=False)
+            >>> lazy.temporal_variable_names
+            ['d']
+            >>> lazy["d"].shape
+            (2, 2)
+            >>> lazy.compute()["d"].n_time_steps
+            2
+
+            ```
+        - The realistic entry point is a glob over a run written one file per day:
             ```python
             >>> from pyramids_lazy._mesh_mfdataset import open_mesh_mfdataset
             >>> lazy = open_mesh_mfdataset("out/*_map.nc")        # doctest: +SKIP
-            >>> lazy["waterlevel"].shape[0]                       # doctest: +SKIP
-            >>> eager = lazy.compute()                            # doctest: +SKIP
+            >>> waterlevels = lazy["waterlevel"].mean(axis=0).compute()  # doctest: +SKIP
             ```
     """
     from pyramids.netcdf.ugrid import MeshDataset
