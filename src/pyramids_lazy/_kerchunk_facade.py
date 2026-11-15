@@ -14,9 +14,9 @@ Two helpers:
   :class:`kerchunk.combine.MultiZarrToZarr`, concatenating along a
   user-specified dimension (usually `"time"`).
 
-Kerchunk is not a hard dependency — it lives in the
-`[lazy]` optional extra. Helpers raise a clear
-:class:`ImportError` when kerchunk is missing.
+Kerchunk is imported lazily — it ships as a pyramids-lazy
+dependency, so helpers raise a clear :class:`ImportError`
+naming it when the install is incomplete.
 """
 
 from __future__ import annotations
@@ -64,8 +64,8 @@ def _scalar_fill_value_shim() -> Iterator[None]:
     actually call, restoring the originals in a ``finally`` so global state is
     never left modified.
     """
-    # Optional-dependency imports (kerchunk/zarr live in the [lazy]
-    # extra); resolved lazily, mirroring _require_kerchunk_single below.
+    # Optional-dependency imports (kerchunk/zarr are pyramids-lazy
+    # dependencies); resolved lazily, mirroring _require_kerchunk_single below.
     modules: list[Any] = []
     try:
         from kerchunk import hdf as _khdf
@@ -256,8 +256,8 @@ def to_kerchunk(
         ValueError: When `backend` is not `"native"` or `"legacy"`.
 
     Examples:
-        - Emit a manifest for one NetCDF file (requires the
-          `[lazy]` extra):
+        - Emit a manifest for one NetCDF file (requires kerchunk, a
+          pyramids-lazy dependency):
             ```python
             >>> from pathlib import Path  # doctest: +SKIP
             >>> from pyramids_lazy._kerchunk_facade import to_kerchunk  # doctest: +SKIP

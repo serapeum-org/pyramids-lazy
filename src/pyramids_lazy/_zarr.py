@@ -13,7 +13,7 @@ chunk file. This module provides two helpers wrapped by
   :class:`Dataset` with the recovered geobox.
 
 Zarr and fsspec are imported lazily inside the helpers — pyramids'
-core import stays free of both even when the `[lazy]` extra is not
+core import stays free of both even when zarr and fsspec are not
 installed.
 
 The no-data sentinel is written three times, in spellings that are not
@@ -566,8 +566,8 @@ def write_dataset_to_zarr(
         ValueError: `overview_factors` was given with `compute=False`.
 
     Examples:
-        - Round-trip a small Dataset through Zarr (requires the
-          `[lazy]` extra for zarr + dask):
+        - Round-trip a small Dataset through Zarr (requires zarr + dask,
+          pyramids-lazy dependencies):
             ```python
             >>> import tempfile  # doctest: +SKIP
             >>> from pathlib import Path  # doctest: +SKIP
@@ -896,8 +896,8 @@ def read_dataset_from_zarr(
 
     Examples:
         - Read a store that was written with :func:`write_dataset_to_zarr`
-          and check the recovered shape (requires the `[lazy]`
-          extra):
+          and check the recovered shape (requires zarr + dask,
+          pyramids-lazy dependencies):
             ```python
             >>> import tempfile  # doctest: +SKIP
             >>> from pathlib import Path  # doctest: +SKIP

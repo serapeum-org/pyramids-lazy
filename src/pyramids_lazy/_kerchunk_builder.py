@@ -69,7 +69,8 @@ def _require_h5py() -> Any:
         The imported ``h5py`` module.
 
     Raises:
-        ImportError: When h5py is not installed (points at the ``[lazy]`` extra).
+        ImportError: When h5py is not installed; the message names ``h5py``, a
+            pyramids-lazy dependency.
     """
     return import_h5py(_H5PY_IMPORT_ERROR)
 
