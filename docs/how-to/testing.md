@@ -130,6 +130,12 @@ compare absolute milliseconds commit-to-commit.
   to a benchmark history on the dedicated **`benchmarks`** branch (kept separate from the `gh-pages` docs branch).
   When a benchmark regresses by **≥ 1.5×** (the `150%` alert threshold, loose on purpose because shared runners are
   noisy), the action posts a **commit comment that @-mentions the maintainer**. It never fails the nightly run.
+  One-time setup: the `benchmarks` data branch must be created once as an empty orphan branch (the action appends
+  to it but does not create it), and alerts begin from the second run (the first seeds the baseline):
+
+  ```bash
+  git switch --orphan benchmarks && git commit --allow-empty -m "init benchmark data" && git push -u origin benchmarks
+  ```
 - **Comparing runs locally:** compare two runs' JSON directly:
 
   ```bash

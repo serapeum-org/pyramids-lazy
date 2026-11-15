@@ -49,8 +49,9 @@ jobs:
         # which the docs site owns) and, when a benchmark regresses past the threshold, posts a commit
         # comment that @-mentions the cc'd users. Deliberately does NOT fail the run — shared-runner
         # noise makes absolute ms unreliable, so the 150% threshold catches only gross (>=1.5x)
-        # regressions. The first run seeds the baseline with no alert; the data branch is created and
-        # maintained by the action.
+        # regressions. The `benchmarks` data branch must be created ONCE as an empty orphan branch
+        # before the first run — the action appends to it, it does not create it. The first run then
+        # seeds the baseline with no alert; alerts start from the second run.
         uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
         with:
           tool: "pytest"
