@@ -135,10 +135,14 @@ class LazyComputeBackend:
     def lazy_mesh_type(self) -> type:
         """Return the class :meth:`open_mesh_mfdataset` produces (the lazy time-stacked mesh).
 
-        The mesh analogue of :meth:`lazy_netcdf_type`: core can forward a public
-        ``pyramids.netcdf.ugrid.LazyMeshDataset`` name (and the ``isinstance`` checks that go with
-        it) to this, instead of importing ``pyramids_lazy`` itself. An additive, duck-typed accessor
-        core reaches via ``getattr`` -- see :meth:`open_mesh_mfdataset`.
+        The mesh analogue of :meth:`lazy_netcdf_type`, provided so core *can* forward a public
+        ``pyramids.netcdf.ugrid.LazyMeshDataset`` name (and its ``isinstance`` checks) to this
+        without importing ``pyramids_lazy`` itself. **No released core consumes it yet** -- unlike
+        ``lazy_netcdf_type`` / ``lazy_feature_collection_type``, which core does forward: core's
+        ``MeshDataset.open_mfdataset(chunks=...)`` reaches ``LazyMeshDataset`` only as the return of
+        :meth:`open_mesh_mfdataset` and never asks for its type. This accessor is therefore dead
+        until someone wires that forwarding; it is kept for parity and that future use. An additive,
+        duck-typed accessor core would reach via ``getattr`` -- see :meth:`open_mesh_mfdataset`.
         """
         from pyramids_lazy._mesh_mfdataset import LazyMeshDataset
 

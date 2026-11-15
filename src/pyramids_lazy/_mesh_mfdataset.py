@@ -517,7 +517,12 @@ def open_mesh_mfdataset(
             expanded and sorted; a pattern matching nothing is an error.
         chunks: ``None`` (the default) keeps one dask chunk per file -- the natural time-block
             chunking for a run written one file per step/day. Anything else is forwarded to
-            :meth:`dask.array.Array.rechunk` on each stacked variable.
+            :meth:`dask.array.Array.rechunk` on each stacked variable. **Note the inversion vs
+            core:** here ``chunks=None`` still returns a *lazy* result (one chunk per file);
+            core's ``MeshDataset.open_mfdataset`` reads ``chunks=None`` *eagerly* and never forwards
+            it -- it only calls this backend once ``chunks`` is non-``None``. So the same keyword
+            means "lazy, one chunk per file" to a direct caller of this function and "eager, no
+            backend" to a core caller; the two never collide because core guards ``None`` itself.
         driver: Name of a registered mesh driver, bypassing detection; forwarded to every read.
             ``None`` detects.
         mesh_name: Which topology to take from each file. ``None`` takes the first; the head file's
