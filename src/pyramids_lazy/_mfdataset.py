@@ -36,9 +36,7 @@ if TYPE_CHECKING:
     from pyramids.netcdf import NetCDF
 
 
-_LAZY_IMPORT_ERROR = lazy_hint(
-    "open_mfdataset requires the 'dask' dependency.", "dask"
-)
+_LAZY_IMPORT_ERROR = lazy_hint("open_mfdataset requires the 'dask' dependency.", "dask")
 
 
 def _resolve_paths(paths: str | Sequence[str | Path]) -> list[str]:
