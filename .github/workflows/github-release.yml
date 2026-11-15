@@ -178,11 +178,20 @@ jobs:
           VERSION="$(git describe --tags --exact-match HEAD 2>/dev/null || true)"
           TITLE="release: land ${VERSION:-the version bump, changelog and tag} on main"
 
-          gh pr create \
-            --base main \
-            --head "$HEAD_BRANCH" \
-            --title "$TITLE" \
-            --body "Automated release PR. The tag was cut on \`$HEAD_BRANCH\`; this merges it into main with a merge commit so the tagged commit is an ancestor of main and the tag is never orphaned. Do not squash or rebase."
+          # Create the PR only if one does not already exist for this branch, so a re-run does not
+          # abort here on "a pull request already exists". NOTE: the supported recovery for a failed
+          # release is a fresh DISPATCH (new run_id => fresh branch), NOT GitHub's "Re-run failed
+          # jobs" — a re-run re-invokes commitizen on the already-bumped branch and double-bumps the
+          # version. (Making the bump itself idempotent is tracked in #29.)
+          if gh pr view "$HEAD_BRANCH" --json number >/dev/null 2>&1; then
+            echo "A PR for ${HEAD_BRANCH} already exists; proceeding to merge it."
+          else
+            gh pr create \
+              --base main \
+              --head "$HEAD_BRANCH" \
+              --title "$TITLE" \
+              --body "Automated release PR. The tag was cut on \`$HEAD_BRANCH\`; this merges it into main with a merge commit so the tagged commit is an ancestor of main and the tag is never orphaned. Do not squash or rebase."
+          fi
 
           for attempt in 1 2 3 4 5 6; do
             if gh pr merge "$HEAD_BRANCH" --merge; then
