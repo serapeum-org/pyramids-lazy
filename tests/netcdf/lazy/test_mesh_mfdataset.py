@@ -488,3 +488,35 @@ class TestMeshNameSelection:
         _write_one(a, data={"d": [[1.0, 2.0]]}, dims={"d": ("time", "mesh2d_nFaces")})
         with pytest.raises(ValueError, match="topology|mesh2d|named"):
             open_mesh_mfdataset([str(a)], mesh_name="not_a_topology")
+
+
+class TestDriverForwarding:
+    """`driver=` is threaded to the initial read and to every per-block re-read."""
+
+    @requires_dask
+    def test_loader_forwards_an_unknown_driver(self, tmp_path):
+        """`_load_mesh_variable` passes `driver` to `read_file`; an unknown driver is rejected."""
+        from pyramids.netcdf.ugrid.dataset import DriverNotExistError
+
+        import pyramids_lazy._mesh_mfdataset as mm
+
+        path = tmp_path / "a.nc"
+        _write_one(
+            path, data={"d": [[1.0, 2.0]]}, dims={"d": ("time", "mesh2d_nFaces")}
+        )
+        with pytest.raises(DriverNotExistError):
+            mm._load_mesh_variable(str(path), "d", driver="does_not_exist")
+
+    @requires_dask
+    def test_open_forwards_an_unknown_driver(self, tmp_path):
+        """`open_mesh_mfdataset` passes `driver` to the initial read; an unknown driver is rejected."""
+        from pyramids.netcdf.ugrid.dataset import DriverNotExistError
+
+        from pyramids_lazy._mesh_mfdataset import open_mesh_mfdataset
+
+        path = tmp_path / "a.nc"
+        _write_one(
+            path, data={"d": [[1.0, 2.0]]}, dims={"d": ("time", "mesh2d_nFaces")}
+        )
+        with pytest.raises(DriverNotExistError):
+            open_mesh_mfdataset([str(path)], driver="does_not_exist")
