@@ -442,6 +442,43 @@ class TestTimeCoordinateJoin:
         assert "time_values" not in eager["d"].attributes
         np.testing.assert_array_equal(lazy["d"].data, eager["d"].data)
 
+    @requires_dask
+    def test_mixed_dated_and_undated_under_sort_true_keeps_undated_in_place(
+        self, tmp_path
+    ):
+        """Dated files reorder within their own slots under `sort=True`; undated files stay put.
+
+        Review L3: the sort reorders only the dated files, dropping them back into the slots they
+        occupied, and leaves undated files where they were given. With a dated/undated/dated
+        sequence out of time order, the two dated files swap into time order while the middle
+        undated file does not move -- matching the eager path exactly.
+        """
+        from pyramids_lazy._mesh_mfdataset import open_mesh_mfdataset
+
+        a = tmp_path / "a.nc"
+        b = tmp_path / "b.nc"
+        c = tmp_path / "c.nc"
+        _write_one(
+            a,
+            data={"d": [[9.0, 18.0]]},
+            dims={"d": ("time", "mesh2d_nFaces")},
+            dated_day=9,
+        )
+        _write_one(b, data={"d": [[5.0, 10.0]]}, dims={"d": ("time", "mesh2d_nFaces")})
+        _write_one(
+            c,
+            data={"d": [[2.0, 4.0]]},
+            dims={"d": ("time", "mesh2d_nFaces")},
+            dated_day=2,
+        )
+        seq = [str(a), str(b), str(c)]
+        eager = MeshDataset.open_mfdataset(seq, sort=True)
+        lazy = open_mesh_mfdataset(seq, sort=True).compute()
+        assert lazy["d"].data[:, 0].tolist() == [2.0, 5.0, 9.0], (
+            "undated b must stay in slot 1"
+        )
+        np.testing.assert_array_equal(lazy["d"].data, eager["d"].data)
+
 
 class TestMeshNameSelection:
     """The per-block loader re-selects the topology by name on every lazy read."""
