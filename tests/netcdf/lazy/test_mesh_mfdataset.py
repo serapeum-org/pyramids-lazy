@@ -13,6 +13,8 @@ eager ``MeshDataset.open_mfdataset`` that ships today. The fixture mirrors core'
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 from pyramids.netcdf.ugrid import MeshDataset
@@ -25,6 +27,14 @@ pytestmark = pytest.mark.lazy
 _NODE_X = np.array([0.0, 1.0, 1.0, 0.0])
 _NODE_Y = np.array([0.0, 0.0, 1.0, 1.0])
 _TRIANGLES = np.array([[0, 1, 2], [0, 2, 3]])
+
+# A committed file declaring two UGRID topologies, `mesh_a` (temporal var `d_a` = [[1, 2]]) and
+# `mesh_b` (temporal var `d_b` = [[100, 200]]), on disjoint node coordinates. Resolved relative to
+# this test file (not the CWD) so it is found whether pytest runs from the main checkout or the
+# worktree. Generated once via core's xarray interop writer; read here through GDAL alone.
+_TWO_TOPOLOGY_FIXTURE = str(
+    Path(__file__).parents[2] / "data" / "netcdf" / "ugrid" / "two_topologies.nc"
+)
 
 
 def _write_run(directory, *, dated: bool) -> list:
@@ -525,6 +535,36 @@ class TestMeshNameSelection:
         _write_one(a, data={"d": [[1.0, 2.0]]}, dims={"d": ("time", "mesh2d_nFaces")})
         with pytest.raises(ValueError, match="topology|mesh2d|named"):
             open_mesh_mfdataset([str(a)], mesh_name="not_a_topology")
+
+    @requires_dask
+    def test_non_default_topology_is_selected_across_blocks(self):
+        """A genuine two-topology file: selecting the non-default mesh reads ITS variable per block.
+
+        The committed fixture declares `mesh_a` (var `d_a`=[[1,2]]) and `mesh_b` (var `d_b`=[[100,200]]).
+        Opening with `mesh_name="mesh_b"` must stack `d_b` and compute to mesh_b's values on every
+        block, matching the eager path. If the per-block loader dropped `mesh_name` it would read the
+        default topology `mesh_a`, which has no `d_b`, and fail — so this guards the re-selection that
+        single-topology tests cannot.
+        """
+        from pyramids_lazy._mesh_mfdataset import open_mesh_mfdataset
+
+        paths = [_TWO_TOPOLOGY_FIXTURE, _TWO_TOPOLOGY_FIXTURE]
+        lazy = open_mesh_mfdataset(paths, sort=False, mesh_name="mesh_b")
+        eager = MeshDataset.open_mfdataset(paths, sort=False, mesh_name="mesh_b")
+        assert lazy.temporal_variable_names == ["d_b"], (
+            "must select mesh_b's own variable"
+        )
+        assert lazy.compute()["d_b"].data.tolist() == [[100.0, 200.0], [100.0, 200.0]]
+        np.testing.assert_array_equal(lazy.compute()["d_b"].data, eager["d_b"].data)
+
+    @requires_dask
+    def test_the_default_topology_is_the_first_one(self):
+        """Opening the two-topology fixture with `mesh_name=None` takes the first mesh (`mesh_a`)."""
+        from pyramids_lazy._mesh_mfdataset import open_mesh_mfdataset
+
+        lazy = open_mesh_mfdataset([_TWO_TOPOLOGY_FIXTURE], sort=False)
+        assert lazy.temporal_variable_names == ["d_a"]
+        assert lazy.compute()["d_a"].data.tolist() == [[1.0, 2.0]]
 
 
 class TestDriverForwarding:
