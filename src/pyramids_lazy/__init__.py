@@ -12,11 +12,15 @@ Discovery works two ways, both resolving to the same singleton :data:`backend`:
 * :func:`get_compute_backend`, the first-party fallback core calls by name when no entry point is
   registered (e.g. an editable checkout on ``PYTHONPATH`` with no installed metadata).
 
-The lazy view classes are also public here so core can forward its public ``pyramids.netcdf.LazyNetCDF``
-/ ``pyramids.netcdf.ugrid.LazyMeshDataset`` / ``pyramids.feature.LazyFeatureCollection`` names (and
-their ``isinstance`` checks) to them. :class:`LazyNetCDF` and :class:`LazyMeshDataset` import eagerly
-(they need only dask at call time); ``LazyFeatureCollection`` is resolved lazily via module
-``__getattr__`` because its module hard-imports ``dask_geopandas`` (the ``[parquet]`` extra).
+The lazy view classes are public here so core can forward its public names (and their ``isinstance``
+checks) to them: today core forwards ``pyramids.netcdf.LazyNetCDF`` and
+``pyramids.feature.LazyFeatureCollection``. :class:`LazyMeshDataset` is exposed on the same footing so
+core *can* forward a ``pyramids.netcdf.ugrid.LazyMeshDataset`` name once its mesh half ships -- the
+core-side ``MeshDataset.open_mfdataset(chunks=...)`` forwarder (serapeum-org/pyramids-core#1458) is not
+released yet, so no shipped core forwards this one today. :class:`LazyNetCDF` and
+:class:`LazyMeshDataset` import eagerly (they need only dask at call time); ``LazyFeatureCollection``
+is resolved lazily via module ``__getattr__`` because its module hard-imports ``dask_geopandas`` (the
+``[parquet]`` extra).
 """
 
 from typing import Any
