@@ -129,10 +129,17 @@ class TestLaziness:
     ):
         """Guard the module's reason to exist: open is metadata-only, reads happen at compute.
 
-        Counts calls to the per-block loader. Opening must trigger zero variable reads (the dask
-        graph is built from shape/dtype metadata only); computing must read each file exactly once.
-        An eager-read regression (a stray `.data`/`.load_array()` during graph build) would make the
-        open count non-zero and fail here, where every value-level test would still pass.
+        Two independent checks, because the per-block loader is not the only way a value could be
+        read eagerly:
+
+        1. The dask graph is not materialised at open. A call-counter on the per-block loader
+           `_load_mesh_variable` reads 0 at open and once per file at compute. (This catches a graph
+           computed at open, but NOT a stray read that bypasses this loader -- see check 2.)
+        2. No variable value is materialised at open by any path. The head dataset's temporal
+           variable still holds only its lazy loader (`_data is None`) after `open_mesh_mfdataset`;
+           a stray `.data`/`.load_array()` during graph build -- which would route through core's own
+           loader, not `_load_mesh_variable`, so check 1 would miss it -- populates `_data` and fails
+           here.
         """
         import pyramids_lazy._mesh_mfdataset as mm
 
@@ -147,6 +154,9 @@ class TestLaziness:
         monkeypatch.setattr(mm, "_load_mesh_variable", counting)
         lazy = mm.open_mesh_mfdataset(str(tmp_path / "run_*.nc"))
         assert reads["n"] == 0, f"open must read no variable values, read {reads['n']}"
+        head_var = lazy._head._data_variables["d"]
+        assert head_var._data is None, "open must not materialise any variable value"
+        assert head_var.has_data_source, "but the lazy loader must still be available"
         lazy.compute()
         assert reads["n"] == 3, (
             f"compute must read each of 3 files once, read {reads['n']}"
