@@ -13,10 +13,10 @@ Discovery works two ways, both resolving to the same singleton :data:`backend`:
   registered (e.g. an editable checkout on ``PYTHONPATH`` with no installed metadata).
 
 The lazy view classes are also public here so core can forward its public ``pyramids.netcdf.LazyNetCDF``
-/ ``pyramids.feature.LazyFeatureCollection`` names (and their ``isinstance`` checks) to them.
-:class:`LazyNetCDF` imports eagerly (it needs only dask at call time); ``LazyFeatureCollection`` is
-resolved lazily via module ``__getattr__`` because its module hard-imports ``dask_geopandas`` (the
-``[parquet]`` extra).
+/ ``pyramids.netcdf.ugrid.LazyMeshDataset`` / ``pyramids.feature.LazyFeatureCollection`` names (and
+their ``isinstance`` checks) to them. :class:`LazyNetCDF` and :class:`LazyMeshDataset` import eagerly
+(they need only dask at call time); ``LazyFeatureCollection`` is resolved lazily via module
+``__getattr__`` because its module hard-imports ``dask_geopandas`` (the ``[parquet]`` extra).
 """
 
 from typing import Any
@@ -26,6 +26,7 @@ from typing import Any
 # `pyramids.lazy_support`, with no statement between the imports and nothing to silence.
 import pyramids_lazy._seam as _seam
 from pyramids_lazy._lazy_cube import LazyNetCDF
+from pyramids_lazy._mesh_mfdataset import LazyMeshDataset
 from pyramids_lazy.backend import LazyComputeBackend, backend
 
 #: The `pyramids.lazy_support` contract this build requires, re-exported for diagnostics.
@@ -35,6 +36,7 @@ __all__ = [
     "REQUIRED_LAZY_SUPPORT_API_VERSION",
     "LazyComputeBackend",
     "LazyFeatureCollection",
+    "LazyMeshDataset",
     "LazyNetCDF",
     "backend",
     "get_compute_backend",
