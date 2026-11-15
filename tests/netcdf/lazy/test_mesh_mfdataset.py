@@ -441,3 +441,50 @@ class TestTimeCoordinateJoin:
         )
         assert "time_values" not in eager["d"].attributes
         np.testing.assert_array_equal(lazy["d"].data, eager["d"].data)
+
+
+class TestMeshNameSelection:
+    """The per-block loader re-selects the topology by name on every lazy read."""
+
+    @requires_dask
+    def test_loader_forwards_mesh_name_and_honours_a_wrong_one(self, tmp_path):
+        """`_load_mesh_variable` re-selects by `mesh_name`; a wrong name is rejected.
+
+        The per-block loader re-opens each file and re-selects the topology by the resolved
+        `mesh_name` so a multi-topology file reads the same mesh on every block. If it dropped
+        `mesh_name`, a wrong name would silently read the default topology instead of raising.
+        """
+        import pyramids_lazy._mesh_mfdataset as mm
+
+        path = tmp_path / "a.nc"
+        _write_one(
+            path, data={"d": [[1.0, 2.0]]}, dims={"d": ("time", "mesh2d_nFaces")}
+        )
+        selected = mm._load_mesh_variable(str(path), "d", mesh_name="mesh2d")
+        np.testing.assert_array_equal(selected, np.array([[1.0, 2.0]]))
+        with pytest.raises(ValueError, match="mesh2d|topology|named"):
+            mm._load_mesh_variable(str(path), "d", mesh_name="not_a_topology")
+
+    @requires_dask
+    def test_open_with_explicit_mesh_name_matches_eager(self, tmp_path):
+        """An explicit `mesh_name` stacks that topology and computes to the eager result."""
+        from pyramids_lazy._mesh_mfdataset import open_mesh_mfdataset
+
+        a = tmp_path / "a.nc"
+        b = tmp_path / "b.nc"
+        _write_one(a, data={"d": [[1.0, 2.0]]}, dims={"d": ("time", "mesh2d_nFaces")})
+        _write_one(b, data={"d": [[3.0, 4.0]]}, dims={"d": ("time", "mesh2d_nFaces")})
+        pattern = [str(a), str(b)]
+        eager = MeshDataset.open_mfdataset(pattern, sort=False, mesh_name="mesh2d")
+        lazy = open_mesh_mfdataset(pattern, sort=False, mesh_name="mesh2d").compute()
+        np.testing.assert_array_equal(lazy["d"].data, eager["d"].data)
+
+    @requires_dask
+    def test_open_with_a_wrong_mesh_name_is_rejected(self, tmp_path):
+        """A `mesh_name` naming no topology is refused at open, before any block read."""
+        from pyramids_lazy._mesh_mfdataset import open_mesh_mfdataset
+
+        a = tmp_path / "a.nc"
+        _write_one(a, data={"d": [[1.0, 2.0]]}, dims={"d": ("time", "mesh2d_nFaces")})
+        with pytest.raises(ValueError, match="topology|mesh2d|named"):
+            open_mesh_mfdataset([str(a)], mesh_name="not_a_topology")
