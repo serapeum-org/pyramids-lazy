@@ -245,3 +245,170 @@ class TestChunks:
         np.testing.assert_array_equal(
             lazy.compute()["d"].data, MeshDataset.open_mfdataset(pattern)["d"].data
         )
+
+
+def _write_one(path, *, data, dims, dated_day=None) -> None:
+    """Write a single mesh file on the shared topology with arbitrary variables and dimensions.
+
+    Args:
+        path: Destination ``.nc`` path.
+        data: Mapping of variable name to its array.
+        dims: Mapping of variable name to its dimension-name tuple (what makes it temporal/static).
+        dated_day: When set, stamps variable ``d`` with a CF time coordinate for that day of Jan 2001.
+    """
+    ds = MeshDataset.from_arrays(
+        node_x=_NODE_X,
+        node_y=_NODE_Y,
+        face_node_connectivity=_TRIANGLES,
+        data={name: np.asarray(array, dtype="float64") for name, array in data.items()},
+        data_locations={name: "face" for name in data},
+    )
+    for name, dim in dims.items():
+        ds[name].dimensions = dim
+    if dated_day is not None:
+        ds["d"].attributes = {
+            **ds["d"].attributes,
+            "time_values": [np.datetime64(f"2001-01-{dated_day:02d}")],
+            TIME_UNITS_ATTR: "days since 2001-01-01",
+            TIME_CALENDAR_ATTR: "standard",
+        }
+    ds.to_file(str(path))
+
+
+class TestAccessors:
+    """The wrapper's inspection surface, before any materialisation."""
+
+    @requires_dask
+    def test_metadata_accessors_read_from_the_head_file(self, tmp_path):
+        from pyramids_lazy._mesh_mfdataset import open_mesh_mfdataset
+
+        _write_static_and_temporal(tmp_path)
+        head = MeshDataset.open_mfdataset(str(tmp_path / "run_*.nc"))
+        lazy = open_mesh_mfdataset(str(tmp_path / "run_*.nc"))
+        assert lazy.mesh is not None
+        assert lazy.crs == head.crs
+        assert sorted(lazy.data_variable_names) == ["d", "z"]
+        assert set(lazy.variables) == {"d"}
+        assert lazy.chunks == {"d": lazy["d"].chunks}
+        assert "d" in lazy and "z" in lazy
+        assert "absent" not in lazy
+
+    @requires_dask
+    def test_getitem_unknown_variable_raises_plain_keyerror(self, tmp_path):
+        from pyramids_lazy._mesh_mfdataset import open_mesh_mfdataset
+
+        _write_run(tmp_path, dated=True)
+        lazy = open_mesh_mfdataset(str(tmp_path / "run_*.nc"))
+        with pytest.raises(KeyError) as exc_info:
+            _ = lazy["nope"]
+        assert "static" not in str(exc_info.value), (
+            "unknown var must not claim to be static"
+        )
+
+    @requires_dask
+    def test_repr_names_the_temporal_variables(self, tmp_path):
+        from pyramids_lazy._mesh_mfdataset import open_mesh_mfdataset
+
+        _write_run(tmp_path, dated=True)
+        text = repr(open_mesh_mfdataset(str(tmp_path / "run_*.nc")))
+        assert "LazyMeshDataset" in text, f"repr should name the class, got: {text}"
+        assert "d" in text, f"repr should list the temporal variable, got: {text}"
+
+    @requires_dask
+    def test_load_is_an_alias_for_compute(self, tmp_path):
+        from pyramids_lazy._mesh_mfdataset import open_mesh_mfdataset
+
+        _write_run(tmp_path, dated=True)
+        pattern = str(tmp_path / "run_*.nc")
+        lazy = open_mesh_mfdataset(pattern)
+        np.testing.assert_array_equal(lazy.load()["d"].data, lazy.compute()["d"].data)
+
+
+class TestJoinMismatchRefusals:
+    """The static/temporal and variable-set mismatches concat refuses, refused here too."""
+
+    @requires_dask
+    def test_static_in_head_but_temporal_in_another_is_refused(self, tmp_path):
+        from pyramids_lazy._mesh_mfdataset import open_mesh_mfdataset
+
+        a = tmp_path / "a.nc"
+        b = tmp_path / "b.nc"
+        _write_one(a, data={"d": [1.0, 2.0]}, dims={"d": ("mesh2d_nFaces",)})
+        _write_one(b, data={"d": [[3.0, 4.0]]}, dims={"d": ("time", "mesh2d_nFaces")})
+        with pytest.raises(ValueError, match="static in one dataset but temporal"):
+            open_mesh_mfdataset([str(a), str(b)], sort=False)
+
+    @requires_dask
+    def test_temporal_in_head_but_static_in_another_is_refused(self, tmp_path):
+        from pyramids_lazy._mesh_mfdataset import open_mesh_mfdataset
+
+        a = tmp_path / "a.nc"
+        b = tmp_path / "b.nc"
+        _write_one(a, data={"d": [[1.0, 2.0]]}, dims={"d": ("time", "mesh2d_nFaces")})
+        _write_one(b, data={"d": [3.0, 4.0]}, dims={"d": ("mesh2d_nFaces",)})
+        with pytest.raises(ValueError, match="temporal in one dataset but static"):
+            open_mesh_mfdataset([str(a), str(b)], sort=False)
+
+    @requires_dask
+    def test_mismatched_variable_sets_are_refused(self, tmp_path):
+        from pyramids_lazy._mesh_mfdataset import open_mesh_mfdataset
+
+        a = tmp_path / "a.nc"
+        b = tmp_path / "b.nc"
+        _write_one(a, data={"d": [[1.0, 2.0]]}, dims={"d": ("time", "mesh2d_nFaces")})
+        _write_one(
+            b,
+            data={"d": [[3.0, 4.0]], "e": [[5.0, 6.0]]},
+            dims={"d": ("time", "mesh2d_nFaces"), "e": ("time", "mesh2d_nFaces")},
+        )
+        with pytest.raises(ValueError, match="same variables in every file"):
+            open_mesh_mfdataset([str(a), str(b)], sort=False)
+
+
+class TestBackendForwarding:
+    """The additive, duck-typed backend methods core reaches via `getattr`."""
+
+    @requires_dask
+    def test_open_mesh_mfdataset_forwards_through_the_singleton(self, tmp_path):
+        from pyramids_lazy import LazyMeshDataset, backend
+
+        _write_run(tmp_path, dated=True)
+        pattern = str(tmp_path / "run_*.nc")
+        lazy = backend.open_mesh_mfdataset(pattern)
+        assert isinstance(lazy, LazyMeshDataset)
+        np.testing.assert_array_equal(
+            lazy.compute()["d"].data, MeshDataset.open_mfdataset(pattern)["d"].data
+        )
+
+    def test_lazy_mesh_type_returns_the_wrapper_class(self):
+        from pyramids_lazy import LazyMeshDataset, backend
+
+        assert backend.lazy_mesh_type() is LazyMeshDataset
+
+
+class TestTimeCoordinateJoin:
+    """A run missing a time coordinate in some file drops the stale one, as concat does."""
+
+    @requires_dask
+    def test_a_mix_of_dated_and_undated_files_drops_the_stale_time_values(
+        self, tmp_path
+    ):
+        from pyramids_lazy._mesh_mfdataset import open_mesh_mfdataset
+
+        a = tmp_path / "a.nc"
+        b = tmp_path / "b.nc"
+        _write_one(
+            a,
+            data={"d": [[1.0, 2.0]]},
+            dims={"d": ("time", "mesh2d_nFaces")},
+            dated_day=1,
+        )
+        _write_one(b, data={"d": [[3.0, 4.0]]}, dims={"d": ("time", "mesh2d_nFaces")})
+        pattern = [str(a), str(b)]
+        eager = MeshDataset.open_mfdataset(pattern, sort=False)
+        lazy = open_mesh_mfdataset(pattern, sort=False).compute()
+        assert "time_values" not in lazy["d"].attributes, (
+            "stale coordinate must be dropped"
+        )
+        assert "time_values" not in eager["d"].attributes
+        np.testing.assert_array_equal(lazy["d"].data, eager["d"].data)
