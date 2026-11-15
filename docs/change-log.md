@@ -1,3 +1,13 @@
+## 0.1.1 (2026-11-15)
+
+### Fix
+
+- **lazy-cube**: persist the composed transformation, not the source (#14)
+
+### Refactor
+
+- **optional**: compose the lazy install hints locally (#20)
+
 ## 0.1.0 (2026-11-14)
 
 ### Feat
