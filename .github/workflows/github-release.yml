@@ -1,9 +1,9 @@
 name: github-release
 
-# Manual release cutter (commitizen bump -> tag -> GitHub release), ported from pyramids-mesh.
-# Dispatch-only, so it never runs on ordinary CI. It gates on pure-wheel-test, which installs the
-# released pyramids-core from PyPI; that gate is unblocked now core 0.79.0 ships the
-# `pyramids.lazy_support` facade this backend requires.
+# Manual release cutter (commitizen bump -> tag -> GitHub release -> auto-merged PR back onto the
+# base branch), ported from pyramids-mesh. Dispatch-only, so it never runs on ordinary CI. It gates
+# on pure-wheel-test, which installs the released pyramids-core from PyPI; that gate is unblocked now
+# core 0.79.0 ships the `pyramids.lazy_support` facade this backend requires.
 
 permissions:
   contents: read
@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       release-branch:
-        description: "Branch to create release from"
+        description: "Base branch to release from and auto-merge the release back into"
         required: false
         default: "main"
       increment:
@@ -53,6 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -71,6 +72,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Cut the bump/tag/release on a throwaway branch, never straight on `release-branch`. The
+      # commitizen action below tags the bump commit BEFORE anything merges; if that commit is later
+      # reached via a squash or rebase merge its SHA changes, so the tag would point at a commit that
+      # is not an ancestor of `release-branch` — an orphaned tag (exactly what happened to 0.1.1).
+      # The final step instead opens a PR from this branch and merges it with a MERGE COMMIT, which
+      # keeps the tagged commit reachable from `release-branch`.
+      - name: Create the throwaway release branch
+        id: release_branch
+        run: |
+          NAME="release/auto-${{ github.run_id }}-${{ github.run_attempt }}"
+          git switch -c "$NAME"
+          git push -u origin "$NAME"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release with Commitizen
         # serapeum-org/github-actions is a monorepo: one commit carries the release tag for every
         # action in it, so 38c11108 is the dereferenced commit for github-release/v1.5.0,
@@ -88,3 +103,36 @@ jobs:
           # matrix cannot read.
           package-manager-version: v0.84.2
           install-groups: "dev"
+
+      # Land the bump/changelog/tag on `release-branch` automatically. `--merge` forces a MERGE
+      # COMMIT (never squash/rebase), so the tagged bump commit becomes an ancestor of the base and
+      # the tag is never orphaned. `main` is unprotected and repo auto-merge is disabled, so we merge
+      # immediately; the retry only rides out GitHub still computing mergeability right after create.
+      - name: Open and merge the release PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          HEAD_BRANCH="${{ steps.release_branch.outputs.name }}"
+          BASE_BRANCH="${{ inputs.release-branch }}"
+
+          # The tag the action just created sits on HEAD; use it for the PR title when present.
+          VERSION="$(git describe --tags --exact-match HEAD 2>/dev/null || true)"
+          TITLE="release: land ${VERSION:-the version bump, changelog and tag} on ${BASE_BRANCH}"
+
+          gh pr create \
+            --base "$BASE_BRANCH" \
+            --head "$HEAD_BRANCH" \
+            --title "$TITLE" \
+            --body "Automated release PR. The tag was cut on \`$HEAD_BRANCH\`; this merges it into \`$BASE_BRANCH\` with a merge commit so the tagged commit is an ancestor of \`$BASE_BRANCH\` and the tag is never orphaned. Do not squash or rebase."
+
+          for attempt in 1 2 3 4 5 6; do
+            if gh pr merge "$HEAD_BRANCH" --merge --delete-branch; then
+              echo "Release PR merged into ${BASE_BRANCH}."
+              exit 0
+            fi
+            echo "Merge not ready yet (attempt ${attempt}); waiting for mergeability..."
+            sleep 10
+          done
+          echo "::error::Release PR for ${HEAD_BRANCH} could not be merged into ${BASE_BRANCH}."
+          exit 1
