@@ -98,7 +98,7 @@ def lazy_hint(lead: str, package: str) -> str:
             ```
     """
     return (
-        f"{lead} It ships as a pyramids-lazy dependency, so the install is incomplete.\n"
+        f"{lead} The pyramids-lazy install is incomplete.\n"
         f"  - PyPI:        pip install {package}\n"
         f"  - or repair:   pip install --force-reinstall pyramids-lazy"
     )
