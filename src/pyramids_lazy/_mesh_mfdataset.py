@@ -562,7 +562,6 @@ def open_mesh_mfdataset(
         datasets = _sort_dated(datasets)
 
     head, *rest = datasets
-    parts = [head, *rest]
     # Validate the join eagerly (metadata only), exactly as `concat` does, so a mismatched run is
     # refused at graph-build time with the same errors rather than failing deep in `.compute()`.
     for other in rest:
@@ -573,5 +572,5 @@ def open_mesh_mfdataset(
                 f"{sorted(head._data_variables)} vs {sorted(other._data_variables)}."
             )
 
-    var_arrays, joined_time_values = _build_lazy_variables(parts, chunks, driver)
+    var_arrays, joined_time_values = _build_lazy_variables(datasets, chunks, driver)
     return LazyMeshDataset(head, var_arrays, joined_time_values)
