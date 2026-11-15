@@ -196,5 +196,5 @@ class TestImportError:
             return real_import(name, *args, **kwargs)
 
         monkeypatch.setattr(builtins, "__import__", fake_import)
-        with pytest.raises(ImportError, match="pip install dask"):
+        with pytest.raises(ImportError, match=r"pip install dask\b"):
             NetCDF.open_mfdataset([FIXTURE], variable="values")

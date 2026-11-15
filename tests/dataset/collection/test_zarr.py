@@ -164,6 +164,10 @@ class TestErrors:
         assert "pip install --force-reinstall pyramids-lazy" in message, (
             f"repair install hint missing from message: {message!r}"
         )
+        assert "pyramids-core[lazy]" not in message, (
+            f"must not name core's lazy extra: {message!r}"
+        )
+        assert "conda" not in message, f"must not offer a conda-forge line: {message!r}"
 
 
 class TestFromZarrRoundtrip:
