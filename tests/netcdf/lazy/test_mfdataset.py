@@ -196,5 +196,5 @@ class TestImportError:
             return real_import(name, *args, **kwargs)
 
         monkeypatch.setattr(builtins, "__import__", fake_import)
-        with pytest.raises(ImportError, match="pyramids-core\\[lazy\\]"):
+        with pytest.raises(ImportError, match=r"pip install dask\b"):
             NetCDF.open_mfdataset([FIXTURE], variable="values")

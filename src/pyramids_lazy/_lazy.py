@@ -29,7 +29,7 @@ The module is cheap to import: it depends only on numpy, the
 Phase-0 helpers, and :mod:`osgeo.gdal` (already a hard dep). The
 `dask` import happens inside :func:`build_lazy_array` after the
 caller has actually asked for a lazy result, and is guarded so
-callers without the `[lazy]` extra installed get a clear
+callers without `dask` installed get a clear
 :class:`ImportError`.
 """
 
@@ -48,16 +48,14 @@ from pyramids.lazy_support import (
     axis_flips,
     cloud_config_from_env,
     default_lock,
-    extra_hint,
     gdal_mdarray_open,
     import_dask,
     open_mdarray,
 )
 
-_DASK_MISSING_MESSAGE = extra_hint(
-    "dask is required for lazy NetCDF reads.",
-    "lazy",
-)
+from pyramids_lazy._optional import lazy_hint
+
+_DASK_MISSING_MESSAGE = lazy_hint("dask is required for lazy NetCDF reads.", "dask")
 
 
 def mask_no_data(arr: Any, fill: Any) -> Any:

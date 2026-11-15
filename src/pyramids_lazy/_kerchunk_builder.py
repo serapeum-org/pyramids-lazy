@@ -25,10 +25,12 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from pyramids.lazy_support import import_h5py, lazy_extra_hint
+from pyramids.lazy_support import import_h5py
 
-_H5PY_IMPORT_ERROR = lazy_extra_hint(
-    "h5py is required for native kerchunk reference manifests."
+from pyramids_lazy._optional import lazy_hint
+
+_H5PY_IMPORT_ERROR = lazy_hint(
+    "h5py is required for native kerchunk reference manifests.", "h5py"
 )
 
 # HDF5 attribute keys that are container bookkeeping, not user metadata; they are
@@ -67,7 +69,8 @@ def _require_h5py() -> Any:
         The imported ``h5py`` module.
 
     Raises:
-        ImportError: When h5py is not installed (points at the ``[lazy]`` extra).
+        ImportError: When h5py is not installed; the message names ``h5py``, a
+            pyramids-lazy dependency.
     """
     return import_h5py(_H5PY_IMPORT_ERROR)
 

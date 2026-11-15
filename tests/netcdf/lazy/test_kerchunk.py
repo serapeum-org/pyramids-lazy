@@ -1,8 +1,7 @@
 """Tests for :meth:`NetCDF.to_kerchunk` / :meth:`NetCDF.combine_kerchunk`.
 
-DASK-14: kerchunk JSON reference manifests. Kerchunk is an optional
-``[lazy]`` dependency — tests skip cleanly when it is not
-installed.
+DASK-14: kerchunk JSON reference manifests. Kerchunk is a pyramids-lazy
+runtime dependency — tests skip cleanly when it is not installed.
 """
 
 from __future__ import annotations
@@ -162,7 +161,7 @@ class TestImportError:
             return real_import(name, *args, **kwargs)
 
         monkeypatch.setattr(builtins, "__import__", fake_import)
-        with pytest.raises(ImportError, match="pyramids-core\\[lazy\\]"):
+        with pytest.raises(ImportError, match="pip install kerchunk"):
             to_kerchunk(FIXTURE, tmp_path / "refs.json", backend="kerchunk")
 
     def test_kerchunk_backend_combine_raises_without_kerchunk(
@@ -181,5 +180,5 @@ class TestImportError:
             return real_import(name, *args, **kwargs)
 
         monkeypatch.setattr(builtins, "__import__", fake_import)
-        with pytest.raises(ImportError, match="pyramids-core\\[lazy\\]"):
+        with pytest.raises(ImportError, match="pip install kerchunk"):
             combine_kerchunk([FIXTURE], tmp_path / "refs.json", backend="kerchunk")

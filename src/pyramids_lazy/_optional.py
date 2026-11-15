@@ -50,6 +50,60 @@ def parquet_hint(lead: str) -> str:
     return f"{lead} {_PARQUET_INSTALL}"
 
 
+def lazy_hint(lead: str, package: str) -> str:
+    """Compose an install hint for one of this distribution's own runtime deps.
+
+    Unlike :func:`parquet_hint` (which names the ``[parquet]`` *extra*), these dependencies —
+    ``dask``, ``zarr``, ``kerchunk``, ``h5py`` and friends — live in ``pyramids-lazy``'s plain
+    ``[project.dependencies]``. A user who reaches one of these guards therefore already has
+    ``pyramids-lazy`` installed, so the actionable remedy is to install the one missing library
+    (``pip install dask``); ``pip install pyramids-lazy`` would not reinstall an already-satisfied
+    dependency, hence the ``--force-reinstall`` repair line as the fallback. No conda-forge line is
+    offered: ``pyramids-lazy`` is not on conda-forge, and the package of that name there is core's
+    old lazy extra, which carries no backend.
+
+    Args:
+        lead: The sentence naming the operation that needed the dependency, ending in a period.
+        package: The pip install target(s) for the missing dependency, e.g. ``"dask"`` or
+            ``"dask zarr"``.
+
+    Returns:
+        The lead followed by the two-line install block.
+
+    Examples:
+        - The lead is kept verbatim at the start and the named library is the pip target:
+            ```python
+            >>> from pyramids_lazy._optional import lazy_hint
+            >>> hint = lazy_hint("open_mfdataset requires the 'dask' dependency.", "dask")
+            >>> hint.startswith("open_mfdataset requires the 'dask' dependency.")
+            True
+            >>> "pip install dask" in hint
+            True
+            >>> "pip install --force-reinstall pyramids-lazy" in hint
+            True
+
+            ```
+        - A space-joined ``package`` installs several libraries in one command, and no
+          core extra or conda line is ever named:
+            ```python
+            >>> from pyramids_lazy._optional import lazy_hint
+            >>> hint = lazy_hint("Zarr IO requires the optional deps.", "dask zarr")
+            >>> "pip install dask zarr" in hint
+            True
+            >>> "pyramids-core[lazy]" in hint
+            False
+            >>> "conda" in hint
+            False
+
+            ```
+    """
+    return (
+        f"{lead} The pyramids-lazy install is incomplete.\n"
+        f"  - PyPI:        pip install {package}\n"
+        f"  - or repair:   pip install --force-reinstall pyramids-lazy"
+    )
+
+
 def import_dask_geopandas() -> ModuleType:
     """Import and return ``dask_geopandas``, or raise a branded ``ImportError``.
 

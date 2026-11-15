@@ -27,10 +27,11 @@ from pyramids.lazy_support import (
     finalize_zarr_metadata,
     geobox_crs,
     import_zarr,
-    lazy_extra_hint,
     normalize_compressors,
     read_geobox,
 )
+
+from pyramids_lazy._optional import lazy_hint
 
 
 def _finalize_collection_metadata(resolved_store: Any, meta: Any, files: list) -> None:
@@ -221,9 +222,7 @@ def write_collection_to_zarr(
     """
     files = collection._require_files("to_zarr")
     import_zarr(
-        lazy_extra_hint(
-            "DatasetCollection.to_zarr requires the optional 'zarr' dependency."
-        )
+        lazy_hint("DatasetCollection.to_zarr requires the 'zarr' dependency.", "zarr")
     )
     if mode == "a" and append_dim is None and region is None:
         raise ValueError(
@@ -282,8 +281,9 @@ def read_collection_from_zarr(
     mapping. ``collection_cls`` is the ``DatasetCollection`` class to construct.
     """
     import_zarr(
-        lazy_extra_hint(
-            "DatasetCollection.from_zarr requires the optional 'zarr' dependency."
+        lazy_hint(
+            "DatasetCollection.from_zarr requires the 'zarr' dependency.",
+            "zarr",
         )
     )
     import zarr

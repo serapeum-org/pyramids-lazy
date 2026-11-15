@@ -13,7 +13,7 @@ chunk file. This module provides two helpers wrapped by
   :class:`Dataset` with the recovered geobox.
 
 Zarr and fsspec are imported lazily inside the helpers — pyramids'
-core import stays free of both even when the `[lazy]` extra is not
+core import stays free of both even when zarr and fsspec are not
 installed.
 
 The no-data sentinel is written three times, in spellings that are not
@@ -62,11 +62,12 @@ from pyramids.lazy_support import (
     import_dask,
     import_zarr,
     is_lazy,
-    lazy_extra_hint,
     normalize_compressors,
     read_geobox,
     sr_from_epsg,
 )
+
+from pyramids_lazy._optional import lazy_hint
 
 if TYPE_CHECKING:
     from pyramids.dataset import Dataset
@@ -74,9 +75,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-_LAZY_IMPORT_ERROR = lazy_extra_hint(
-    "Zarr IO requires the optional 'dask' / 'zarr' dependencies."
-)
+# Split per missing library so each guard names only the dependency it needs: the zarr guard
+# (import_zarr) must not tell a user whose dask is fine to reinstall it, and vice versa.
+_ZARR_MISSING = lazy_hint("Zarr IO requires the 'zarr' dependency.", "zarr")
+_DASK_MISSING = lazy_hint("Lazy Zarr IO requires the 'dask' dependency.", "dask")
 
 
 def _require_zarr() -> Any:
@@ -86,7 +88,7 @@ def _require_zarr() -> Any:
     so `Dataset.to_zarr` and `DatasetCollection.to_zarr` raise the same
     exception type for a missing optional dependency.
     """
-    import_zarr(_LAZY_IMPORT_ERROR)
+    import_zarr(_ZARR_MISSING)
     import zarr
 
     return zarr
@@ -483,7 +485,7 @@ def _build_dask_array(ds: Dataset, chunks: Any) -> Any:
     single- vs multi-band. Single-band datasets get a leading axis of
     length 1 added lazily via :meth:`dask.array.Array.reshape`.
     """
-    import_dask(_LAZY_IMPORT_ERROR)
+    import_dask(_DASK_MISSING)
     import dask.array as da
 
     if chunks in (None, "auto"):
@@ -565,8 +567,8 @@ def write_dataset_to_zarr(
         ValueError: `overview_factors` was given with `compute=False`.
 
     Examples:
-        - Round-trip a small Dataset through Zarr (requires the
-          `[lazy]` extra for zarr + dask):
+        - Round-trip a small Dataset through Zarr (requires zarr + dask,
+          pyramids-lazy dependencies):
             ```python
             >>> import tempfile  # doctest: +SKIP
             >>> from pathlib import Path  # doctest: +SKIP
@@ -633,7 +635,7 @@ def write_dataset_to_zarr(
             )
         result: Any = None
     else:
-        import_dask(_LAZY_IMPORT_ERROR)
+        import_dask(_DASK_MISSING)
         import dask
 
         result = dask.delayed(_finalize_after_write)(
@@ -802,7 +804,7 @@ def _read_data_array(
     """
     if chunks is None:
         return np.asarray(zarr_array[:])
-    import_dask(_LAZY_IMPORT_ERROR)
+    import_dask(_DASK_MISSING)
     import dask.array as da
 
     lazy = da.from_zarr(resolved_store, component=component)
@@ -895,8 +897,8 @@ def read_dataset_from_zarr(
 
     Examples:
         - Read a store that was written with :func:`write_dataset_to_zarr`
-          and check the recovered shape (requires the `[lazy]`
-          extra):
+          and check the recovered shape (requires zarr + dask,
+          pyramids-lazy dependencies):
             ```python
             >>> import tempfile  # doctest: +SKIP
             >>> from pathlib import Path  # doctest: +SKIP
