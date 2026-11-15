@@ -32,8 +32,8 @@ except ImportError:  # pragma: no cover - exercised only without the extra
     zarr = None
 
 # Guarded rather than a module-level `importorskip`, so the file still collects
-# without the `[lazy]` extra; the tests that need a real store are marked.
-needs_zarr = pytest.mark.skipif(zarr is None, reason="requires the [lazy] extra")
+# without zarr installed; the tests that need a real store are marked.
+needs_zarr = pytest.mark.skipif(zarr is None, reason="requires zarr")
 
 SENTINEL = -9999.0
 
