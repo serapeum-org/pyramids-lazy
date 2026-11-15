@@ -149,9 +149,9 @@ jobs:
         uses: serapeum-org/github-actions/actions/release/github@38c111084f99d5ff5f4a1e63bedce48fe33a10c0 # github-release/v1.5.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          increment: ${{ github.event.inputs.increment }}
-          prerelease-type: ${{ github.event.inputs.prerelease_type }}
-          draft: ${{ github.event.inputs.draft }}
+          increment: ${{ inputs.increment }}
+          prerelease-type: ${{ inputs.prerelease_type }}
+          draft: ${{ inputs.draft }}
           package-manager: pixi
           # Must match the pixi pinned in tests.yml: the release action runs `pixi lock` and folds
           # the result into the bump commit, so a floating version could write a lock format the
