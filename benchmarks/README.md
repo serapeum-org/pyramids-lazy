@@ -58,3 +58,9 @@ Shared GitHub runners are too noisy to compare absolute milliseconds commit-to-c
 `benchmarks.yml` workflow runs on a **nightly** schedule (and on demand), stores the raw
 `--benchmark-json` as an artifact, and never fails a PR on timing. Compare locally with
 `pytest-benchmark compare`, or across nightly artifacts.
+
+Results land at the
+[Benchmarks workflow](https://github.com/serapeum-org/pyramids-lazy/actions/workflows/benchmarks.yml) — each run's
+`benchmark-results-<run_id>` artifact holds `benchmark-results.json`. The project
+[testing guide](https://serapeum-org.github.io/pyramids-lazy/how-to/testing/#where-to-check-the-benchmark-results)
+has the full how-to.
