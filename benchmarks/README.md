@@ -38,8 +38,9 @@ Saved runs live under `.benchmarks/` (git-ignored).
 ## What is covered
 
 These exercise the backend's lazy paths, plus an eager-core baseline for the eager-vs-lazy comparison.
-The Zarr benchmarks call the `backend.*` ops directly; the NetCDF benchmarks drive them through core's
-public `NetCDF` wrappers (which dispatch into the backend):
+The Zarr benchmarks call the `backend.*` ops directly; the three lazy NetCDF benchmarks drive the
+backend through core's `NetCDF.read_array(chunks=…)` / `NetCDF.chunk` wrappers, while
+`test_read_array_eager` (`chunks=None`) stays on core's eager path as the baseline:
 
 - **`test_bench_zarr.py`** — `write_dataset_to_zarr` (plain and with overview levels) and
   `read_dataset_from_zarr`: the only fully-parallel raster Zarr write/read path.
