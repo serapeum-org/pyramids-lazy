@@ -35,9 +35,10 @@ jobs:
       - name: Run benchmarks and save results
         # The ``benchmark`` task runs ``pytest benchmarks --benchmark-only``; extra args forward to
         # pytest-benchmark, so this also autosaves and writes the machine-readable JSON consumed by
-        # the artifact below.
+        # the artifact below. ``--locked`` asserts the committed pixi.lock matches pyproject, matching
+        # tests.yml / pure-wheel-test.yml, so the nightly numbers come from the locked environment.
         run: >-
-          pixi run -e dev benchmark
+          pixi run --locked -e dev benchmark
           --benchmark-autosave
           --benchmark-json=benchmark-results.json
 
