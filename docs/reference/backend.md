@@ -17,10 +17,29 @@ Every method is a thin forwarder that imports its implementation module **inside
 so an operation's own module (`_zarr`, `_kerchunk_facade`, `_vector_read`, …) is loaded only when
 that operation is first used.
 
-That is a statement about the per-operation modules, not about dask. Importing `pyramids_lazy` does
-pull dask in: the package re-exports `LazyNetCDF` eagerly, `_lazy_cube` imports
-`pyramids.lazy_support` at module scope, and that facade imports dask itself — plus
-`dask_geopandas` and `pyarrow` when the `[parquet]` extra is installed. Measured:
+That is a statement about the per-operation modules, not about dask. **With the `[parquet]` extra
+installed, importing `pyramids_lazy` pulls the whole dask stack in** — and not because of anything
+in this package. Nothing in `pyramids_lazy`, and nothing in `pyramids-core`, imports dask at module
+scope. The chain is:
+
+1. `pyramids_lazy/__init__.py` re-exports `LazyNetCDF` eagerly, which imports `pyramids.lazy_support`;
+2. that facade imports core subpackages, reaching `pyramids.feature.__init__`;
+3. which probes for `dask_geopandas` at module scope — a `try`/`except OptionalPackageDoesNotExist`
+   that sets the `_HAS_DASK_GEOPANDAS` flag core uses for dispatch;
+4. and `dask_geopandas` imports dask.
+
+So the cost appears only when the optional dependency is present. Blocking `dask_geopandas` to
+simulate a bare install, the probe fails, the flag goes `False` and no dask is imported:
+
+| Imported | Modules | `dask` present |
+|---|---|---|
+| `pyramids` | 306 | no |
+| `pyramids.feature`, with `dask_geopandas` blocked | 855 | no |
+| `pyramids.feature` | 1397 | yes |
+| `pyramids.dataset` | 1690 | yes |
+| `pyramids_lazy` | 1868 | yes |
+
+Measured:
 
 Measured in two separate interpreters:
 
