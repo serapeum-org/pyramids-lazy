@@ -113,6 +113,35 @@ class TestLaziness:
         # Three single-step files -> three blocks of length one along the time axis.
         assert lazy["d"].chunks[0] == (1, 1, 1)
 
+    @requires_dask
+    def test_reads_nothing_at_open_and_one_file_per_block_at_compute(
+        self, tmp_path, monkeypatch
+    ):
+        """Guard the module's reason to exist: open is metadata-only, reads happen at compute.
+
+        Counts calls to the per-block loader. Opening must trigger zero variable reads (the dask
+        graph is built from shape/dtype metadata only); computing must read each file exactly once.
+        An eager-read regression (a stray `.data`/`.load_array()` during graph build) would make the
+        open count non-zero and fail here, where every value-level test would still pass.
+        """
+        import pyramids_lazy._mesh_mfdataset as mm
+
+        _write_run(tmp_path, dated=True)
+        reads = {"n": 0}
+        original = mm._load_mesh_variable
+
+        def counting(*args, **kwargs):
+            reads["n"] += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(mm, "_load_mesh_variable", counting)
+        lazy = mm.open_mesh_mfdataset(str(tmp_path / "run_*.nc"))
+        assert reads["n"] == 0, f"open must read no variable values, read {reads['n']}"
+        lazy.compute()
+        assert reads["n"] == 3, (
+            f"compute must read each of 3 files once, read {reads['n']}"
+        )
+
 
 class TestEagerParity:
     """`.compute()` must equal the eager `MeshDataset.open_mfdataset` byte for byte."""
