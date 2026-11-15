@@ -18,8 +18,10 @@ Design, mirroring the raster ``_mfdataset`` and the ``LazyNetCDF`` wrapper:
   ``open_mfdataset`` result: the join and the rebuild go through core's own
   :meth:`MeshDataset._rebuild`, and the per-variable time-axis concatenation reproduces
   ``_concat_temporal_variable`` on ``.compute()``.
-* ``dask`` is imported only at call time (as in ``_mfdataset``), so ``import pyramids_lazy`` -- which
-  eagerly pulls this module's :class:`LazyMeshDataset` -- stays dask-free until an op runs.
+* ``dask`` is imported only at call time (as in ``_mfdataset``), so this module adds no eager dask
+  import: ``import pyramids_lazy`` eagerly pulls this module's :class:`LazyMeshDataset` without this
+  file importing dask at module scope. (The package itself is not dask-free on import -- ``_seam``
+  pulls ``pyramids.lazy_support``, which already resolves dask -- but nothing here adds to that.)
 
 Core reaches this through a ``getattr`` probe on the backend singleton (``open_mesh_mfdataset`` /
 ``lazy_mesh_type``), **not** a ``ComputeBackend`` Protocol method: the Protocol is
