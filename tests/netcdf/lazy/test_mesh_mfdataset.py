@@ -212,6 +212,49 @@ class TestEagerParity:
         np.testing.assert_array_equal(lazy["d"].data, eager["d"].data)
 
     @requires_dask
+    def test_sort_false_preserves_caller_order_for_dated_files(self, tmp_path):
+        """`sort=False` keeps the caller's order even for DATED files -- it does not re-sort.
+
+        The clause that only became reachable through core once it forwarded `sort` (core
+        849f1abd58): a dated run given out of chronological order must come back in the GIVEN
+        order under `sort=False`, not re-stamped into time order. `sort=True` would reorder it.
+        """
+        from pyramids_lazy._mesh_mfdataset import open_mesh_mfdataset
+
+        a = tmp_path / "a.nc"
+        b = tmp_path / "b.nc"
+        c = tmp_path / "c.nc"
+        _write_one(
+            a,
+            data={"d": [[9.0, 18.0]]},
+            dims={"d": ("time", "mesh2d_nFaces")},
+            dated_day=9,
+        )
+        _write_one(
+            b,
+            data={"d": [[2.0, 4.0]]},
+            dims={"d": ("time", "mesh2d_nFaces")},
+            dated_day=2,
+        )
+        _write_one(
+            c,
+            data={"d": [[5.0, 10.0]]},
+            dims={"d": ("time", "mesh2d_nFaces")},
+            dated_day=5,
+        )
+        seq = [str(a), str(b), str(c)]  # dated but given 9, 2, 5 -- not chronological
+        eager = MeshDataset.open_mfdataset(seq, sort=False)
+        lazy = open_mesh_mfdataset(seq, sort=False).compute()
+        assert lazy["d"].data[:, 0].tolist() == [9.0, 2.0, 5.0], (
+            "caller order must be preserved"
+        )
+        np.testing.assert_array_equal(lazy["d"].data, eager["d"].data)
+        # Sanity: sort=True on the same input WOULD reorder to chronological, proving the
+        # difference is real and sort=False is genuinely suppressing the sort.
+        chrono = open_mesh_mfdataset(seq, sort=True).compute()
+        assert chrono["d"].data[:, 0].tolist() == [2.0, 5.0, 9.0]
+
+    @requires_dask
     def test_a_single_path_is_accepted(self, tmp_path):
         from pyramids_lazy._mesh_mfdataset import open_mesh_mfdataset
 
