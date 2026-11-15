@@ -1547,18 +1547,16 @@ compare absolute milliseconds commit-to-commit.</p>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>gh<span class="w"> </span>run<span class="w"> </span>download<span class="w"> </span>&lt;run-id&gt;
 </code></pre></div>
 <ul>
-<li><strong>Trend history + regression alerts:</strong> each nightly run feeds
+<li><strong>Trend chart:</strong> <a href="https://serapeum-org.github.io/pyramids-lazy/bench/">https://serapeum-org.github.io/pyramids-lazy/bench/</a> — each nightly run feeds
   <a href="https://github.com/benchmark-action/github-action-benchmark"><code>github-action-benchmark</code></a>, which appends the run
-  to a benchmark history on the dedicated <strong><code>benchmarks</code></strong> branch (kept separate from the <code>gh-pages</code> docs branch).
-  When a benchmark regresses by <strong>≥ 1.5×</strong> (the <code>150%</code> alert threshold, loose on purpose because shared runners are
-  noisy), the action posts a <strong>commit comment that @-mentions the maintainer</strong>. It never fails the nightly run.
-  One-time setup: the <code>benchmarks</code> data branch must be created once as an empty orphan branch (the action appends
-  to it but does not create it), and alerts begin from the second run (the first seeds the baseline):</li>
+  to a history under <code>bench/</code> on the <code>gh-pages</code> branch and publishes the interactive chart there. <code>bench/</code> is its
+  own subdir, so it coexists with the mike-versioned MkDocs site without either clobbering the other.</li>
+<li><strong>Regression alerts:</strong> when a benchmark regresses by <strong>≥ 1.5×</strong> (the <code>150%</code> alert threshold, loose on purpose
+  because shared runners are noisy), the action posts a <strong>commit comment that @-mentions the maintainer</strong>. It never
+  fails the nightly run. Alerts begin from the second run on <code>gh-pages</code> (the first seeds the baseline).</li>
+<li><strong>Comparing runs locally:</strong> compare two runs' JSON directly:</li>
 </ul>
-<p><div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>git<span class="w"> </span>switch<span class="w"> </span>--orphan<span class="w"> </span>benchmarks<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>git<span class="w"> </span>commit<span class="w"> </span>--allow-empty<span class="w"> </span>-m<span class="w"> </span><span class="s2">"init benchmark data"</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>git<span class="w"> </span>push<span class="w"> </span>-u<span class="w"> </span>origin<span class="w"> </span>benchmarks
-</code></pre></div>
-- <strong>Comparing runs locally:</strong> compare two runs' JSON directly:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>pytest-benchmark<span class="w"> </span>compare<span class="w"> </span>old.json<span class="w"> </span>new.json
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>pytest-benchmark<span class="w"> </span>compare<span class="w"> </span>old.json<span class="w"> </span>new.json
 </code></pre></div>
 
 
