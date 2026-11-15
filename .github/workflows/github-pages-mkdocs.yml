@@ -4,9 +4,8 @@ name: Deploy MkDocs
 # docs (mike). It runs on push-to-main and on release. PR-preview deploys (mesh's deploy-pr job)
 # are intentionally omitted here, so a pull request never runs a docs deploy.
 #
-# NOTE: this repo has no `mkdocs.yml` / `docs/` site yet, so the deploy jobs need that site (and the
-# `ACTIONS_DEPLOY_TOKEN` secret) before they can succeed — but neither fires on a PR, so PR checks
-# stay clean until then.
+# The site it deploys is `mkdocs.yml` + `docs/`. The deploy also needs the `ACTIONS_DEPLOY_TOKEN`
+# secret and writes to a `gh-pages` branch that mike creates on the first successful run.
 
 permissions:
   contents: write

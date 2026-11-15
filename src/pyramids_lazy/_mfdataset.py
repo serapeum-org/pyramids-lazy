@@ -1,4 +1,4 @@
-"""Multi-file NetCDF opener with optional parallel metadata fan-out.
+"""Multi-file NetCDF opener stacking one variable into a lazy dask array.
 
 `NetCDF.open_mfdataset(paths, variable,...)` opens many
 NetCDF files and stacks a single named variable into a single lazy
@@ -62,9 +62,10 @@ def _open_and_extract(
 ) -> Any:
     """Open one NetCDF + extract one variable as a dask array.
 
-    Called synchronously by :func:`open_mfdataset` when
-    `parallel=False` and wrapped in :func:`dask.delayed` when
-    `parallel=True`.
+    Always called synchronously by `open_mfdataset`, once per
+    resolved path, and never wrapped in `dask.delayed`: the read it
+    returns is itself lazy, so the deprecated `parallel` argument
+    does not change how this is called.
     """
     from pyramids.netcdf import NetCDF
 

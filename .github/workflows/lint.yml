@@ -69,6 +69,29 @@ jobs:
           MPLBACKEND: Agg
         run: pixi run -e dev pytest --doctest-modules src -p no:cacheprovider
 
+  # The docs gate. `github-pages-mkdocs` only builds on push-to-main and on release, so before this
+  # job nothing validated the site on a PR: a broken `::: identifier`, a nav entry pointing at a
+  # missing page or a dead snippets include reached main and failed the deploy instead. `--strict`
+  # turns mkdocs/griffe warnings into errors, which is what catches those.
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: serapeum-org/github-actions/actions/python-setup/pixi@38c111084f99d5ff5f4a1e63bedce48fe33a10c0 # pixi/v1.2.1
+        with:
+          environments: docs
+          activate-environment: docs
+          cache: true
+          version: v0.84.2
+
+      - name: Build the docs site (strict)
+        # --locked, like tests.yml's `main`: without it a drifted pixi.lock is silently re-solved
+        # and the docs gate would pass against dependencies the lock does not describe.
+        run: pixi run --locked -e docs mkdocs build --strict
+
   # The repo's secret gate. gitleaks is the single secret scanner (matching pyramids / pyramids-eo /
   # pyramids-mesh). There is no local gitleaks pre-commit hook, so this job is the only thing that
   # runs it: it scans the whole working tree — every tracked file — with the .github/gitleaks.toml

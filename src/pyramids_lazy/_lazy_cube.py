@@ -117,7 +117,9 @@ class LazyNetCDF:
         self._source = source
         self._arrays = dict(arrays)
         self._dim_names = dict(dim_names)
-        self._records = records
+        # Copied, not aliased, to match `arrays` / `dim_names` above: views share a source cube but
+        # never a mutable mapping.
+        self._records = None if records is None else dict(records)
         self._materialize_warned = False
 
     @property
@@ -178,28 +180,88 @@ class LazyNetCDF:
             return self._rebuild()
         return self._source
 
-    def persist(self, **kwargs: Any):
+    def persist(self, **kwargs: Any) -> LazyNetCDF:
         """Realise the dask graph in worker memory, staying lazy.
 
         Returns a new :class:`LazyNetCDF` whose arrays are `dask.persist`-ed — the graph is kept but
         its results are held in memory / across the cluster, so later reads do not recompute it.
 
+        A composed array-native op survives the round trip: the deferred per-variable records are
+        carried onto the new view, exactly as `unify_chunks()` carries them, so `persist().compute()`
+        rebuilds the *transformed* cube instead of falling back to the untransformed source. A view
+        straight from `NetCDF.chunk()` carries no records, and `persist()` invents none.
+
+        Args:
+            **kwargs: Forwarded verbatim to `dask.persist` — for example `scheduler="threads"` or
+                `optimize_graph=False`.
+
         Returns:
-            LazyNetCDF: A lazy view over the persisted arrays.
+            LazyNetCDF: A lazy view over the persisted arrays, keeping this view's chunking and its
+            composed op.
+
+        Examples:
+            - Persisting stays lazy and keeps the chunking:
+                ```python
+                >>> from pyramids.netcdf import NetCDF
+                >>> cube = NetCDF.read_file("tests/data/netcdf/cf__5v__1d4-4d1__y-asc.nc")
+                >>> lazy = cube.get_variable("temperature").chunk("auto")
+                >>> lazy.chunks
+                {'time': (4,), 'pressure_level': (3,), 'lat': (5,), 'lon': (6,)}
+                >>> lazy.persist().chunks == lazy.chunks
+                True
+                >>> cube.close()
+
+                ```
+            - A composed reduction survives persisting: the view computes to the time-collapsed
+              result, not back to the four-step source it was read from:
+                ```python
+                >>> from pyramids.netcdf import NetCDF
+                >>> cube = NetCDF.read_file("tests/data/netcdf/cf__5v__1d4-4d1__y-asc.nc")
+                >>> lazy = cube.get_variable("temperature").chunk("auto")
+                >>> lazy.compute().read_array().shape
+                (4, 3, 5, 6)
+                >>> lazy.reduce("time", "mean").persist().compute().read_array().shape
+                (3, 5, 6)
+                >>> cube.close()
+
+                ```
+
+        See Also:
+            unify_chunks: Reconciles shared-dimension chunking across two or more variables; a
+                composed (single-variable) view is already unified, so it is returned unchanged.
+            compute: Materialises the view — the rebuilt transformed cube once an op has composed.
         """
         import_dask(_DASK_MISSING)
         import dask
 
         names = list(self._arrays)
-        persisted = dask.persist(*(self._arrays[name] for name in names), **kwargs)
-        arrays = dict(zip(names, persisted))
-        return LazyNetCDF(self._source, arrays, self._dim_names)
+        record_items = list(self._records.items()) if self._records is not None else []
+        # One dask.persist call for both mappings: the record's array is the graph `_rebuild` and
+        # every `_compose_*` actually read, so persisting only `_arrays` would leave them
+        # recomputing from the store while this view claimed to be in memory. Persisting together
+        # also keeps shared parts of the graph shared.
+        realised = dask.persist(
+            *(self._arrays[name] for name in names),
+            *(record.array for _, record in record_items),
+            **kwargs,
+        )
+        arrays = dict(zip(names, realised[: len(names)]))
+        records = None
+        if self._records is not None:
+            # Carry _records through, as unify_chunks does: without them compute() takes its
+            # "untransformed" branch and returns self._source.copy(), discarding a composed op.
+            records = {
+                name: record._replace(array=array)
+                for (name, record), array in zip(record_items, realised[len(names) :])
+            }
+        return LazyNetCDF(self._source, arrays, self._dim_names, records)
 
-    def unify_chunks(self):
+    def unify_chunks(self) -> LazyNetCDF:
         """Re-chunk every variable to a common chunking across their shared dimensions.
 
-        A no-op when the view holds fewer than two variables. Two variables chunked differently on a
-        shared dimension come out sharing one chunking afterward.
+        A no-op when the view holds fewer than two variables — that view is returned unchanged. Two
+        variables chunked differently on a shared dimension come out sharing one chunking afterward.
+        A composed array-native op is carried onto the result, as it is through `persist()`.
 
         Returns:
             LazyNetCDF: A lazy view whose variables agree on their shared-dimension chunking.
@@ -886,6 +948,10 @@ class LazyNetCDF:
             result = result._subset_band(dim_name, dim_indices)
         if drop:
             for dim_name in scalar_dims:
+                # The False arm is unreachable through the public API and is left as a guard:
+                # `indexers` is a dict, so a dimension cannot repeat, `_subset_band` preserves
+                # dimensions, and `squeeze(dim)` drops only the dimension it is given — so a
+                # scalar selector's dimension is always still present when the loop reaches it.
                 if (
                     dim_name
                     in next(iter(result._current_records().values())).band_names

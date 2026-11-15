@@ -48,6 +48,7 @@ lazy = "pyramids_lazy.backend:backend"
 [project.urls]
 Homepage = "https://github.com/serapeum-org/pyramids-lazy"
 Repository = "https://github.com/serapeum-org/pyramids-lazy"
+Documentation = "https://serapeum-org.github.io/pyramids-lazy/"
 
 [build-system]
 requires = ["setuptools>=80.0.0", "wheel"]
@@ -81,8 +82,7 @@ dev = [
     "twine>=5.0.0",
 ]
 # The MkDocs + mike documentation stack. Resolved by the `docs` pixi environment and the
-# github-pages-mkdocs workflow; mirrors pyramids-mesh. No docs site exists yet, so this group
-# is dormant until a `mkdocs.yml` + `docs/` tree land (see the workflow header).
+# github-pages-mkdocs workflow; mirrors pyramids-mesh. The site lives at `mkdocs.yml` + `docs/`.
 docs = [
     "mkdocs>=1.5.3",
     "mkdocs-material>=9.5.3",

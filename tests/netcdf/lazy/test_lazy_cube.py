@@ -129,6 +129,21 @@ class TestComputeLoad:
             "load() returns the source cube (xarray in-place semantics)"
         )
 
+    @requires_dask
+    def test_load_on_a_transformed_cube_returns_the_rebuilt_result(self):
+        """A composed op leaves no untransformed source to alias, so `load()` rebuilds like `compute()`."""
+        nc = NetCDF.read_file(str(MULTIVAR))
+        source = nc.get_variable("pr")
+        clipped = source.chunk("auto").clip(0.0, 5e-6)
+        loaded = clipped.load()
+        # `source`, not `nc`: the pinned variable is what an untransformed view would alias.
+        assert loaded is not source, "a transformed cube must not alias the source"
+        np.testing.assert_allclose(
+            np.asarray(loaded.read_array()),
+            np.asarray(clipped.compute().read_array()),
+            equal_nan=True,
+        )
+
 
 class TestBoundary:
     """Any eager operation on a lazy cube materialises it, warning once."""
@@ -228,6 +243,88 @@ class TestPersistUnify:
         assert persisted.chunks == lazy.chunks
 
     @requires_dask
+    def test_persist_preserves_a_composed_transformation(self):
+        """`persist()` keeps the composed op, so `compute()` is not the untransformed source."""
+        lazy = NetCDF.read_file(str(MULTIVAR)).get_variable("pr").chunk("auto")
+        cap = 5e-6
+        clipped = lazy.clip(0.0, cap)
+
+        direct = np.asarray(clipped.compute().read_array())
+        persisted = np.asarray(clipped.persist().compute().read_array())
+
+        assert np.nanmax(direct) <= cap
+        np.testing.assert_allclose(persisted, direct)
+
+    @requires_dask
+    def test_persist_carries_the_transformation_records(self):
+        """The composed-op records survive `persist()`, as they already do `unify_chunks()`."""
+        lazy = NetCDF.read_file(str(MULTIVAR)).get_variable("pr").chunk("auto")
+        clipped = lazy.clip(0.0, 5e-6)
+        assert clipped.persist()._records is not None
+
+    @requires_dask
+    def test_persist_also_persists_the_record_graph(self):
+        """`persist()` persists the record's array too, so a rebuild does not recompute it."""
+        lazy = NetCDF.read_file(str(MULTIVAR)).get_variable("pr").chunk("auto")
+        persisted = lazy.clip(0.0, 5e-6).persist()
+        name = next(iter(persisted._arrays))
+
+        record_keys = len(persisted._records[name].array.dask)
+
+        assert record_keys == len(persisted._arrays[name].dask)
+        assert record_keys == 1
+
+    @requires_dask
+    def test_persist_does_not_share_the_records_dict_with_the_source_view(self):
+        """Each view owns its records mapping, so mutating one never reaches another."""
+        lazy = NetCDF.read_file(str(MULTIVAR)).get_variable("pr").chunk("auto")
+        clipped = lazy.clip(0.0, 5e-6)
+
+        persisted = clipped.persist()
+        persisted._records.clear()
+
+        assert clipped._records != {}
+
+    @requires_dask
+    def test_persist_of_an_untransformed_view_carries_no_records(self):
+        """A view straight from `chunk()` has no composed op, so `persist()` adds none."""
+        persisted = NetCDF.read_file(str(FIX)).chunk("auto").persist()
+        assert persisted._records is None, (
+            "persist() must not invent records for an untransformed view"
+        )
+
+    @requires_dask
+    def test_an_op_composed_after_persist_stays_lazy_and_matches_the_direct_chain(self):
+        """`persist()` is transparent to further composition: the chain stays lazy and agrees."""
+        var = NetCDF.read_file(str(MULTIVAR)).get_variable("pr")
+        direct = var.chunk("auto").clip(0.0, 5e-6).reduce("time", "mean")
+        through_persist = (
+            var.chunk("auto").clip(0.0, 5e-6).persist().reduce("time", "mean")
+        )
+        assert isinstance(through_persist, LazyNetCDF), "the chain must stay lazy"
+        np.testing.assert_allclose(
+            np.asarray(through_persist.compute().read_array()),
+            np.asarray(direct.compute().read_array()),
+            equal_nan=True,
+        )
+
+    @requires_dask
+    def test_unify_chunks_is_the_documented_no_op_for_a_transformed_view(self):
+        """A composed view holds exactly one variable, so `unify_chunks()` returns it unchanged."""
+        clipped = (
+            NetCDF.read_file(str(MULTIVAR))
+            .get_variable("pr")
+            .chunk("auto")
+            .clip(0.0, 5e-6)
+        )
+
+        # Identity, not `_records is not None`: the latter inspects the very same object and so
+        # holds however `unify_chunks` behaves. Every compose path yields one variable, which is
+        # below the `len(self._arrays) < 2` short-circuit, so the records-passing branch below it
+        # is unreachable from the public API.
+        assert clipped.unify_chunks() is clipped
+
+    @requires_dask
     def test_unify_chunks_is_a_noop_for_a_single_variable(self):
         """With one variable there is nothing to reconcile, so the view is returned unchanged."""
         nc = NetCDF.read_file(str(FIX))
@@ -276,6 +373,16 @@ class TestLazyCubeDimNames:
 
         ua = NetCDF.read_file(str(MULTIVAR)).get_variable("ua")
         assert _lazy_cube_dim_names(ua, 3)[0] == "time+plev"
+
+    def test_a_spatial_only_array_drops_the_band_names(self):
+        """An array with no leading axes names only row/col, even for a banded variable."""
+        from pyramids_lazy._lazy_cube import _lazy_cube_dim_names
+
+        ua = NetCDF.read_file(str(MULTIVAR)).get_variable("ua")
+        assert ua._band_dim_names, "fixture variable must carry band dimensions"
+        assert len(_lazy_cube_dim_names(ua, 2)) == 2, (
+            "with no leading axis there is no band name to report"
+        )
 
     def test_extra_leading_axes_fall_back_to_positional_names(self):
         """More leading axes than band dimensions get deterministic positional names."""

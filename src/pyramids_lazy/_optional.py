@@ -8,6 +8,13 @@ be branded without ``_vector_read`` and ``_lazy_collection`` importing each othe
 
 from __future__ import annotations
 
+# Imported at runtime rather than under TYPE_CHECKING. Both sides are nearly free, so this is a
+# tie broken towards the simpler code: `types` costs ~0.9 ms (measured with -X importtime) on a
+# module only reached via the [parquet] path, and keeping it here leaves the annotation resolvable
+# by `typing.get_type_hints`, which deferring would turn into a NameError. Nothing in this repo
+# calls `get_type_hints` today — it is kept as a property of the annotation, not for a caller.
+from types import ModuleType
+
 
 class LazyExtraNotInstalled(ModuleNotFoundError):
     """A dependency from one of this backend's optional extras is missing.
@@ -43,7 +50,7 @@ def parquet_hint(lead: str) -> str:
     return f"{lead} {_PARQUET_INSTALL}"
 
 
-def import_dask_geopandas():
+def import_dask_geopandas() -> ModuleType:
     """Import and return ``dask_geopandas``, or raise a branded ``ImportError``.
 
     Called at module scope by every module that needs ``dask_geopandas``, so the branded hint is
@@ -58,6 +65,26 @@ def import_dask_geopandas():
             ``pyramids-lazy[parquet]``. A ``ModuleNotFoundError`` subclass, so optional-import
             guards and :func:`pytest.importorskip` keep treating it as "absent" rather than
             "broken".
+
+    Examples:
+        - The result is the `dask_geopandas` module itself, so its API is reached straight off it:
+            ```python
+            >>> from pyramids_lazy._optional import import_dask_geopandas
+            >>> module = import_dask_geopandas()  # doctest: +SKIP
+            >>> module.__name__  # doctest: +SKIP
+            'dask_geopandas'
+            >>> module.GeoDataFrame.__name__  # doctest: +SKIP
+            'GeoDataFrame'
+
+            ```
+        - Every call hands back the single module object `sys.modules` already holds, so calling it
+          at module scope and again inside a call-time guard costs one import:
+            ```python
+            >>> from pyramids_lazy._optional import import_dask_geopandas
+            >>> import_dask_geopandas() is import_dask_geopandas()  # doctest: +SKIP
+            True
+
+            ```
     """
     try:
         import dask_geopandas as module

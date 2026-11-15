@@ -26,6 +26,11 @@ through the entry point and routes its lazy operations to it automatically.
 - **Single backend object.** The entry point resolves to one `LazyComputeBackend` instance exposing
   one method per lazy operation plus an `api_version`.
 
+## Documentation
+
+<https://serapeum-org.github.io/pyramids-lazy/> — the backend contract, a reference page per lazy
+operation, and installation notes. Built from `mkdocs.yml` + `docs/`.
+
 ## License
 
 GNU General Public License v3.
