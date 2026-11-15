@@ -125,10 +125,13 @@ compare absolute milliseconds commit-to-commit.
   gh run download <run-id>
   ```
 
-- **Comparing runs:** there is no trend dashboard yet — compare two runs' JSON locally:
+- **Trend history + regression alerts:** each nightly run feeds
+  [`github-action-benchmark`](https://github.com/benchmark-action/github-action-benchmark), which appends the run
+  to a benchmark history on the dedicated **`benchmarks`** branch (kept separate from the `gh-pages` docs branch).
+  When a benchmark regresses by **≥ 1.5×** (the `150%` alert threshold, loose on purpose because shared runners are
+  noisy), the action posts a **commit comment that @-mentions the maintainer**. It never fails the nightly run.
+- **Comparing runs locally:** compare two runs' JSON directly:
 
   ```bash
   pytest-benchmark compare old.json new.json
   ```
-
-> Automatic alerting on a performance regression is not wired up yet; it is tracked as a follow-up.
