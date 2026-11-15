@@ -286,8 +286,8 @@ class TestImportErrorPath:
             Patch ``__import__`` so ``import zarr`` fails. ``Dataset.to_zarr``
             must raise the package-wide ``OptionalPackageDoesNotExist`` — not a
             bare ``ImportError`` — and the message must carry both the PyPI and
-            repair install hints composed by ``lazy_hint`` for this package's own
-            ``dask`` / ``zarr`` runtime dependencies.
+            repair install hints composed by ``lazy_hint``, naming only the
+            missing ``zarr`` dependency (the zarr guard is split from the dask one).
         """
         import builtins
 
@@ -303,11 +303,14 @@ class TestImportErrorPath:
         with pytest.raises(OptionalPackageDoesNotExist) as exc_info:
             small_dataset.to_zarr(out_path)
         message = str(exc_info.value)
-        assert "pip install dask zarr" in message, (
+        assert "pip install zarr" in message, (
             f"PyPI install hint missing from message: {message!r}"
         )
         assert "pip install --force-reinstall pyramids-lazy" in message, (
             f"repair install hint missing from message: {message!r}"
+        )
+        assert "pyramids-core[lazy]" not in message, (
+            f"must not name core's lazy extra: {message!r}"
         )
 
 

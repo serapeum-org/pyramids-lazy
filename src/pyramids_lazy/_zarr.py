@@ -75,9 +75,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-_LAZY_IMPORT_ERROR = lazy_hint(
-    "Zarr IO requires the optional 'dask' / 'zarr' dependencies.", "dask zarr"
-)
+# Split per missing library so each guard names only the dependency it needs: the zarr guard
+# (import_zarr) must not tell a user whose dask is fine to reinstall it, and vice versa.
+_ZARR_MISSING = lazy_hint("Zarr IO requires the 'zarr' dependency.", "zarr")
+_DASK_MISSING = lazy_hint("Lazy Zarr IO requires the 'dask' dependency.", "dask")
 
 
 def _require_zarr() -> Any:
@@ -87,7 +88,7 @@ def _require_zarr() -> Any:
     so `Dataset.to_zarr` and `DatasetCollection.to_zarr` raise the same
     exception type for a missing optional dependency.
     """
-    import_zarr(_LAZY_IMPORT_ERROR)
+    import_zarr(_ZARR_MISSING)
     import zarr
 
     return zarr
@@ -484,7 +485,7 @@ def _build_dask_array(ds: Dataset, chunks: Any) -> Any:
     single- vs multi-band. Single-band datasets get a leading axis of
     length 1 added lazily via :meth:`dask.array.Array.reshape`.
     """
-    import_dask(_LAZY_IMPORT_ERROR)
+    import_dask(_DASK_MISSING)
     import dask.array as da
 
     if chunks in (None, "auto"):
@@ -634,7 +635,7 @@ def write_dataset_to_zarr(
             )
         result: Any = None
     else:
-        import_dask(_LAZY_IMPORT_ERROR)
+        import_dask(_DASK_MISSING)
         import dask
 
         result = dask.delayed(_finalize_after_write)(
@@ -803,7 +804,7 @@ def _read_data_array(
     """
     if chunks is None:
         return np.asarray(zarr_array[:])
-    import_dask(_LAZY_IMPORT_ERROR)
+    import_dask(_DASK_MISSING)
     import dask.array as da
 
     lazy = da.from_zarr(resolved_store, component=component)
