@@ -30,10 +30,12 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 import numpy as np
 from pyramids.lazy_support import _is_in_memory, _public_spatial_names, import_dask
 
+from pyramids_lazy._optional import lazy_hint
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from pyramids.netcdf import NetCDF
 
-_DASK_MISSING = "The lazy NetCDF cube needs dask; install the `lazy` extra."
+_DASK_MISSING = lazy_hint("The lazy NetCDF cube needs dask.", "dask")
 _MISSING = (
     object()
 )  # sentinel so __getattr__ fetches a forwarded attribute exactly once

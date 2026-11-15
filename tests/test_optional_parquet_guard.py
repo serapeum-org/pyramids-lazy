@@ -183,6 +183,9 @@ class TestGuardConstantsUseLocalHint:
             ("pyramids_lazy._kerchunk_builder", "_H5PY_IMPORT_ERROR", "h5py"),
             ("pyramids_lazy._kerchunk_facade", "_KERCHUNK_IMPORT_ERROR", "kerchunk"),
             ("pyramids_lazy._zarr", "_LAZY_IMPORT_ERROR", "dask zarr"),
+            ("pyramids_lazy._lazy", "_DASK_MISSING_MESSAGE", "dask"),
+            ("pyramids_lazy._lazy_cube", "_DASK_MISSING", "dask"),
+            ("pyramids_lazy._to_dask_dataframe", "_DASK_MISSING", "dask"),
         ],
     )
     def test_constant_names_its_library_and_repair_line(

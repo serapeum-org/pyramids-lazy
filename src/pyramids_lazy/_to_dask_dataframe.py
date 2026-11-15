@@ -24,6 +24,10 @@ from pyramids.lazy_support import (
     require_optional,
 )
 
+from pyramids_lazy._optional import lazy_hint
+
+_DASK_MISSING = lazy_hint("to_dask_dataframe() needs dask.", "dask")
+
 
 def _lazy_value_columns(
     nc: Any, names: list[str], first: Any, in_memory: bool, chunks: Any, da: Any
@@ -79,7 +83,7 @@ def to_dask_dataframe(
     Returns a :class:`dask.dataframe.DataFrame` with the dimension coordinates as plain columns
     beside the value columns on a flat index. Values are read lazily through ``NetCDF.read_array``.
     """
-    import_dask("to_dask_dataframe() needs dask; install the `lazy` extra.")
+    import_dask(_DASK_MISSING)
     require_optional(
         "dask.dataframe",
         "to_dask_dataframe() needs dask.dataframe, which requires pyarrow — install the "
