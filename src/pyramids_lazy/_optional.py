@@ -74,8 +74,8 @@ def lazy_hint(lead: str, package: str) -> str:
         - The lead is kept verbatim at the start and the named library is the pip target:
             ```python
             >>> from pyramids_lazy._optional import lazy_hint
-            >>> hint = lazy_hint("open_mfdataset requires the optional 'dask' dependency.", "dask")
-            >>> hint.startswith("open_mfdataset requires the optional 'dask' dependency.")
+            >>> hint = lazy_hint("open_mfdataset requires the 'dask' dependency.", "dask")
+            >>> hint.startswith("open_mfdataset requires the 'dask' dependency.")
             True
             >>> "pip install dask" in hint
             True

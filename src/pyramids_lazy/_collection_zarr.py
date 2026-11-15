@@ -223,7 +223,7 @@ def write_collection_to_zarr(
     files = collection._require_files("to_zarr")
     import_zarr(
         lazy_hint(
-            "DatasetCollection.to_zarr requires the optional 'zarr' dependency.", "zarr"
+            "DatasetCollection.to_zarr requires the 'zarr' dependency.", "zarr"
         )
     )
     if mode == "a" and append_dim is None and region is None:
@@ -284,7 +284,7 @@ def read_collection_from_zarr(
     """
     import_zarr(
         lazy_hint(
-            "DatasetCollection.from_zarr requires the optional 'zarr' dependency.",
+            "DatasetCollection.from_zarr requires the 'zarr' dependency.",
             "zarr",
         )
     )

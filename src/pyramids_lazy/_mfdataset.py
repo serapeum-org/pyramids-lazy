@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 
 
 _LAZY_IMPORT_ERROR = lazy_hint(
-    "open_mfdataset requires the optional 'dask' dependency.", "dask"
+    "open_mfdataset requires the 'dask' dependency.", "dask"
 )
 
 
