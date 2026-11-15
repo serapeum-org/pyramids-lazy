@@ -18,8 +18,10 @@ so an operation's own module (`_zarr`, `_kerchunk_facade`, `_vector_read`, …) 
 that operation is first used.
 
 That is a statement about the per-operation modules, not about dask. **With the `[parquet]` extra
-installed, importing `pyramids_lazy` pulls the whole dask stack in** — and not because of anything
-in this package. Nothing in `pyramids_lazy`, and nothing in `pyramids-core`, imports dask at module
+installed, importing `pyramids_lazy` pulls in dask (core, `array` and `dataframe`) along with
+`dask_geopandas`, `pyarrow`, `pandas`, `geopandas` and `scipy`** — though not `distributed`, `zarr`
+or `xarray`, which stay out until an operation needs them. None of this is caused by anything in
+this package. Nothing in `pyramids_lazy`, and nothing in `pyramids-core`, imports dask at module
 scope. The chain is:
 
 1. `pyramids_lazy/__init__.py` re-exports `LazyNetCDF` eagerly, which imports `pyramids.lazy_support`;
