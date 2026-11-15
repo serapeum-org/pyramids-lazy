@@ -40,7 +40,8 @@ environments, and the full CI layout.
 - **Coverage:** [Codecov](https://app.codecov.io/gh/serapeum-org/pyramids-lazy)
 - **Performance benchmarks** (`pytest-benchmark`): run locally with `pixi run -e dev benchmark`. The
   [Benchmarks workflow](https://github.com/serapeum-org/pyramids-lazy/actions/workflows/benchmarks.yml) runs
-  nightly and uploads each run's `benchmark-results.json` as an artifact — see
+  nightly, publishes a [trend chart](https://serapeum-org.github.io/pyramids-lazy/bench/), and uploads each run's
+  `benchmark-results.json` as an artifact — see
   [where to check the results](https://serapeum-org.github.io/pyramids-lazy/how-to/testing/#where-to-check-the-benchmark-results).
 
 ## License
