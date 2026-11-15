@@ -69,6 +69,33 @@ def lazy_hint(lead: str, package: str) -> str:
 
     Returns:
         The lead followed by the two-line install block.
+
+    Examples:
+        - The lead is kept verbatim at the start and the named library is the pip target:
+            ```python
+            >>> from pyramids_lazy._optional import lazy_hint
+            >>> hint = lazy_hint("open_mfdataset requires the optional 'dask' dependency.", "dask")
+            >>> hint.startswith("open_mfdataset requires the optional 'dask' dependency.")
+            True
+            >>> "pip install dask" in hint
+            True
+            >>> "pip install --force-reinstall pyramids-lazy" in hint
+            True
+
+            ```
+        - A space-joined ``package`` installs several libraries in one command, and no
+          core extra or conda line is ever named:
+            ```python
+            >>> from pyramids_lazy._optional import lazy_hint
+            >>> hint = lazy_hint("Zarr IO requires the optional deps.", "dask zarr")
+            >>> "pip install dask zarr" in hint
+            True
+            >>> "pyramids-core[lazy]" in hint
+            False
+            >>> "conda" in hint
+            False
+
+            ```
     """
     return (
         f"{lead} It ships as a pyramids-lazy dependency, so the install is incomplete.\n"
