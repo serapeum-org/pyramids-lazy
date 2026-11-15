@@ -14,10 +14,12 @@ Design, mirroring the raster ``_mfdataset`` and the ``LazyNetCDF`` wrapper:
   what core's eager ``open_mfdataset`` does -- no ``by_coords`` inference, no combine strategies.
 * The return value is a :class:`LazyMeshDataset` *wrapper* (a mesh carries many data variables, so
   -- as with ``LazyNetCDF`` -- it is not a dask subclass). ``.compute()`` materialises it back to
-  an eager :class:`~pyramids.netcdf.ugrid.MeshDataset` **identical** to the eager
+  an eager :class:`~pyramids.netcdf.ugrid.MeshDataset` whose values and metadata **equal** the eager
   ``open_mfdataset`` result: the join and the rebuild go through core's own
   :meth:`MeshDataset._rebuild`, and the per-variable time-axis concatenation reproduces
-  ``_concat_temporal_variable`` on ``.compute()``.
+  ``_concat_temporal_variable`` on ``.compute()``. (It is value-equal, not the same object: for a
+  single file the eager path returns the original head dataset untouched, while this path always
+  rebuilds; the values and ``time_values`` are equal either way.)
 * ``dask`` is imported only at call time (as in ``_mfdataset``), so this module adds no eager dask
   import: ``import pyramids_lazy`` eagerly pulls this module's :class:`LazyMeshDataset` without this
   file importing dask at module scope. (The package itself is not dask-free on import -- ``_seam``
@@ -330,9 +332,11 @@ class LazyMeshDataset:
     taken straight from the head at :meth:`compute`.
 
     ``.compute()`` / ``.load()`` materialise the wrapper back to an eager
-    :class:`~pyramids.netcdf.ugrid.MeshDataset` **identical** to the eager
+    :class:`~pyramids.netcdf.ugrid.MeshDataset` whose values and metadata **equal** the eager
     ``MeshDataset.open_mfdataset`` result -- the rebuild goes through core's own
-    :meth:`MeshDataset._rebuild`.
+    :meth:`MeshDataset._rebuild`. (Value-equal, not the same object: for a single file the eager
+    path returns the original head dataset untouched while this rebuilds; values are equal either
+    way.)
 
     Examples:
         - Build one from a two-step run, inspect it lazily, then materialise and use it. The
@@ -444,9 +448,10 @@ class LazyMeshDataset:
         """Materialise the lazy stack into an eager :class:`MeshDataset`.
 
         Computes each temporal variable's dask array and rebuilds the dataset through core's own
-        :meth:`MeshDataset._rebuild`, so the result is identical to the eager
+        :meth:`MeshDataset._rebuild`, so the result is value-equal to the eager
         ``MeshDataset.open_mfdataset``: temporal variables carry the concatenated values and the
-        joined ``time_values`` coordinate; static variables come from the head file unchanged.
+        joined ``time_values`` coordinate; static variables come from the head file unchanged. (For
+        a single file the eager path returns the head dataset itself; this rebuilds an equal one.)
 
         Returns:
             MeshDataset: The time-stacked dataset, fully in memory.
