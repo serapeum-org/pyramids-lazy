@@ -1,8 +1,7 @@
 """Tests for :meth:`NetCDF.to_kerchunk` / :meth:`NetCDF.combine_kerchunk`.
 
-DASK-14: kerchunk JSON reference manifests. Kerchunk is an optional
-``[lazy]`` dependency — tests skip cleanly when it is not
-installed.
+DASK-14: kerchunk JSON reference manifests. Kerchunk is a pyramids-lazy
+runtime dependency — tests skip cleanly when it is not installed.
 """
 
 from __future__ import annotations
