@@ -79,6 +79,23 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Verify the repo allows merge commits
+        # The auto-merge later uses `gh pr merge --merge` (a MERGE COMMIT) specifically so the tagged
+        # bump commit lands on main as an ancestor. If "Allow merge commits" is disabled, every
+        # release would fail the merge loop and orphan the tag — so fail fast here, before the bump,
+        # tag or any branch is cut. (main must also stay unprotected / without required reviews for
+        # the immediate token merge to land.)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ALLOWED=$(gh api "repos/${{ github.repository }}" --jq '.allow_merge_commit')
+          echo "allow_merge_commit: ${ALLOWED}"
+          if [ "${ALLOWED}" != "true" ]; then
+            echo "::error::'Allow merge commits' is disabled on ${{ github.repository }}, but this release merges with 'gh pr merge --merge'. Enable it (Settings -> General -> Pull Requests) or the release tag will be orphaned off main."
+            exit 1
+          fi
+
       - name: Checkout main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
