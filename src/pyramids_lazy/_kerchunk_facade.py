@@ -31,12 +31,12 @@ from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
-from pyramids.lazy_support import lazy_extra_hint
 
 from pyramids_lazy._kerchunk_builder import build_single_manifest, combine_manifests
+from pyramids_lazy._optional import lazy_hint
 
-_KERCHUNK_IMPORT_ERROR = lazy_extra_hint(
-    "kerchunk is required for NetCDF → Zarr reference manifests."
+_KERCHUNK_IMPORT_ERROR = lazy_hint(
+    "kerchunk is required for NetCDF → Zarr reference manifests.", "kerchunk"
 )
 
 # The `_FillValue` shim patches a process-global `encode_fill_value`; serialize the

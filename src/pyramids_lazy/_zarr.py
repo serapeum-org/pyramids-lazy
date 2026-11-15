@@ -62,11 +62,12 @@ from pyramids.lazy_support import (
     import_dask,
     import_zarr,
     is_lazy,
-    lazy_extra_hint,
     normalize_compressors,
     read_geobox,
     sr_from_epsg,
 )
+
+from pyramids_lazy._optional import lazy_hint
 
 if TYPE_CHECKING:
     from pyramids.dataset import Dataset
@@ -74,8 +75,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-_LAZY_IMPORT_ERROR = lazy_extra_hint(
-    "Zarr IO requires the optional 'dask' / 'zarr' dependencies."
+_LAZY_IMPORT_ERROR = lazy_hint(
+    "Zarr IO requires the optional 'dask' / 'zarr' dependencies.", "dask zarr"
 )
 
 

@@ -29,14 +29,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from pyramids.lazy_support import lazy_extra_hint
+
+from pyramids_lazy._optional import lazy_hint
 
 if TYPE_CHECKING:
     from pyramids.netcdf import NetCDF
 
 
-_LAZY_IMPORT_ERROR = lazy_extra_hint(
-    "open_mfdataset requires the optional 'dask' dependency."
+_LAZY_IMPORT_ERROR = lazy_hint(
+    "open_mfdataset requires the optional 'dask' dependency.", "dask"
 )
 
 
