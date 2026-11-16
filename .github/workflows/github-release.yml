@@ -106,9 +106,11 @@ jobs:
 
       - name: Resolve or create the release branch
         id: resolve
+        env:
+          GIVEN_BRANCH: ${{ inputs.release-branch }}
         run: |
           set -euo pipefail
-          GIVEN="${{ inputs.release-branch }}"
+          GIVEN="$GIVEN_BRANCH"
           if [ -n "$GIVEN" ]; then
             echo "Using the given release branch: $GIVEN"
             BRANCH="$GIVEN"
