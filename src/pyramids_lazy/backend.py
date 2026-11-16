@@ -8,11 +8,13 @@ through it, so the dask/zarr stack stays out of a bare ``pyramids-core`` install
 The core-facing methods mirror the ``ComputeBackend`` Protocol core publishes -- that Protocol is the
 authoritative contract -- with one deliberate addition: ``classify_zarr_store`` is an *additive*
 capability core consumes duck-typed (via ``getattr``), kept off the ``runtime_checkable`` Protocol so
-an older backend that lacks it still passes core's structural ``isinstance`` check. All v1 operations
+an older backend that lacks it still passes core's structural ``isinstance`` check. The same applies to
+the mesh lazy accessors (``open_mesh_mfdataset`` / ``lazy_mesh_type``), added additively for
+serapeum-org/pyramids-core#1458 and consumed duck-typed. All v1 operations
 are implemented: each method forwards to the relocated body
 in a sibling ``pyramids_lazy`` module (``_zarr``, ``_collection_zarr``, ``_vector_read``, ``_lazy``,
-``_mfdataset``, ``_kerchunk_facade``, ``_lazy_cube``, ``_to_dask_dataframe``), which import every core
-primitive through the ``pyramids.lazy_support`` facade.
+``_mfdataset``, ``_mesh_mfdataset``, ``_kerchunk_facade``, ``_lazy_cube``, ``_to_dask_dataframe``),
+which import every core primitive through the ``pyramids.lazy_support`` facade.
 """
 
 from __future__ import annotations
@@ -115,6 +117,36 @@ class LazyComputeBackend:
         from pyramids_lazy._mfdataset import open_mfdataset
 
         return open_mfdataset(paths, variable, **kwargs)
+
+    def open_mesh_mfdataset(self, paths: Any, **kwargs: Any) -> Any:
+        """Back ``MeshDataset.open_mfdataset(chunks=...)`` (dask-stacked multi-file mesh read).
+
+        An **additive, duck-typed** extension core reaches via ``getattr``, like
+        :meth:`classify_zarr_store` and deliberately **not** a ``ComputeBackend`` Protocol member:
+        the Protocol is ``runtime_checkable`` and core drops any backend failing its structural
+        ``isinstance`` check, so adding a method there would reject every already-released plugin.
+        Returns a :class:`~pyramids_lazy._mesh_mfdataset.LazyMeshDataset`; see
+        serapeum-org/pyramids-core#1458.
+        """
+        from pyramids_lazy._mesh_mfdataset import open_mesh_mfdataset
+
+        return open_mesh_mfdataset(paths, **kwargs)
+
+    def lazy_mesh_type(self) -> type:
+        """Return the class :meth:`open_mesh_mfdataset` produces (the lazy time-stacked mesh).
+
+        The mesh analogue of :meth:`lazy_netcdf_type`, provided so core *can* forward a public
+        ``pyramids.netcdf.ugrid.LazyMeshDataset`` name (and its ``isinstance`` checks) to this
+        without importing ``pyramids_lazy`` itself. **No released core consumes it yet** -- unlike
+        ``lazy_netcdf_type`` / ``lazy_feature_collection_type``, which core does forward: core's
+        ``MeshDataset.open_mfdataset(chunks=...)`` reaches ``LazyMeshDataset`` only as the return of
+        :meth:`open_mesh_mfdataset` and never asks for its type. This accessor is therefore dead
+        until someone wires that forwarding; it is kept for parity and that future use. An additive,
+        duck-typed accessor core would reach via ``getattr`` -- see :meth:`open_mesh_mfdataset`.
+        """
+        from pyramids_lazy._mesh_mfdataset import LazyMeshDataset
+
+        return LazyMeshDataset
 
     def write_dataset_to_zarr(self, dataset: Any, store: Any, **kwargs: Any) -> Any:
         """Back ``Dataset.to_zarr``."""
