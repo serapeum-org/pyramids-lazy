@@ -1,11 +1,22 @@
-"""The no-silent-skip guard: its reason pattern, reason extraction and skip classification.
+"""The no-silent-skip gate: its reason pattern, its classifier, and the conftest hooks around it.
 
 `tests/_skip_guard.py` decides whether a skip was caused by a missing optional dependency, which is
-what `--strict-extra-skips` turns into a session failure. Its pattern therefore has to recognise
-every reason shape `tests/_marks.py` produces -- a reason it does not match is a dependency skip
-that stays invisible in exactly the CI job that was supposed to execute the test. The guard runs
-against pytest report objects, so the tests below drive it with minimal stand-ins rather than a
-live pytest session.
+what `--strict-extra-skips` turns into a session failure. A reason the pattern does not match is a
+dependency skip that stays invisible in exactly the CI job that was supposed to execute the test;
+a reason it matches too eagerly turns a deliberate skip red. Both directions are pinned here.
+
+Five classes, covering the gate end to end apart from its registration:
+
+- `TestDependencySkipReason` and `TestSuiteReasonInventory` -- the pattern, against every
+  `reason="..."` literal the suite declares, in both directions so a stale row fails too.
+- `TestSkipReason` and `TestIsUnexpectedDependencySkip` -- reason extraction and classification,
+  including the `wasxfail` exclusion.
+- `TestStrictExtraSkipsWiring` -- the `tests/conftest.py` hooks that register the flag, record a
+  classified skip, flip the exit status and write the summary.
+
+The guard runs against pytest report objects, so these drive it with minimal stand-ins rather than
+a live pytest session. That means they verify the hook *bodies*: they would not catch a hook pytest
+had stopped invoking.
 """
 
 from __future__ import annotations
