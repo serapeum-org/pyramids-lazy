@@ -98,10 +98,13 @@ jobs:
 
       - name: Decide whether to publish
         # Two guards, both evaluated against the resolved + checked-out ref:
-        #   1. Idempotency (BOTH paths): never re-upload a version already on PyPI — that is the
-        #      HTTP 400 ("File already exists") this pipeline keeps hitting (a manual dispatch from
-        #      main, or a re-run after a successful publish). PyPI's JSON API returns 200 if the
-        #      version exists, 404 if not. This is the guard that makes the manual dispatch safe.
+        #   1. Best-effort idempotency (BOTH paths): skip publishing only when PyPI CONFIRMS the
+        #      version already exists (HTTP 200) — this avoids the HTTP 400 ("File already exists")
+        #      the pipeline keeps hitting on a re-run or a dispatch from an already-published ref.
+        #      It is best-effort, NOT a hard gate: any non-200 (404, 5xx, rate-limit, or a network
+        #      blip -> 000) means "not confirmed present", so we proceed and let twine be the final
+        #      authority. PyPI availability must never red-fail a release. A rapid re-run can still
+        #      race the JSON API's propagation lag and hit a 400 at twine; that fails safe.
         #   2. Draft gate (workflow_run path only): a github-release cut with `draft: true` still
         #      bumps the version and completes successfully, which would fire this workflow and
         #      publish an unreleased version (irreversible). /releases/tags returns published
@@ -119,16 +122,28 @@ jobs:
           TAG=$(grep -m1 '^version[[:space:]]*=' pyproject.toml | sed 's/.*"\(.*\)"/\1/')
           echo "Resolved version/tag: ${TAG}"
 
-          # Guard 1 — idempotency: skip if ${TAG} is already published on PyPI.
-          CODE=$(curl -sS -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/pyramids-lazy/${TAG}/json" || echo "000")
+          # Guard 1 — best-effort idempotency: skip only if PyPI confirms ${TAG} exists (HTTP 200).
+          # Retry briefly so a transient blip doesn't miss a real 200; on connection failure curl
+          # both prints 000 and exits non-zero, so `|| CODE=000` just reaffirms 000 (no "000000").
+          # Any non-200 result (incl. 5xx / 000 / 429) means "not confirmed present" -> proceed.
+          CODE=000
+          for attempt in 1 2 3; do
+            CODE=$(curl -sS -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/pyramids-lazy/${TAG}/json") || CODE=000
+            case "${CODE}" in
+              200|404) break ;;
+              *) echo "PyPI probe attempt ${attempt}: HTTP ${CODE}; retrying..."; sleep 5 ;;
+            esac
+          done
           if [ "${CODE}" = "200" ]; then
-            echo "pyramids-lazy ${TAG} is already on PyPI — skipping publish (idempotent)."
+            MSG="pyramids-lazy ${TAG} is already on PyPI — skipping publish (idempotent)."
+            echo "${MSG}"
+            # On a manual dispatch a silent green no-op can hide an operator mistake (wrong ref);
+            # surface it. On the automated path this is the expected re-run/idempotent no-op.
+            if [ "${EVENT}" = "workflow_dispatch" ]; then echo "::warning::${MSG}"; fi
             echo "publish=false" >> "$GITHUB_OUTPUT"
             exit 0
-          elif [ "${CODE}" != "404" ]; then
-            echo "::error::could not query PyPI for ${TAG} (HTTP ${CODE})"
-            exit 1
           fi
+          echo "PyPI did not confirm ${TAG} present (HTTP ${CODE}); proceeding."
 
           # Guard 2 — draft gate (workflow_run only). Manual dispatch has no draft to worry about
           # and already passed Guard 1, so it proceeds.
