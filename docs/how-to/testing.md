@@ -70,6 +70,40 @@ in `pyproject.toml`:
 Select or skip with `-m`, e.g. `-m "not live"` (the default in CI), `-m parquet_lazy`. `live` tests are skipped
 unless `live` appears as a whole token in `-m`.
 
+## The no-silent-skip gate
+
+A skip for a missing optional dependency is normally invisible: it is folded into `N skipped`, CI stays green, and a
+whole marker can run nowhere for months unnoticed. In a job whose environment **has** the extra, such a skip is
+never legitimate — it means the test was mis-marked or mis-routed.
+
+Passing `--strict-extra-skips` turns such a skip into a session failure, so the gap becomes loud instead. It is
+`store_true` with `default=False`, so an ordinary or partial-install run still skips cleanly. The decision lives in
+`tests/_skip_guard.py` (wired up in `tests/conftest.py`) and is unit-tested by `tests/test_skip_guard.py`.
+
+**No workflow passes the flag today** — it is available for a per-extra job but not yet armed in CI, so for now it
+is a local/manual check:
+
+```bash
+pixi run -e dev python -m pytest tests -m parquet_lazy --strict-extra-skips
+```
+
+A skip is counted as a dependency-skip when its reason matches one of three canonical shapes:
+
+| Shape | Example |
+|---|---|
+| `not installed` | `pyramids-lazy[parquet] not installed` |
+| `could not import` | `pytest.importorskip("kerchunk")`'s default reason |
+| a `pyramids-<dist>[` extra reference | `dask.dataframe needs dask + pyarrow (pyramids-lazy[parquet])` |
+
+The third shape matches both this distribution's extras and the `pyramids-core[...]` ones named by reasons
+relocated from core. Write a dependency skip in one of those forms or the gate cannot see it — matching generic
+wording like "required" or "not available" would instead turn legitimate platform skips red.
+
+Two things are deliberately excluded. Free-text skips (`pytest.skip("dask + zarr required")`, the `live` marker's
+own message) do not match. And an `xfail` is excluded before any reason matching: it also reports as skipped, but
+it ran and is visible as xfailed, so a strict xfail whose reason mentions a dependency — the OGR Parquet driver
+test, for instance — must not trip the gate.
+
 ## What runs in CI
 
 | Workflow | What it does |
