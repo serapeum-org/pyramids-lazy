@@ -27,10 +27,14 @@ jobs:
       (github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_repository.full_name == github.repository)
     permissions:
-      # The publish job only reads: it checks out a ref, reads releases via the API, and uploads to
-      # PyPI with twine (an external service). It never pushes commits/tags/releases, so read is
-      # enough — keep GITHUB_TOKEN least-privilege on a job that runs third-party build/publish tools.
-      contents: read
+      # contents: write is required by the manual-dispatch admin check below. It calls the
+      # collaborator permission endpoint (GET /repos/{repo}/collaborators/{actor}/permission), whose
+      # sibling endpoints require push access, and the REST docs state no read-only path for it; for
+      # GITHUB_TOKEN that push access comes from contents: write. The identical call runs under
+      # contents: write in github-release.yml's prepare job, so that is the only scope it is known to
+      # work under — a read-only token would 403 the manual recovery path. (The automated
+      # workflow_run path skips the admin check, but a job cannot scope permissions per-event.)
+      contents: write
       # download-artifact fetches the release-ref artifact from the separate github-release run,
       # which needs read access to that run's artifacts via the Actions API.
       actions: read
