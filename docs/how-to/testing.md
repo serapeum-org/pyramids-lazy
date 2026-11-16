@@ -96,12 +96,19 @@ A skip is counted as a dependency-skip when its reason matches one of three cano
 | `could not import` | `pytest.importorskip("kerchunk")`'s default reason |
 | a `pyramids…[` extra reference | `dask.dataframe needs dask + pyarrow (pyramids-lazy[parquet])` |
 
-The third shape is `pyramids[a-z0-9_-]*\[`, so it covers both this distribution's extras and the
-`pyramids-core[...]` ones named by reasons relocated from core. Matching is **case-insensitive**.
+The third shape is `pyramids(?:[_-][a-z0-9_-]+)?\[` — a bare `pyramids[` or any `pyramids-<name>[` /
+`pyramids_<name>[`, so a reason naming core's extras would match too, though none does today. Matching is
+**case-insensitive**. The separator is required so an unrelated distribution such as `pyramidsomething[` is not
+swallowed.
 
 **Write a dependency skip in one of those forms, or the gate cannot see it.** Generic wording is deliberately not
-matched, so `reason="requires zarr"` is invisible — that is why the three `requires zarr` skips in
-`tests/dataset/ops/` were re-worded to `zarr not installed`.
+matched, so `reason="requires zarr"` would be invisible; the `zarr` skips in `tests/dataset/ops/` are worded
+`zarr not installed` for that reason.
+
+Note that most of the suite's skip reasons are currently **unreachable**: `zarr`, `dask`, `kerchunk` and `h5py`
+are hard dependencies in `[project] dependencies`, so their `is None` guards never fire in an installed
+environment. The `parquet` extra is the only genuinely optional one, which makes it the only place the gate can
+fire today. The wording convention still matters for anything that becomes optional later.
 
 The flip side: matching is on **wording, not nature**. A platform or driver skip phrased with "not installed" —
 `reason="OGR Parquet driver not installed"` — *is* classified as a dependency skip and will fail an armed job.

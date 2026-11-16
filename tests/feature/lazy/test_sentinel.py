@@ -23,16 +23,6 @@ of which extras are installed in the dev env.
 from __future__ import annotations
 
 import pytest
-from pyramids.base._errors import OptionalPackageDoesNotExist
-from pyramids.base._utils import import_dask_geopandas
-
-try:
-    import_dask_geopandas("dask-geopandas not installed")
-    import dask_geopandas
-except OptionalPackageDoesNotExist:  # pragma: no cover
-    HAS_DASK_GP = False
-else:
-    HAS_DASK_GP = True
 
 
 # Marked per class rather than module-wide: only this one needs the extra. The two classes below
@@ -44,7 +34,6 @@ else:
 class TestGetattrHookFullInstall:
     """When ``dask-geopandas`` is installed, the symbol resolves normally."""
 
-    @pytest.mark.skipif(not HAS_DASK_GP, reason="dask-geopandas not installed")
     def test_from_import_returns_class(self):
         """``from pyramids.feature import LazyFeatureCollection`` works."""
         from pyramids.feature import LazyFeatureCollection

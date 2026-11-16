@@ -38,6 +38,11 @@ def _report(**attrs) -> SimpleNamespace:
 
 #: The `requires_*` marker names in `_marks.py`, pinned so the reflection below cannot silently
 #: shrink to a subset (or to nothing) and leave the parametrized suite vacuously green.
+#:
+#: Ten names, but not ten distinct markers: `requires_dask`, `requires_dask_geopandas` and
+#: `requires_pyarrow` are legacy aliases of `requires_lazy`, `requires_parquet_lazy` and
+#: `requires_parquet`. Pinning them records what `_marks.py` exports today; if the aliases are
+#: dropped, this set is the thing to update, and the failure message says which names went.
 EXPECTED_MARKER_NAMES = frozenset(
     {
         "requires_dask",
@@ -53,16 +58,25 @@ EXPECTED_MARKER_NAMES = frozenset(
     }
 )
 
-#: Every skip reason the suite actually produces, and whether the gate must see it. Collected with
-#: `grep -rnoE 'reason="[^"]+"' tests/` rather than by reflection, because `_marks.py` is not the
-#: only place skips are declared -- the `requires zarr` skipifs live in `tests/dataset/ops/`, and
-#: missing them is exactly the blind spot this inventory exists to catch. A new wording that is not
-#: listed here fails `test_the_inventory_matches_the_suite`, which forces a decision rather than a
-#: silent gap.
+#: Every `reason="..."` literal declared in the suite, and whether the gate must see it.
+#:
+#: Scope, stated precisely because the previous wording over-claimed: this covers skip reasons
+#: written as a `reason="..."` keyword. It does NOT cover reasons pytest generates at runtime --
+#: `pytest.importorskip("x")` produces `could not import 'x': No module named 'y'`, where the
+#: missing module may differ from the one named. Those are matched by the `could not import`
+#: alternative, which `TestDependencySkipReason` covers separately.
+#:
+#: Collected by scanning the suite rather than by reflection over `_marks.py`, because `_marks.py`
+#: is not the only place skips are declared.
+#:
+#: Several rows are currently UNREACHABLE: `zarr`, `dask`, `kerchunk` and `h5py` are hard
+#: `[project]` dependencies, so their `is None` skipifs can never fire in an installed environment.
+#: They are kept because the wording convention still applies if a dependency is ever made
+#: optional, and because the gate must classify them correctly either way. Only the `parquet`
+#: extra is genuinely optional today.
 SUITE_REASONS: tuple[tuple[str, bool], ...] = (
     ("dask + zarr (pyramids-lazy) not installed", True),
     ("dask-geopandas (pyramids-lazy[parquet]) not installed", True),
-    ("dask-geopandas not installed", True),
     ("dask.array not installed", True),
     ("dask.dataframe needs dask + pyarrow (pyramids-lazy[parquet])", True),
     ("kerchunk + h5py (pyramids-lazy) not installed", True),
@@ -110,8 +124,9 @@ class TestDependencySkipReason:
             f"marker set drifted; added {sorted(found - EXPECTED_MARKER_NAMES)}, "
             f"removed {sorted(EXPECTED_MARKER_NAMES - found)}"
         )
-        assert len(_marker_reasons()) == len(EXPECTED_MARKER_NAMES), (
-            f"expected a string reason per marker, got {len(_marker_reasons())} "
+        reasons = _marker_reasons()
+        assert len(reasons) == len(EXPECTED_MARKER_NAMES), (
+            f"expected a string reason per marker, got {len(reasons)} "
             f"for {len(EXPECTED_MARKER_NAMES)} markers"
         )
 
@@ -153,31 +168,38 @@ class TestSuiteReasonInventory:
             A new skip wording that nobody classified is the blind spot the gate keeps falling
             into, so adding one must fail here until it is listed with an intended verdict.
         """
-        tests_dir = Path(__file__).resolve().parent
-        scanned = 0
+        self_path = Path(__file__).resolve()
+        files_with_reasons = 0
         found: set[str] = set()
-        for path in tests_dir.rglob("*.py"):
-            if "__pycache__" in path.parts or path.name == Path(__file__).name:
+        for path in self_path.parent.rglob("*.py"):
+            # Compare resolved paths, not basenames: a same-named file in a subdirectory would
+            # otherwise be skipped silently.
+            if "__pycache__" in path.parts or path.resolve() == self_path:
                 continue
-            scanned += 1
-            found |= set(
-                re.findall(r'reason="([^"]+)"', path.read_text(encoding="utf-8"))
-            )
+            reasons = re.findall(r'reason="([^"]+)"', path.read_text(encoding="utf-8"))
+            if reasons:
+                files_with_reasons += 1
+                found |= set(reasons)
 
-        # Without these two, the subset check below is vacuously true whenever the scan comes up
-        # empty -- a mistyped glob or a moved file would leave the inventory "passing" while
-        # checking nothing. That is the same way the marker reflection went blind (review M5).
-        assert scanned > 10, (
-            f"expected to scan the suite, only reached {scanned} file(s)"
-        )
-        assert "zarr not installed" in found, (
-            "the scan did not reach tests/dataset/ops/, so the inventory proves nothing"
+        # Counting FILES THAT CARRY A REASON, not every .py in the tree: the suite has ~60 modules
+        # but only a handful declare skips, so a glob that silently stopped matching those would
+        # still clear a threshold set against the total. Without this the subset check below is
+        # vacuously true on an empty scan -- the way the marker reflection went blind (round-1 M5).
+        assert files_with_reasons >= 5, (
+            f"expected several files declaring skip reasons, found {files_with_reasons}"
         )
 
         catalogued = {reason for reason, _ in SUITE_REASONS}
         assert found <= catalogued, (
             f"uncatalogued skip reason(s): {sorted(found - catalogued)} — add them to "
             "SUITE_REASONS with the verdict the gate should give"
+        )
+        # The other direction: a row nobody emits any more is stale, and leaving it in makes the
+        # inventory describe a suite that no longer exists. Rows for reasons declared outside a
+        # `reason="..."` literal would trip this, so there are none.
+        assert catalogued <= found, (
+            f"stale SUITE_REASONS row(s) no longer emitted by the suite: "
+            f"{sorted(catalogued - found)} — remove them or fix the wording they track"
         )
 
     def test_this_packages_own_extra_is_recognised(self):
@@ -192,8 +214,15 @@ class TestSuiteReasonInventory:
             "pyramids_lazy[parquet] missing",
             "Pyramids-Lazy[parquet] missing",
             "pyramids-core2[viz] missing",
+            "pyramids[parquet] missing",
         ],
-        ids=["core-extra", "underscore-dist", "mixed-case", "digit-in-dist"],
+        ids=[
+            "core-extra",
+            "underscore-dist",
+            "mixed-case",
+            "digit-in-dist",
+            "bare-dist",
+        ],
     )
     def test_the_extra_reference_shape_matches_on_its_own(self, reason):
         """Test the `pyramids…[` alternative matches without help from the other two.
@@ -210,6 +239,23 @@ class TestSuiteReasonInventory:
         assert DEPENDENCY_SKIP_REASON.search(reason), (
             f"extra reference not matched: {reason!r}"
         )
+
+    @pytest.mark.parametrize(
+        "reason",
+        ["pyramidsomething[extra] missing", "pyramid[x] missing"],
+        ids=["different-dist", "singular-prefix"],
+    )
+    def test_a_different_distribution_is_not_matched(self, reason):
+        """Test the extra-reference shape does not swallow an unrelated distribution name.
+
+        Args:
+            reason: A reason naming a distribution that merely starts with the same letters.
+
+        Test scenario:
+            `pyramidsomething` is a different package, not an extra of this one. An earlier
+            unanchored character class matched it; the `[_-]`-anchored group does not.
+        """
+        assert not DEPENDENCY_SKIP_REASON.search(reason), f"over-matched: {reason!r}"
 
     def test_unrelated_wording_is_not_treated_as_a_dependency_skip(self):
         """Free-text skips stay out, so the guard does not fail a deliberate skip."""
@@ -387,6 +433,25 @@ class TestIsUnexpectedDependencySkip:
         )
         assert is_unexpected_dependency_skip(report) is False, (
             "an xfail is not a dependency skip"
+        )
+
+    def test_a_bare_xfail_with_an_empty_reason_is_still_excluded(self):
+        """Test `wasxfail=""` excludes the report, so the check cannot become a truthiness test.
+
+        Test scenario:
+            A bare `@pytest.mark.xfail` carries no reason, and pytest sets `wasxfail` to the
+            empty string rather than to `None`. The guard uses `is not None` precisely for this:
+            rewriting it as `if getattr(report, "wasxfail", None):` would let a bare xfail whose
+            skip text happens to say "not installed" fail an armed job. Nothing else in the
+            suite pins that distinction.
+        """
+        report = _report(
+            skipped=True,
+            wasxfail="",
+            longrepr=("f.py", 1, "Skipped: zarr not installed"),
+        )
+        assert is_unexpected_dependency_skip(report) is False, (
+            "a bare xfail (wasxfail='') must still be excluded"
         )
 
     def test_an_unmatched_reason_is_not_reported(self):
