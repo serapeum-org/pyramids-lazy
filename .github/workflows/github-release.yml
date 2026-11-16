@@ -159,6 +159,22 @@ jobs:
           package-manager-version: v0.84.2
           install-groups: "dev"
 
+      # Hand the release branch to pypi-release. pypi-release is triggered by `workflow_run`, whose
+      # payload carries no custom data and whose head_branch/head_sha both point at main — which does
+      # NOT hold the bump in the manual-merge model. Uploading the branch name as an artifact is the
+      # one channel that crosses the workflow_run boundary; pypi-release downloads it by run id and
+      # checks it out.
+      - name: Record the release branch for pypi-release
+        run: echo "${{ needs.prepare.outputs.branch }}" > release-ref.txt
+
+      - name: Upload the release ref for pypi-release
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-ref
+          path: release-ref.txt
+          retention-days: 1
+          if-no-files-found: error
+
       # Open the release PR into main. Auto-merge is DISABLED: main is governed by a ruleset that
       # allows squash-only merges and requires a review, so the workflow cannot land a merge commit
       # unattended. The PR is opened here and MERGED MANUALLY at the end. Re-enable the merge loop

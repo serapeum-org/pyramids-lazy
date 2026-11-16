@@ -28,6 +28,9 @@ jobs:
       github.event.workflow_run.head_repository.full_name == github.repository)
     permissions:
       contents: write
+      # download-artifact fetches the release-ref artifact from the separate github-release run,
+      # which needs read access to that run's artifacts via the Actions API.
+      actions: read
     steps:
       - name: Check actor is a repository admin
         # Gate the MANUAL publish path only. The workflow_run path is already tied to
@@ -49,13 +52,40 @@ jobs:
             exit 1
           fi
 
+      - name: Download the release ref from the github-release run
+        # workflow_run carries no custom data, and head_branch/head_sha both point at main — which
+        # does NOT hold the bump in the manual-merge model (the bump lives on the release/auto-*
+        # branch until a human merges it). github-release uploads the branch it created as the
+        # `release-ref` artifact; fetch it by the triggering run's id.
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-ref
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: .release-ref
+
+      - name: Resolve the ref to publish
+        id: ref
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            REF="$(cat .release-ref/release-ref.txt)"
+            echo "Release ref from github-release artifact: ${REF}"
+          else
+            REF="${{ github.ref_name }}"
+            echo "Manual dispatch; publishing the selected ref: ${REF}"
+          fi
+          echo "ref=${REF}" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          # head_branch (not head_sha): github-release pushes the version-bump + pixi.lock commits
-          # AFTER the workflow_run head_sha is captured, so the branch tip carries the released
-          # version while head_sha would not.
-          ref: ${{ github.event.workflow_run.head_branch }}
+          # Publish the branch github-release created (from the release-ref artifact on the
+          # workflow_run path, or the dispatched ref on a manual run) — NOT head_branch/head_sha,
+          # which both point at the pre-bump main. `clean: true` here wipes .release-ref, but the
+          # ref was already captured into the step output above.
+          ref: ${{ steps.ref.outputs.ref }}
 
       - name: Ensure the release is published (skip drafts)
         # A github-release run cut with `draft: true` still bumps the version and completes
