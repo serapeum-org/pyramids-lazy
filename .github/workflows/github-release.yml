@@ -165,7 +165,9 @@ jobs:
       # one channel that crosses the workflow_run boundary; pypi-release downloads it by run id and
       # checks it out.
       - name: Record the release branch for pypi-release
-        run: echo "${{ needs.prepare.outputs.branch }}" > release-ref.txt
+        env:
+          BRANCH: ${{ needs.prepare.outputs.branch }}
+        run: printf '%s\n' "$BRANCH" > release-ref.txt
 
       - name: Upload the release ref for pypi-release
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -182,9 +184,10 @@ jobs:
       - name: Open the release PR into main (merge manually)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ needs.prepare.outputs.branch }}
         run: |
           set -euo pipefail
-          HEAD_BRANCH="${{ needs.prepare.outputs.branch }}"
+          HEAD_BRANCH="$BRANCH"
 
           if [ "$HEAD_BRANCH" = "main" ]; then
             echo "Release was cut on main; nothing to merge back."
