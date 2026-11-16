@@ -87,36 +87,64 @@ jobs:
           # ref was already captured into the step output above.
           ref: ${{ steps.ref.outputs.ref }}
 
-      - name: Ensure the release is published (skip drafts)
-        # A github-release run cut with `draft: true` still bumps the version and completes
-        # successfully, which would fire this workflow_run and publish an unreleased version to
-        # PyPI (irreversible). The /releases/tags endpoint returns published releases only, so a
-        # draft (or missing) release yields a non-zero exit and skips publishing.
+      - name: Decide whether to publish
+        # Two guards, both evaluated against the resolved + checked-out ref:
+        #   1. Idempotency (BOTH paths): never re-upload a version already on PyPI — that is the
+        #      HTTP 400 ("File already exists") this pipeline keeps hitting (a manual dispatch from
+        #      main, or a re-run after a successful publish). PyPI's JSON API returns 200 if the
+        #      version exists, 404 if not. This is the guard that makes the manual dispatch safe.
+        #   2. Draft gate (workflow_run path only): a github-release cut with `draft: true` still
+        #      bumps the version and completes successfully, which would fire this workflow and
+        #      publish an unreleased version (irreversible). /releases/tags returns published
+        #      releases only, so a draft (or missing) release skips publishing.
         id: gate
-        if: github.event_name == 'workflow_run'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
           # Anchor on `version` followed by `=` so it cannot match `version_provider` under
-          # [tool.commitizen]; `-m1` then takes the [project] version line.
+          # [tool.commitizen]; `-m1` then takes the [project] version line. tag_format is "$version"
+          # (no v-prefix), so the version doubles as the git tag / release name.
           TAG=$(grep -m1 '^version[[:space:]]*=' pyproject.toml | sed 's/.*"\(.*\)"/\1/')
-          ERR="${RUNNER_TEMP}/gh-release-check.err"
-          if gh api "repos/${REPO}/releases/tags/${TAG}" >/dev/null 2>"${ERR}"; then
-            echo "Published release ${TAG} found — proceeding."
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          elif grep -q 'HTTP 404' "${ERR}"; then
-            echo "No published release for ${TAG} (draft or not yet published) — skipping publish."
+          echo "Resolved version/tag: ${TAG}"
+
+          # Guard 1 — idempotency: skip if ${TAG} is already published on PyPI.
+          CODE=$(curl -sS -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/pyramids-lazy/${TAG}/json" || echo "000")
+          if [ "${CODE}" = "200" ]; then
+            echo "pyramids-lazy ${TAG} is already on PyPI — skipping publish (idempotent)."
             echo "publish=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "::error::could not verify release ${TAG} (GitHub API error, not a 404)"
-            cat "${ERR}"
+            exit 0
+          elif [ "${CODE}" != "404" ]; then
+            echo "::error::could not query PyPI for ${TAG} (HTTP ${CODE})"
             exit 1
           fi
 
+          # Guard 2 — draft gate (workflow_run only). Manual dispatch has no draft to worry about
+          # and already passed Guard 1, so it proceeds.
+          if [ "${EVENT}" = "workflow_run" ]; then
+            ERR="${RUNNER_TEMP}/gh-release-check.err"
+            if gh api "repos/${REPO}/releases/tags/${TAG}" >/dev/null 2>"${ERR}"; then
+              echo "Published release ${TAG} found — proceeding."
+              echo "publish=true" >> "$GITHUB_OUTPUT"
+            elif grep -q 'HTTP 404' "${ERR}"; then
+              echo "No published release for ${TAG} (draft or not yet published) — skipping publish."
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "::error::could not verify release ${TAG} (GitHub API error, not a 404)"
+              cat "${ERR}"
+              exit 1
+            fi
+          else
+            echo "Manual dispatch; ${TAG} not yet on PyPI — proceeding."
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build and publish sdist + wheel
-        if: github.event_name == 'workflow_dispatch' || steps.gate.outputs.publish == 'true'
+        # The gate now runs on both paths (idempotency + draft), so publishing is gated solely on
+        # its decision — a manual dispatch no longer bypasses it.
+        if: steps.gate.outputs.publish == 'true'
         # serapeum-org/github-actions is a monorepo: one commit carries the release tag for every
         # action in it, so 38c11108 is the dereferenced commit for pypi-release/v1.0.3,
         # github-release/v1.5.0 and mkdocs/v1.3.1 alike. Verify with
