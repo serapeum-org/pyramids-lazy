@@ -2,62 +2,66 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://serapeum-org.github.io/pyramids-lazy/0.1.1/</loc>
-         <lastmod>2026-11-15</lastmod>
+         <lastmod>2026-11-16</lastmod>
     </url>
     <url>
          <loc>https://serapeum-org.github.io/pyramids-lazy/0.1.1/LICENSE/</loc>
-         <lastmod>2026-11-15</lastmod>
+         <lastmod>2026-11-16</lastmod>
     </url>
     <url>
          <loc>https://serapeum-org.github.io/pyramids-lazy/0.1.1/change-log/</loc>
-         <lastmod>2026-11-15</lastmod>
+         <lastmod>2026-11-16</lastmod>
     </url>
     <url>
          <loc>https://serapeum-org.github.io/pyramids-lazy/0.1.1/installation/</loc>
-         <lastmod>2026-11-15</lastmod>
+         <lastmod>2026-11-16</lastmod>
+    </url>
+    <url>
+         <loc>https://serapeum-org.github.io/pyramids-lazy/0.1.1/how-to/testing/</loc>
+         <lastmod>2026-11-16</lastmod>
     </url>
     <url>
          <loc>https://serapeum-org.github.io/pyramids-lazy/0.1.1/reference/</loc>
-         <lastmod>2026-11-15</lastmod>
+         <lastmod>2026-11-16</lastmod>
     </url>
     <url>
          <loc>https://serapeum-org.github.io/pyramids-lazy/0.1.1/reference/backend/</loc>
-         <lastmod>2026-11-15</lastmod>
+         <lastmod>2026-11-16</lastmod>
     </url>
     <url>
          <loc>https://serapeum-org.github.io/pyramids-lazy/0.1.1/reference/collection-zarr/</loc>
-         <lastmod>2026-11-15</lastmod>
+         <lastmod>2026-11-16</lastmod>
     </url>
     <url>
          <loc>https://serapeum-org.github.io/pyramids-lazy/0.1.1/reference/dask-dataframe/</loc>
-         <lastmod>2026-11-15</lastmod>
+         <lastmod>2026-11-16</lastmod>
     </url>
     <url>
          <loc>https://serapeum-org.github.io/pyramids-lazy/0.1.1/reference/kerchunk/</loc>
-         <lastmod>2026-11-15</lastmod>
+         <lastmod>2026-11-16</lastmod>
     </url>
     <url>
          <loc>https://serapeum-org.github.io/pyramids-lazy/0.1.1/reference/lazy-array/</loc>
-         <lastmod>2026-11-15</lastmod>
+         <lastmod>2026-11-16</lastmod>
     </url>
     <url>
          <loc>https://serapeum-org.github.io/pyramids-lazy/0.1.1/reference/lazy-feature-collection/</loc>
-         <lastmod>2026-11-15</lastmod>
+         <lastmod>2026-11-16</lastmod>
     </url>
     <url>
          <loc>https://serapeum-org.github.io/pyramids-lazy/0.1.1/reference/lazy-netcdf/</loc>
-         <lastmod>2026-11-15</lastmod>
+         <lastmod>2026-11-16</lastmod>
     </url>
     <url>
          <loc>https://serapeum-org.github.io/pyramids-lazy/0.1.1/reference/mfdataset/</loc>
-         <lastmod>2026-11-15</lastmod>
+         <lastmod>2026-11-16</lastmod>
     </url>
     <url>
          <loc>https://serapeum-org.github.io/pyramids-lazy/0.1.1/reference/vector-read/</loc>
-         <lastmod>2026-11-15</lastmod>
+         <lastmod>2026-11-16</lastmod>
     </url>
     <url>
          <loc>https://serapeum-org.github.io/pyramids-lazy/0.1.1/reference/zarr/</loc>
-         <lastmod>2026-11-15</lastmod>
+         <lastmod>2026-11-16</lastmod>
     </url>
 </urlset>
