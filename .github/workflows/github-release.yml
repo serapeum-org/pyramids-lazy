@@ -163,9 +163,11 @@ jobs:
       # payload carries no custom data and whose head_branch/head_sha point at the dispatched ref
       # (normally main) — which does NOT hold the bump in the manual-merge model. Uploading the
       # branch name as an artifact is the one channel that crosses the workflow_run boundary;
-      # pypi-release downloads it by run id and checks it out. NOTE: retention-days is 1 and the
-      # release branch is deleted when the PR merges, so delayed re-runs of pypi-release are not
-      # supported — the recovery for a failed/late publish is a fresh release dispatch.
+      # pypi-release downloads it by run id and checks it out. RECOVERY: a failed/late pypi-release
+      # re-runs the SAME version with no re-bump while the release-ref artifact is live
+      # (retention-days: 1) and the branch still exists (it does until the PR is merged) — re-run the
+      # job, or dispatch pypi-release against the merged ref. Only once the artifact has expired or
+      # the branch was deleted is a fresh release dispatch needed (which cuts the NEXT version).
       - name: Record the release branch for pypi-release
         env:
           BRANCH: ${{ needs.prepare.outputs.branch }}
