@@ -55,7 +55,7 @@ except ImportError:  # pragma: no cover - exercised only without the extra
 
 # Guarded rather than a module-level `importorskip`, so the file still collects
 # without zarr installed; the tests that need a real store are marked.
-needs_zarr = pytest.mark.skipif(zarr is None, reason="requires zarr")
+needs_zarr = pytest.mark.skipif(zarr is None, reason="zarr not installed")
 
 # The helper tests are pure functions; only the end-to-end class needs a store,
 # and those carry `lazy` as well.

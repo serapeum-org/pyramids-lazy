@@ -10,6 +10,8 @@ live pytest session.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -34,6 +36,51 @@ def _report(**attrs) -> SimpleNamespace:
     return SimpleNamespace(**attrs)
 
 
+#: The `requires_*` marker names in `_marks.py`, pinned so the reflection below cannot silently
+#: shrink to a subset (or to nothing) and leave the parametrized suite vacuously green.
+EXPECTED_MARKER_NAMES = frozenset(
+    {
+        "requires_dask",
+        "requires_dask_array",
+        "requires_dask_dataframe",
+        "requires_dask_geopandas",
+        "requires_kerchunk",
+        "requires_lazy",
+        "requires_netcdf_lazy",
+        "requires_parquet",
+        "requires_parquet_lazy",
+        "requires_pyarrow",
+    }
+)
+
+#: Every skip reason the suite actually produces, and whether the gate must see it. Collected with
+#: `grep -rnoE 'reason="[^"]+"' tests/` rather than by reflection, because `_marks.py` is not the
+#: only place skips are declared -- the `requires zarr` skipifs live in `tests/dataset/ops/`, and
+#: missing them is exactly the blind spot this inventory exists to catch. A new wording that is not
+#: listed here fails `test_the_inventory_matches_the_suite`, which forces a decision rather than a
+#: silent gap.
+SUITE_REASONS: tuple[tuple[str, bool], ...] = (
+    ("dask + zarr (pyramids-lazy) not installed", True),
+    ("dask-geopandas (pyramids-lazy[parquet]) not installed", True),
+    ("dask-geopandas not installed", True),
+    ("dask.array not installed", True),
+    ("dask.dataframe needs dask + pyarrow (pyramids-lazy[parquet])", True),
+    ("kerchunk + h5py (pyramids-lazy) not installed", True),
+    ("kerchunk not installed", True),
+    ("pyramids-lazy[parquet] not installed", True),
+    ("zarr not installed", True),
+    # Deliberately NOT a dependency skip: the `live` marker's own opt-in message.
+    ("live network test; run it with `-m live`", False),
+    # Deliberately NOT a dependency skip: the package is installed, it is simply older than the
+    # feature under test. Classifying it would redden every job until core ships the forwarder,
+    # which is the opposite of what the gate is for.
+    (
+        "installed pyramids-core has no open_mfdataset(chunks=) forwarder yet (#1458)",
+        False,
+    ),
+)
+
+
 def _marker_reasons() -> list[str]:
     """Every `reason=` string the `requires_*` skipif markers in `_marks.py` carry."""
     reasons = []
@@ -51,14 +98,74 @@ class TestDependencySkipReason:
     """Every reason `_marks.py` emits must be recognised as a dependency skip."""
 
     def test_the_markers_expose_reasons_to_check(self):
-        """The reflection above finds the `requires_*` markers, so the suite below is not empty."""
-        assert _marker_reasons()
+        """Reflection finds every expected `requires_*` marker, each carrying a string reason.
 
-    @pytest.mark.parametrize("reason", _marker_reasons())
+        Test scenario:
+            Asserting only non-emptiness would let the reflection silently shrink to one marker
+            and leave `test_every_marker_reason_is_recognised` vacuously green, so the marker
+            names and the reason count are both pinned.
+        """
+        found = {name for name in dir(_marks) if name.startswith("requires_")}
+        assert found == EXPECTED_MARKER_NAMES, (
+            f"marker set drifted; added {sorted(found - EXPECTED_MARKER_NAMES)}, "
+            f"removed {sorted(EXPECTED_MARKER_NAMES - found)}"
+        )
+        assert len(_marker_reasons()) == len(EXPECTED_MARKER_NAMES), (
+            f"expected a string reason per marker, got {len(_marker_reasons())} "
+            f"for {len(EXPECTED_MARKER_NAMES)} markers"
+        )
+
+    @pytest.mark.parametrize("reason", sorted(set(_marker_reasons())))
     def test_every_marker_reason_is_recognised(self, reason):
         """A `requires_*` reason that the pattern misses is a silently-invisible dependency skip."""
         assert DEPENDENCY_SKIP_REASON.search(reason), (
             f"reason not recognised as a dependency skip: {reason!r}"
+        )
+
+
+class TestSuiteReasonInventory:
+    """Every skip reason the suite really emits is classified as intended."""
+
+    @pytest.mark.parametrize("reason, is_dependency_skip", SUITE_REASONS)
+    def test_each_suite_reason_is_classified_as_intended(
+        self, reason, is_dependency_skip
+    ):
+        """Test the pattern's verdict on each real reason matches the inventory.
+
+        Args:
+            reason: A skip reason the suite produces.
+            is_dependency_skip: Whether the gate must treat it as a dependency skip.
+
+        Test scenario:
+            Covers both directions — a dependency skip the gate must see, and a deliberate skip
+            it must leave alone. `_marks.py` reflection alone misses the skipifs declared
+            elsewhere in the suite.
+        """
+        matched = bool(DEPENDENCY_SKIP_REASON.search(reason))
+        assert matched is is_dependency_skip, (
+            f"{reason!r}: expected dependency-skip={is_dependency_skip}, got {matched}"
+        )
+
+    def test_the_inventory_matches_the_suite(self):
+        """Test every `reason="..."` literal in the suite appears in the inventory above.
+
+        Test scenario:
+            A new skip wording that nobody classified is the blind spot the gate keeps falling
+            into, so adding one must fail here until it is listed with an intended verdict.
+        """
+        tests_dir = Path(__file__).resolve().parent
+        found: set[str] = set()
+        for path in tests_dir.rglob("*.py"):
+            if "__pycache__" in path.parts or path.name == Path(__file__).name:
+                continue
+            found |= set(
+                re.findall(r'reason="([^"]+)"', path.read_text(encoding="utf-8"))
+            )
+
+        catalogued = {reason for reason, _ in SUITE_REASONS}
+        assert found <= catalogued, (
+            f"uncatalogued skip reason(s): {sorted(found - catalogued)} — add them to "
+            "SUITE_REASONS with the verdict the gate should give"
         )
 
     def test_this_packages_own_extra_is_recognised(self):

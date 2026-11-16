@@ -29,7 +29,7 @@ import re
 # test skipped silently in the very job that installs pyarrow. ``tests/test_skip_guard.py`` pins
 # every reason ``_marks.py`` emits against this pattern so the two cannot drift apart again.
 DEPENDENCY_SKIP_REASON = re.compile(
-    r"not installed|could not import|pyramids-[a-z]+\[", re.IGNORECASE
+    r"not installed|could not import|pyramids[a-z0-9_-]*\[", re.IGNORECASE
 )
 
 
