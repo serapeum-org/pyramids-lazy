@@ -27,7 +27,17 @@ jobs:
       (github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_repository.full_name == github.repository)
     permissions:
+      # contents: write is required by the manual-dispatch admin check below. It calls the
+      # collaborator permission endpoint (GET /repos/{repo}/collaborators/{actor}/permission), whose
+      # sibling endpoints require push access, and the REST docs state no read-only path for it; for
+      # GITHUB_TOKEN that push access comes from contents: write. The identical call runs under
+      # contents: write in github-release.yml's prepare job, so that is the only scope it is known to
+      # work under — a read-only token would 403 the manual recovery path. (The automated
+      # workflow_run path skips the admin check, but a job cannot scope permissions per-event.)
       contents: write
+      # download-artifact fetches the release-ref artifact from the separate github-release run,
+      # which needs read access to that run's artifacts via the Actions API.
+      actions: read
     steps:
       - name: Check actor is a repository admin
         # Gate the MANUAL publish path only. The workflow_run path is already tied to
@@ -49,44 +59,117 @@ jobs:
             exit 1
           fi
 
+      - name: Download the release ref from the github-release run
+        # workflow_run carries no custom data, and head_branch/head_sha point at the dispatched ref
+        # (normally main) — which does NOT hold the bump in the manual-merge model (the bump lives
+        # on the release/auto-* branch until a human merges it). github-release uploads the branch it
+        # created as the `release-ref` artifact; fetch it by the triggering run's id. RECOVERY: while
+        # the artifact is live (retention-days: 1) and the branch exists, a failed run re-runs the
+        # SAME version (re-run the job, or dispatch against the merged ref); a fresh release dispatch
+        # (which cuts the NEXT version) is only needed once the artifact expired or the branch is gone.
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-ref
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: .release-ref
+
+      - name: Resolve the ref to publish
+        id: ref
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            REF="$(cat .release-ref/release-ref.txt)"
+            echo "Release ref from github-release artifact: ${REF}"
+          else
+            REF="${{ github.ref_name }}"
+            echo "Manual dispatch; publishing the selected ref: ${REF}"
+          fi
+          echo "ref=${REF}" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          # head_branch (not head_sha): github-release pushes the version-bump + pixi.lock commits
-          # AFTER the workflow_run head_sha is captured, so the branch tip carries the released
-          # version while head_sha would not.
-          ref: ${{ github.event.workflow_run.head_branch }}
+          # Publish the branch github-release created (from the release-ref artifact on the
+          # workflow_run path, or the dispatched ref on a manual run) — NOT head_branch/head_sha,
+          # which both point at the pre-bump main. `clean: true` here wipes .release-ref, but the
+          # ref was already captured into the step output above.
+          ref: ${{ steps.ref.outputs.ref }}
 
-      - name: Ensure the release is published (skip drafts)
-        # A github-release run cut with `draft: true` still bumps the version and completes
-        # successfully, which would fire this workflow_run and publish an unreleased version to
-        # PyPI (irreversible). The /releases/tags endpoint returns published releases only, so a
-        # draft (or missing) release yields a non-zero exit and skips publishing.
+      - name: Decide whether to publish
+        # Two guards, both evaluated against the resolved + checked-out ref:
+        #   1. Best-effort idempotency (BOTH paths): skip publishing only when PyPI CONFIRMS the
+        #      version already exists (HTTP 200) — this avoids the HTTP 400 ("File already exists")
+        #      the pipeline keeps hitting on a re-run or a dispatch from an already-published ref.
+        #      It is best-effort, NOT a hard gate: any non-200 (404, 5xx, rate-limit, or a network
+        #      blip -> 000) means "not confirmed present", so we proceed and let twine be the final
+        #      authority. PyPI availability must never red-fail a release. A rapid re-run can still
+        #      race the JSON API's propagation lag and hit a 400 at twine; that fails safe.
+        #   2. Draft gate (workflow_run path only): a github-release cut with `draft: true` still
+        #      bumps the version and completes successfully, which would fire this workflow and
+        #      publish an unreleased version (irreversible). /releases/tags returns published
+        #      releases only, so a draft (or missing) release skips publishing.
         id: gate
-        if: github.event_name == 'workflow_run'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
           # Anchor on `version` followed by `=` so it cannot match `version_provider` under
-          # [tool.commitizen]; `-m1` then takes the [project] version line.
+          # [tool.commitizen]; `-m1` then takes the [project] version line. tag_format is "$version"
+          # (no v-prefix), so the version doubles as the git tag / release name.
           TAG=$(grep -m1 '^version[[:space:]]*=' pyproject.toml | sed 's/.*"\(.*\)"/\1/')
-          ERR="${RUNNER_TEMP}/gh-release-check.err"
-          if gh api "repos/${REPO}/releases/tags/${TAG}" >/dev/null 2>"${ERR}"; then
-            echo "Published release ${TAG} found — proceeding."
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          elif grep -q 'HTTP 404' "${ERR}"; then
-            echo "No published release for ${TAG} (draft or not yet published) — skipping publish."
+          echo "Resolved version/tag: ${TAG}"
+
+          # Guard 1 — best-effort idempotency: skip only if PyPI confirms ${TAG} exists (HTTP 200).
+          # Retry briefly so a transient blip doesn't miss a real 200; on connection failure curl
+          # both prints 000 and exits non-zero, so `|| CODE=000` just reaffirms 000 (no "000000").
+          # Any non-200 result (incl. 5xx / 000 / 429) means "not confirmed present" -> proceed.
+          CODE=000
+          for attempt in 1 2 3; do
+            CODE=$(curl -sS -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/pyramids-lazy/${TAG}/json") || CODE=000
+            case "${CODE}" in
+              200|404) break ;;
+              *) echo "PyPI probe attempt ${attempt}: HTTP ${CODE}; retrying..."; sleep 5 ;;
+            esac
+          done
+          if [ "${CODE}" = "200" ]; then
+            MSG="pyramids-lazy ${TAG} is already on PyPI — skipping publish (idempotent)."
+            echo "${MSG}"
+            # On a manual dispatch a silent green no-op can hide an operator mistake (wrong ref);
+            # surface it. On the automated path this is the expected re-run/idempotent no-op.
+            if [ "${EVENT}" = "workflow_dispatch" ]; then echo "::warning::${MSG}"; fi
             echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "PyPI did not confirm ${TAG} present (HTTP ${CODE}); proceeding."
+
+          # Guard 2 — draft gate (workflow_run only). Manual dispatch has no draft to worry about
+          # and already passed Guard 1, so it proceeds.
+          if [ "${EVENT}" = "workflow_run" ]; then
+            ERR="${RUNNER_TEMP}/gh-release-check.err"
+            if gh api "repos/${REPO}/releases/tags/${TAG}" >/dev/null 2>"${ERR}"; then
+              echo "Published release ${TAG} found — proceeding."
+              echo "publish=true" >> "$GITHUB_OUTPUT"
+            elif grep -q 'HTTP 404' "${ERR}"; then
+              echo "No published release for ${TAG} (draft or not yet published) — skipping publish."
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "::error::could not verify release ${TAG} (GitHub API error, not a 404)"
+              cat "${ERR}"
+              exit 1
+            fi
           else
-            echo "::error::could not verify release ${TAG} (GitHub API error, not a 404)"
-            cat "${ERR}"
-            exit 1
+            echo "Manual dispatch; ${TAG} not yet on PyPI — proceeding."
+            echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build and publish sdist + wheel
-        if: github.event_name == 'workflow_dispatch' || steps.gate.outputs.publish == 'true'
+        # The gate now runs on both paths (idempotency + draft), so publishing is gated solely on
+        # its decision — a manual dispatch no longer bypasses it.
+        if: steps.gate.outputs.publish == 'true'
         # serapeum-org/github-actions is a monorepo: one commit carries the release tag for every
         # action in it, so 38c11108 is the dereferenced commit for pypi-release/v1.0.3,
         # github-release/v1.5.0 and mkdocs/v1.3.1 alike. Verify with
