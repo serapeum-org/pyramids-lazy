@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests import _marks
+from tests import _marks, conftest
 from tests._skip_guard import (
     DEPENDENCY_SKIP_REASON,
     is_unexpected_dependency_skip,
@@ -468,3 +468,96 @@ class TestIsUnexpectedDependencySkip:
         assert is_unexpected_dependency_skip(report) is False, (
             "free-text skips stay invisible"
         )
+
+
+class TestStrictExtraSkipsWiring:
+    """The conftest plumbing that turns a classified skip into a failed session."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_the_recorder(self, monkeypatch):
+        """Give each test its own recorder list, so the hooks cannot leak across tests."""
+        monkeypatch.setattr(conftest, "_strict_extra_skips", [])
+
+    def test_the_option_is_registered_off_by_default(self):
+        """Test `--strict-extra-skips` is a `store_true` defaulting to False.
+
+        Test scenario:
+            An ordinary or partial-install run must still skip cleanly, so the gate has to be
+            opt-in. Reads the registration the hook performs rather than trusting the help text.
+        """
+        recorded = {}
+
+        class _Parser:
+            def addoption(self, name, **kwargs):
+                recorded[name] = kwargs
+
+        conftest.pytest_addoption(_Parser())
+
+        assert "--strict-extra-skips" in recorded, "the option was not registered"
+        assert recorded["--strict-extra-skips"]["action"] == "store_true"
+        assert recorded["--strict-extra-skips"]["default"] is False
+
+    def test_a_dependency_skip_is_recorded_with_its_nodeid(self):
+        """Test the logreport hook records a classified skip as `<nodeid> -> <reason>`."""
+        report = _report(
+            skipped=True,
+            nodeid="tests/test_x.py::test_y",
+            longrepr=("f.py", 1, "Skipped: zarr not installed"),
+        )
+
+        conftest.pytest_runtest_logreport(report)
+
+        assert conftest._strict_extra_skips == [
+            "tests/test_x.py::test_y -> Skipped: zarr not installed"
+        ]
+
+    def test_an_unrelated_skip_is_not_recorded(self):
+        """Test a free-text skip leaves the recorder empty, so the gate stays quiet."""
+        report = _report(
+            skipped=True,
+            nodeid="tests/test_x.py::test_y",
+            longrepr=("f.py", 1, "Skipped: live network test; run it with `-m live`"),
+        )
+
+        conftest.pytest_runtest_logreport(report)
+
+        assert conftest._strict_extra_skips == []
+
+    @pytest.mark.parametrize(
+        "flag, recorded, expected_status",
+        [
+            (True, ["tests/x.py::y -> Skipped: zarr not installed"], 1),
+            (False, ["tests/x.py::y -> Skipped: zarr not installed"], 0),
+            (True, [], 0),
+        ],
+        ids=["armed-with-a-skip", "unarmed-with-a-skip", "armed-without-a-skip"],
+    )
+    def test_the_session_fails_only_when_armed_and_a_skip_was_recorded(
+        self, flag, recorded, expected_status
+    ):
+        """Test `pytest_sessionfinish` flips the exit status only for the one case that matters.
+
+        Args:
+            flag: Whether `--strict-extra-skips` was passed.
+            recorded: The dependency-skips recorded during the session.
+            expected_status: The exit status the hook should leave behind.
+
+        Test scenario:
+            Covers the full truth table, so neither arming the gate on its own nor a recorded
+            skip on its own can fail a session.
+        """
+        conftest._strict_extra_skips.extend(recorded)
+
+        class _Config:
+            def getoption(self, name):
+                assert name == "--strict-extra-skips", f"unexpected option {name!r}"
+                return flag
+
+        class _Session:
+            config = _Config()
+            exitstatus = 0
+
+        session = _Session()
+        conftest.pytest_sessionfinish(session, exitstatus=0)
+
+        assert session.exitstatus == expected_status
