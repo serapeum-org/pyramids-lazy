@@ -1,3 +1,13 @@
+## 0.2.0 (2026-11-16)
+
+### Feat
+
+- **mesh**: add lazy dask-backed mesh open_mfdataset (#26)
+
+### Fix
+
+- **release**: write the changelog on bump and drop the redundant lockfile step (#23)
+
 ## 0.1.1 (2026-11-15)
 
 ### Fix
