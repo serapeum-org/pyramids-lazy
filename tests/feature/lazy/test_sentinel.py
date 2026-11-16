@@ -62,11 +62,16 @@ class TestGetattrHookMinimalInstall:
             so users see an actionable install hint rather than a
             ``TypeError: isinstance() arg 2 must be a type`` the
             old ``None`` sentinel produced downstream.
+
+            The hint names **this** distribution's extra. core 0.80.0
+            rebranded it from ``pyramids-core[parquet]``, which is the
+            correct owner: the lazy vector path ships in
+            ``pyramids-lazy[parquet]``, not in core's.
         """
         import pyramids.feature as pf
 
         monkeypatch.setattr(pf, "_HAS_DASK_GEOPANDAS", False)
-        with pytest.raises(ImportError, match=r"pyramids-core\[parquet\]"):
+        with pytest.raises(ImportError, match=r"pyramids-lazy\[parquet\]"):
             pf.LazyFeatureCollection  # noqa: B018 - attribute access IS the action
 
     def test_try_except_is_the_correct_guard(self, monkeypatch):
