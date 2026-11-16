@@ -22,8 +22,9 @@ point and routes every lazy operation to it — there is no import to add and no
 
 ### Runtime
 
-- `pyramids-core >= 0.79.0` (provides the `pyramids` import, the `ComputeBackend` contract and the
-  `pyramids.lazy_support` facade)
+- `pyramids-core >= 0.80.0` (provides the `pyramids` import, the `ComputeBackend` contract and the
+  `pyramids.lazy_support` facade; 0.80.0 is the floor because it brands the lazy-vector install
+  hint with this distribution's extra, `pyramids-lazy[parquet]`)
 - `dask >= 2024.1.0` and `distributed >= 2024.1.0`
 - `zarr >= 3`
 - `fsspec >= 2024.1.0` and `s3fs >= 2024.1.0`
