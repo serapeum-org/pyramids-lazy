@@ -561,3 +561,50 @@ class TestStrictExtraSkipsWiring:
         conftest.pytest_sessionfinish(session, exitstatus=0)
 
         assert session.exitstatus == expected_status
+
+    @pytest.mark.parametrize(
+        "flag, recorded, expect_output",
+        [
+            (True, ["tests/x.py::y -> Skipped: zarr not installed"], True),
+            (False, ["tests/x.py::y -> Skipped: zarr not installed"], False),
+            (True, [], False),
+        ],
+        ids=["armed-with-a-skip", "unarmed-with-a-skip", "armed-without-a-skip"],
+    )
+    def test_the_summary_is_written_only_when_the_gate_fired(
+        self, flag, recorded, expect_output
+    ):
+        """Test `pytest_terminal_summary` reports the offending skips, and only then.
+
+        Args:
+            flag: Whether `--strict-extra-skips` was passed.
+            recorded: The dependency-skips recorded during the session.
+            expect_output: Whether the reporter should have been written to.
+
+        Test scenario:
+            A failed session whose summary says nothing is unactionable, so the armed case must
+            name each offending nodeid. The two negative rows keep the summary quiet otherwise.
+        """
+        conftest._strict_extra_skips.extend(recorded)
+        written: list[str] = []
+
+        class _Reporter:
+            class config:
+                @staticmethod
+                def getoption(name):
+                    assert name == "--strict-extra-skips", f"unexpected option {name!r}"
+                    return flag
+
+            def write_sep(self, _sep, title):
+                written.append(title)
+
+            def write_line(self, line):
+                written.append(line)
+
+        conftest.pytest_terminal_summary(_Reporter())
+
+        assert bool(written) is expect_output, f"unexpected summary output: {written}"
+        if expect_output:
+            assert any("tests/x.py::y" in line for line in written), (
+                f"the summary must name the offending nodeid, got {written}"
+            )
