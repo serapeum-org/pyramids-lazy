@@ -173,10 +173,31 @@ class TestSuiteReasonInventory:
         reason = "dask.dataframe needs dask + pyarrow (pyramids-lazy[parquet])"
         assert DEPENDENCY_SKIP_REASON.search(reason)
 
-    def test_cores_extra_is_still_recognised(self):
-        """Reasons relocated from core, naming `pyramids-core[...]`, keep matching."""
-        assert DEPENDENCY_SKIP_REASON.search("pyramids-core[viz] not installed")
-        assert DEPENDENCY_SKIP_REASON.search("needs cleopatra (pyramids-core[viz])")
+    @pytest.mark.parametrize(
+        "reason",
+        [
+            "needs cleopatra (pyramids-core[viz])",
+            "pyramids_lazy[parquet] missing",
+            "Pyramids-Lazy[parquet] missing",
+            "pyramids-core2[viz] missing",
+        ],
+        ids=["core-extra", "underscore-dist", "mixed-case", "digit-in-dist"],
+    )
+    def test_the_extra_reference_shape_matches_on_its_own(self, reason):
+        """Test the `pyramids…[` alternative matches without help from the other two.
+
+        Args:
+            reason: A reason whose only matchable feature is the extra reference.
+
+        Test scenario:
+            Deliberately excludes "not installed" and "could not import", so a reason that
+            carries only the extra reference cannot pass via another alternative. The earlier
+            version of this test used `"pyramids-core[viz] not installed"`, which matched on
+            `not installed` and so proved nothing about this shape.
+        """
+        assert DEPENDENCY_SKIP_REASON.search(reason), (
+            f"extra reference not matched: {reason!r}"
+        )
 
     def test_unrelated_wording_is_not_treated_as_a_dependency_skip(self):
         """Free-text skips stay out, so the guard does not fail a deliberate skip."""
@@ -228,16 +249,31 @@ class TestSkipReason:
         assert result == expected, f"Expected {expected!r}, got {result!r}"
 
     def test_missing_longrepr_attribute_is_tolerated(self):
-        """Test skip_reason returns "None" when the report has no longrepr at all.
+        """Test skip_reason returns a string, and no dependency-skip, for a bare report.
 
         Test scenario:
             The attribute is read with `getattr(..., None)`, so a report lacking it must not
-            raise — the guard has to survive unusual report objects.
+            raise. The contract asserted here is "a string that is not matched", not the exact
+            `str(None)` spelling — `"None"` is an artefact of the fallback, and pinning it would
+            freeze an accident rather than a guarantee.
         """
         result = skip_reason(_report())
-        assert result == "None", (
-            f"Expected 'None' for a report without longrepr, got {result!r}"
+        assert isinstance(result, str), (
+            f"expected a string, got {type(result).__name__}"
         )
+        assert not DEPENDENCY_SKIP_REASON.search(result), (
+            f"a report with no longrepr must not read as a dependency skip, got {result!r}"
+        )
+
+    def test_a_none_reason_slot_yields_none(self):
+        """Test a 3-tuple whose reason slot is `None` returns `None`, not a string.
+
+        Test scenario:
+            `skip_reason` unwraps `longrepr[2]` verbatim, so this is the one shape that can
+            return a non-string. It is why `is_unexpected_dependency_skip`'s `or ""` fallback is
+            load-bearing rather than defensive clutter: `re.search(None)` raises `TypeError`.
+        """
+        assert skip_reason(_report(longrepr=("f.py", 1, None))) is None
 
 
 class TestIsUnexpectedDependencySkip:
@@ -250,9 +286,10 @@ class TestIsUnexpectedDependencySkip:
             Skipped, no `wasxfail`, and a reason the pattern recognises — the one case the
             strict gate must fail on.
         """
+        # No `wasxfail` at all: a real non-xfail skip report does not carry the attribute, so
+        # passing `wasxfail=None` would be testing a shape pytest never produces.
         report = _report(
             skipped=True,
-            wasxfail=None,
             longrepr=(
                 "tests/test_x.py",
                 3,
@@ -282,7 +319,7 @@ class TestIsUnexpectedDependencySkip:
             The extra-reference shape carries no "not installed", so it exercises the
             alternative that silently stopped matching when the reasons were rebranded.
         """
-        report = _report(skipped=True, wasxfail=None, longrepr=("f.py", 1, reason))
+        report = _report(skipped=True, longrepr=("f.py", 1, reason))
         assert is_unexpected_dependency_skip(report) is True, (
             f"not recognised: {reason!r}"
         )
@@ -309,18 +346,32 @@ class TestIsUnexpectedDependencySkip:
             "a bare report must be ignored"
         )
 
-    def test_an_xfail_is_excluded_even_when_its_reason_mentions_a_dependency(self):
-        """Test an xfail carrying `wasxfail` is excluded before any reason matching.
+    @pytest.mark.parametrize(
+        "longrepr",
+        [
+            "ExceptionChainRepr-ish text mentioning not installed",
+            None,
+            ("f.py", 1, "Skipped: not installed"),
+        ],
+        ids=["repr-object-text", "none", "three-tuple"],
+    )
+    def test_an_xfail_is_excluded_whatever_its_longrepr_shape(self, longrepr):
+        """Test `wasxfail` excludes a report before the reason is ever inspected.
+
+        Args:
+            longrepr: A longrepr shape, each carrying matchable text or none at all.
 
         Test scenario:
             An xfail also reports `skipped=True`. It ran and is visible as xfailed, so it must
-            not trip the gate — even when its reason names a dependency, as the OGR Parquet
-            driver xfail does.
+            not trip the gate even when its reason names a dependency. Parametrized over the
+            longrepr shape because a real xfail does not produce the `(path, lineno, text)`
+            tuple a skip does — it carries an `ExceptionChainRepr` — and the exclusion must not
+            depend on that shape, since it happens before any reason matching.
         """
         report = _report(
             skipped=True,
-            wasxfail="reason: OGR Parquet driver not installed",
-            longrepr=("f.py", 1, "Skipped: not installed"),
+            wasxfail="reason: the optional driver is not installed",
+            longrepr=longrepr,
         )
         assert is_unexpected_dependency_skip(report) is False, (
             "an xfail is not a dependency skip"
@@ -335,7 +386,6 @@ class TestIsUnexpectedDependencySkip:
         """
         report = _report(
             skipped=True,
-            wasxfail=None,
             longrepr=("f.py", 1, "Skipped: live network test; run it with `-m live`"),
         )
         assert is_unexpected_dependency_skip(report) is False, (
