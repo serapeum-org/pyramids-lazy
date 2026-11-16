@@ -542,6 +542,45 @@ class TestTimeCoordinateJoin:
         )
         np.testing.assert_array_equal(lazy["d"].data, eager["d"].data)
 
+    @requires_dask
+    def test_sort_false_keeps_mixed_dated_and_undated_in_exact_caller_slots(
+        self, tmp_path
+    ):
+        """`sort=False` freezes a dated/undated/dated run in its GIVEN order -- nothing moves.
+
+        The core agent's confirmation request: with `sort` now forwarded from core, prove that
+        `sort=False` preserves the caller's exact order including the undated file in its given
+        slot. The mirror of `test_mixed_dated_and_undated_under_sort_true_keeps_undated_in_place`:
+        the same out-of-time-order sequence that `sort=True` reorders to `[2, 5, 9]` must come back
+        unchanged as `[9, 5, 2]` under `sort=False` -- the two dated files are NOT re-stamped and
+        the undated middle file stays exactly where it was given. Matches the eager path.
+        """
+        from pyramids_lazy._mesh_mfdataset import open_mesh_mfdataset
+
+        a = tmp_path / "a.nc"
+        b = tmp_path / "b.nc"
+        c = tmp_path / "c.nc"
+        _write_one(
+            a,
+            data={"d": [[9.0, 18.0]]},
+            dims={"d": ("time", "mesh2d_nFaces")},
+            dated_day=9,
+        )
+        _write_one(b, data={"d": [[5.0, 10.0]]}, dims={"d": ("time", "mesh2d_nFaces")})
+        _write_one(
+            c,
+            data={"d": [[2.0, 4.0]]},
+            dims={"d": ("time", "mesh2d_nFaces")},
+            dated_day=2,
+        )
+        seq = [str(a), str(b), str(c)]
+        eager = MeshDataset.open_mfdataset(seq, sort=False)
+        lazy = open_mesh_mfdataset(seq, sort=False).compute()
+        assert lazy["d"].data[:, 0].tolist() == [9.0, 5.0, 2.0], (
+            "sort=False must keep dated AND undated files in their given slots"
+        )
+        np.testing.assert_array_equal(lazy["d"].data, eager["d"].data)
+
 
 class TestMeshNameSelection:
     """The per-block loader re-selects the topology by name on every lazy read."""
