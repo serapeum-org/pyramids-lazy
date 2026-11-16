@@ -1341,10 +1341,14 @@ dask/zarr stack ever being pulled into a bare <code>pyramids-core</code> install
 <li>:func:<code>get_compute_backend</code>, the first-party fallback core calls by name when no entry point is
   registered (e.g. an editable checkout on <code>PYTHONPATH</code> with no installed metadata).</li>
 </ul>
-<p>The lazy view classes are also public here so core can forward its public <code>pyramids.netcdf.LazyNetCDF</code>
-/ <code>pyramids.feature.LazyFeatureCollection</code> names (and their <code>isinstance</code> checks) to them.
-:class:<code>LazyNetCDF</code> imports eagerly (it needs only dask at call time); <code>LazyFeatureCollection</code> is
-resolved lazily via module <code>__getattr__</code> because its module hard-imports <code>dask_geopandas</code> (the
+<p>The lazy view classes are public here so core can forward its public names (and their <code>isinstance</code>
+checks) to them: today core forwards <code>pyramids.netcdf.LazyNetCDF</code> and
+<code>pyramids.feature.LazyFeatureCollection</code>. :class:<code>LazyMeshDataset</code> is exposed on the same footing so
+core <em>can</em> forward a <code>pyramids.netcdf.ugrid.LazyMeshDataset</code> name once its mesh half ships -- the
+core-side <code>MeshDataset.open_mfdataset(chunks=...)</code> forwarder (serapeum-org/pyramids-core#1458) is not
+released yet, so no shipped core forwards this one today. :class:<code>LazyNetCDF</code> and
+:class:<code>LazyMeshDataset</code> import eagerly (they need only dask at call time); <code>LazyFeatureCollection</code>
+is resolved lazily via module <code>__getattr__</code> because its module hard-imports <code>dask_geopandas</code> (the
 <code>[parquet]</code> extra).</p>
 
 
