@@ -56,10 +56,12 @@ jobs:
           fi
 
       - name: Download the release ref from the github-release run
-        # workflow_run carries no custom data, and head_branch/head_sha both point at main — which
-        # does NOT hold the bump in the manual-merge model (the bump lives on the release/auto-*
-        # branch until a human merges it). github-release uploads the branch it created as the
-        # `release-ref` artifact; fetch it by the triggering run's id.
+        # workflow_run carries no custom data, and head_branch/head_sha point at the dispatched ref
+        # (normally main) — which does NOT hold the bump in the manual-merge model (the bump lives
+        # on the release/auto-* branch until a human merges it). github-release uploads the branch it
+        # created as the `release-ref` artifact; fetch it by the triggering run's id. A delayed
+        # re-run can fail here if the artifact expired (retention-days: 1) or the branch was deleted
+        # after merge — that fails safe; the recovery is a fresh release dispatch.
         if: github.event_name == 'workflow_run'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:

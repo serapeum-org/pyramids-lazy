@@ -160,10 +160,12 @@ jobs:
           install-groups: "dev"
 
       # Hand the release branch to pypi-release. pypi-release is triggered by `workflow_run`, whose
-      # payload carries no custom data and whose head_branch/head_sha both point at main — which does
-      # NOT hold the bump in the manual-merge model. Uploading the branch name as an artifact is the
-      # one channel that crosses the workflow_run boundary; pypi-release downloads it by run id and
-      # checks it out.
+      # payload carries no custom data and whose head_branch/head_sha point at the dispatched ref
+      # (normally main) — which does NOT hold the bump in the manual-merge model. Uploading the
+      # branch name as an artifact is the one channel that crosses the workflow_run boundary;
+      # pypi-release downloads it by run id and checks it out. NOTE: retention-days is 1 and the
+      # release branch is deleted when the PR merges, so delayed re-runs of pypi-release are not
+      # supported — the recovery for a failed/late publish is a fresh release dispatch.
       - name: Record the release branch for pypi-release
         env:
           BRANCH: ${{ needs.prepare.outputs.branch }}
