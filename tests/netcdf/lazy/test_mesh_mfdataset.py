@@ -13,6 +13,7 @@ eager ``MeshDataset.open_mfdataset`` that ships today. The fixture mirrors core'
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 import numpy as np
@@ -689,3 +690,58 @@ class TestDriverForwarding:
         )
         with pytest.raises(DriverNotExistError):
             open_mesh_mfdataset([str(path)], driver="does_not_exist")
+
+
+#: True once the installed pyramids-core carries the `open_mfdataset(chunks=)` forwarder
+#: (serapeum-org/pyramids-core#1458). A capability probe, not an env gate: the released core this
+#: suite runs against today has no such keyword, so the integration test below stays dormant until
+#: that core ships, then activates automatically -- the mirror of core's own live backend test.
+_CORE_HAS_CHUNKS_FORWARDER = (
+    "chunks" in inspect.signature(MeshDataset.open_mfdataset).parameters
+)
+
+
+class TestCoreForwarderIntegration:
+    """The real cross-repo seam: ``MeshDataset.open_mfdataset(chunks=...)`` into this backend.
+
+    Every other test drives :func:`open_mesh_mfdataset` (the module function) directly, so the
+    argument marshalling across the core/lazy boundary -- the exact place a ``sort=`` mismatch once
+    hid, caught by neither suite because each tested its own half against a stand-in -- is never
+    exercised end to end here. This closes that gap: it calls core's public forwarder, which
+    ``getattr``-probes the installed backend for ``open_mesh_mfdataset`` and threads
+    ``chunks``/``sort``/``driver``/``mesh_name`` into it against real objects on both sides. It is
+    skipped on a released core with no ``chunks=`` forwarder yet and starts carrying weight the day
+    that core ships.
+    """
+
+    @requires_dask
+    @pytest.mark.skipif(
+        not _CORE_HAS_CHUNKS_FORWARDER,
+        reason="installed pyramids-core has no open_mfdataset(chunks=) forwarder yet (#1458)",
+    )
+    def test_core_forwarder_returns_lazy_and_matches_eager(self, tmp_path):
+        """Core's ``chunks=`` forwarder returns this backend's ``LazyMeshDataset``, equal to eager.
+
+        Calls the real forwarder (not the module function) with ``chunks="auto"``: it must return a
+        ``pyramids_lazy`` ``LazyMeshDataset`` whose ``.compute()`` matches the eager read, with the
+        dated sort fired (``t2, t9, t10 -> 2, 9, 10``). An axis-index chunk dict survives the seam
+        too.
+        """
+        from pyramids_lazy._mesh_mfdataset import LazyMeshDataset
+
+        _write_run(tmp_path, dated=True)
+        glob = str(tmp_path / "run_*.nc")
+
+        lazy = MeshDataset.open_mfdataset(glob, chunks="auto")
+        assert isinstance(lazy, LazyMeshDataset), (
+            f"core forwarder must return the lazy backend type, got {type(lazy)}"
+        )
+        eager = MeshDataset.open_mfdataset(glob)
+        assert lazy.compute()["d"].data[:, 0].tolist() == [2.0, 9.0, 10.0], (
+            "dated sort must fire through the forwarder"
+        )
+        np.testing.assert_array_equal(lazy.compute()["d"].data, eager["d"].data)
+
+        lazy_axis = MeshDataset.open_mfdataset(glob, chunks={0: 1})
+        assert isinstance(lazy_axis, LazyMeshDataset)
+        np.testing.assert_array_equal(lazy_axis.compute()["d"].data, eager["d"].data)
