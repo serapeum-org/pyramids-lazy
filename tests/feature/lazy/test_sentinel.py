@@ -26,8 +26,6 @@ import pytest
 from pyramids.base._errors import OptionalPackageDoesNotExist
 from pyramids.base._utils import import_dask_geopandas
 
-pytestmark = pytest.mark.parquet_lazy
-
 try:
     import_dask_geopandas("dask-geopandas not installed")
     import dask_geopandas
@@ -37,6 +35,12 @@ else:
     HAS_DASK_GP = True
 
 
+# Marked per class rather than module-wide: only this one needs the extra. The two classes below
+# exercise the MINIMAL-install path -- one by monkeypatching core's feature-detection flag, the
+# other by importing the eager class -- so gating them on `parquet_lazy` hid them from every
+# extra-less leg. That is why core 0.80.0's rebranded hint surfaced only in the one wheel job that
+# installs `[parquet]`, long after it could have been caught.
+@pytest.mark.parquet_lazy
 class TestGetattrHookFullInstall:
     """When ``dask-geopandas`` is installed, the symbol resolves normally."""
 
