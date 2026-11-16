@@ -154,13 +154,25 @@ class TestSuiteReasonInventory:
             into, so adding one must fail here until it is listed with an intended verdict.
         """
         tests_dir = Path(__file__).resolve().parent
+        scanned = 0
         found: set[str] = set()
         for path in tests_dir.rglob("*.py"):
             if "__pycache__" in path.parts or path.name == Path(__file__).name:
                 continue
+            scanned += 1
             found |= set(
                 re.findall(r'reason="([^"]+)"', path.read_text(encoding="utf-8"))
             )
+
+        # Without these two, the subset check below is vacuously true whenever the scan comes up
+        # empty -- a mistyped glob or a moved file would leave the inventory "passing" while
+        # checking nothing. That is the same way the marker reflection went blind (review M5).
+        assert scanned > 10, (
+            f"expected to scan the suite, only reached {scanned} file(s)"
+        )
+        assert "zarr not installed" in found, (
+            "the scan did not reach tests/dataset/ops/, so the inventory proves nothing"
+        )
 
         catalogued = {reason for reason, _ in SUITE_REASONS}
         assert found <= catalogued, (
