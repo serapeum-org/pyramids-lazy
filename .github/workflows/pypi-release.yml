@@ -27,7 +27,10 @@ jobs:
       (github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_repository.full_name == github.repository)
     permissions:
-      contents: write
+      # The publish job only reads: it checks out a ref, reads releases via the API, and uploads to
+      # PyPI with twine (an external service). It never pushes commits/tags/releases, so read is
+      # enough — keep GITHUB_TOKEN least-privilege on a job that runs third-party build/publish tools.
+      contents: read
       # download-artifact fetches the release-ref artifact from the separate github-release run,
       # which needs read access to that run's artifacts via the Actions API.
       actions: read
