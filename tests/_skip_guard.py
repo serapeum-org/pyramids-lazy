@@ -12,17 +12,24 @@ import re
 
 # The optional-dependency skip idioms this suite actually produces:
 #   * the ``requires_<extra>`` decorators in ``tests/_marks.py`` — e.g.
-#     "pyramids-core[viz] not installed", "the optional interop dependency is not installed",
-#     "dask.dataframe needs dask + pyarrow (pyramids-core[parquet])";
+#     "pyramids-lazy[parquet] not installed", "the optional interop dependency is not installed",
+#     "dask.dataframe needs dask + pyarrow (pyramids-lazy[parquet])";
 #   * ``pytest.importorskip("x")`` — default reason "could not import 'x'".
-# The pattern matches those three shapes ("not installed", a "pyramids-core[" extra reference, and
+# The pattern matches those three shapes ("not installed", a "pyramids-<dist>[" extra reference, and
 # "could not import"). It deliberately does NOT try to catch arbitrary free-text wording (e.g. a
 # bare ``pytest.skip("dask + zarr required")``): matching generic words like "required" or "not
 # available" would false-positive legitimate platform skips and turn them red in a strict job. A
 # dependency skip must therefore be written with one of the canonical forms above — the project
 # convention — to be seen by the gate.
+#
+# The distribution part is a character class rather than a literal: the reasons here name THIS
+# package's extra (``pyramids-lazy[parquet]``), while the ones relocated from core still name
+# ``pyramids-core[viz]``. Matching only the latter left the one reason that carries no "not
+# installed" — ``requires_dask_dataframe`` — invisible to the gate, so a mis-routed dask.dataframe
+# test skipped silently in the very job that installs pyarrow. ``tests/test_skip_guard.py`` pins
+# every reason ``_marks.py`` emits against this pattern so the two cannot drift apart again.
 DEPENDENCY_SKIP_REASON = re.compile(
-    r"not installed|could not import|pyramids-core\[", re.IGNORECASE
+    r"not installed|could not import|pyramids-[a-z]+\[", re.IGNORECASE
 )
 
 
