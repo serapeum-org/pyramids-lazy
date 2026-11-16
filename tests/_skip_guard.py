@@ -41,6 +41,9 @@ def skip_reason(report) -> str:
     """
     longrepr = getattr(report, "longrepr", None)
     if isinstance(longrepr, tuple) and len(longrepr) == 3:
+        # Returned verbatim, so a tuple whose reason slot is None yields None rather than a
+        # string. That is the one shape this function does not stringify, and the reason
+        # `is_unexpected_dependency_skip` guards its `re.search` call with `or ""`.
         return longrepr[2]
     return str(longrepr)
 
@@ -50,8 +53,13 @@ def is_unexpected_dependency_skip(report) -> bool:
 
     An expected failure (``xfail``) also reports ``skipped=True`` but carries ``wasxfail`` and is
     *not* a dependency-skip — it ran, it is visible as xfailed, and it must never trip the strict
-    gate (a strict ``xfail`` whose reason mentions a dependency, like the OGR Parquet driver test,
-    would otherwise be mis-counted). Such reports are excluded before any reason matching.
+    gate, so such reports are excluded before any reason matching. This suite currently declares
+    no ``xfail`` marks at all (``grep -rn "mark\\.xfail" tests/`` is empty), so the exclusion is a
+    safeguard carried over with the module rather than a response to a test living here.
+
+    The ``or ""`` below is load-bearing, not defensive padding: :func:`skip_reason` returns
+    ``longrepr[2]`` verbatim, so a 3-tuple whose reason slot is ``None`` yields ``None``, and
+    ``re.search(None)`` raises :class:`TypeError`.
     """
     if not getattr(report, "skipped", False):
         return False
