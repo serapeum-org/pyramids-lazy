@@ -28,8 +28,13 @@ import pytest
 # Marked per class rather than module-wide: only this one needs the extra. The two classes below
 # exercise the MINIMAL-install path -- one by monkeypatching core's feature-detection flag, the
 # other by importing the eager class -- so gating them on `parquet_lazy` hid them from every
-# extra-less leg. That is why core 0.80.0's rebranded hint surfaced only in the one wheel job that
-# installs `[parquet]`, long after it could have been caught.
+# extra-less leg for no reason.
+#
+# It would not, on its own, have caught core 0.80.0's rebranded hint any sooner: the legs that run
+# on a pull request install the LOCKED core, which was 0.79.0, so they could not have seen the new
+# wording whatever the marker said. The earlier signal comes from refreshing the lock, not from
+# un-gating these tests. Both wheel jobs live in one workflow that runs only on push-to-main and
+# workflow_dispatch, which is why the failure first appeared post-merge.
 @pytest.mark.parquet_lazy
 class TestGetattrHookFullInstall:
     """When ``dask-geopandas`` is installed, the symbol resolves normally."""
