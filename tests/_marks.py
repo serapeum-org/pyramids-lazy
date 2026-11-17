@@ -62,12 +62,23 @@ _HAS_PARQUET = HAS_PYARROW
 _HAS_PARQUET_LAZY = _HAS_LAZY and _HAS_PARQUET and HAS_DASK_GEOPANDAS
 
 
-requires_lazy = pytest.mark.skipif(
-    not _HAS_LAZY, reason="dask + zarr (pyramids-lazy) not installed"
-)
-requires_netcdf_lazy = pytest.mark.skipif(
-    not _HAS_NETCDF_LAZY, reason="kerchunk + h5py (pyramids-lazy) not installed"
-)
+# `dask`, `zarr`, `kerchunk` and `h5py` are HARD dependencies -- they sit in
+# `[project] dependencies`, so `pip install pyramids-lazy` always brings them and
+# `_HAS_LAZY` / `_HAS_NETCDF_LAZY` cannot be False in an installed environment. These
+# are therefore plain CATEGORY markers, not conditional skips.
+#
+# The distinction matters: a `skipif` on a dependency that cannot be missing is dead
+# weight at best, and at worst it is a silent-skip waiting to happen -- if one of
+# those packages ever broke or was dropped from the metadata, several hundred tests
+# would quietly report "skipped" and CI would stay green. As plain markers they
+# instead fail loudly on the missing import, which is the correct signal, while
+# `-m lazy` / `-m netcdf_lazy` selection keeps working exactly as before.
+requires_lazy = pytest.mark.lazy
+requires_netcdf_lazy = pytest.mark.netcdf_lazy
+
+# The `[parquet]` extra is the only genuinely optional dependency set: the `base`
+# environment installs without it on purpose, to exercise the no-extra shape. These
+# two stay conditional, and they are the only skips the gate can ever see.
 requires_parquet = pytest.mark.skipif(
     not _HAS_PARQUET, reason="pyramids-lazy[parquet] not installed"
 )
@@ -77,35 +88,35 @@ requires_parquet_lazy = pytest.mark.skipif(
 )
 
 
-# Precise dask.array-only gate for tests that exercise the array backend
-# without needing zarr (e.g. the ArrayLike protocol tests). Distinct from
-# `requires_lazy`, which also requires zarr.
-requires_dask_array = pytest.mark.skipif(
-    not HAS_DASK_ARRAY, reason="dask.array not installed"
-)
-# dask.dataframe (dask-expr) imports pyarrow, which ships in the `parquet` extra, not `lazy`;
-# gate on both so `to_dask_dataframe` tests skip in a lazy-only env rather than erroring on import.
+# `dask.array` is part of the hard `dask` dependency, so this is a category marker too.
+# It used to carry its own skipif to distinguish "needs dask.array but not zarr"; that
+# distinction is now carried by the marker alone.
+requires_dask_array = pytest.mark.lazy
+
+# dask.dataframe (dask-expr) imports pyarrow, which ships in the `parquet` extra. dask
+# itself is hard, so pyarrow is the only real condition here.
 requires_dask_dataframe = pytest.mark.skipif(
-    not (HAS_DASK_ARRAY and HAS_PYARROW),
-    reason="dask.dataframe needs dask + pyarrow (pyramids-lazy[parquet])",
+    not HAS_PYARROW,
+    reason="dask.dataframe needs pyarrow (pyramids-lazy[parquet])",
 )
 
 # Legacy aliases for existing callsites that import the older names.
 # Remove in a follow-up once the open call-sites migrate.
 requires_dask = requires_lazy
 requires_dask_geopandas = requires_parquet_lazy
-requires_kerchunk = pytest.mark.skipif(
-    not HAS_KERCHUNK, reason="kerchunk not installed"
-)
+requires_kerchunk = pytest.mark.netcdf_lazy
 requires_pyarrow = requires_parquet
 
 
-# Marker-name → skipif-decorator mapping consumed by the collection hook
-# in `tests/conftest.py`. A test annotated with `@pytest.mark.<name>`
-# auto-gains the matching skip when its extra is not installed.
+# Marker-name → skipif-decorator mapping consumed by the collection hook in
+# `tests/conftest.py`. A test annotated with `@pytest.mark.<name>` auto-gains the
+# matching skip when its extra is not installed.
+#
+# Only the `[parquet]` extra appears here. `lazy` and `netcdf_lazy` are deliberately
+# absent: their dependencies are hard, so auto-applying a skip for them could only ever
+# hide a broken install behind a green "skipped" line. They remain registered markers
+# for `-m` selection.
 EXTRA_MARKERS: dict[str, pytest.MarkDecorator] = {
-    "lazy": requires_lazy,
-    "netcdf_lazy": requires_netcdf_lazy,
     "parquet": requires_parquet,
     "parquet_lazy": requires_parquet_lazy,
 }

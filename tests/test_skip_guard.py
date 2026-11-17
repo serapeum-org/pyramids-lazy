@@ -54,20 +54,33 @@ def _report(**attrs) -> SimpleNamespace:
 #: `requires_pyarrow` are legacy aliases of `requires_lazy`, `requires_parquet_lazy` and
 #: `requires_parquet`. Pinning them records what `_marks.py` exports today; if the aliases are
 #: dropped, this set is the thing to update, and the failure message says which names went.
-EXPECTED_MARKER_NAMES = frozenset(
+#:
+#: They split into two kinds, and keeping that split honest is the point of this module:
+#: CATEGORY markers carry no condition at all (their dependencies are hard, so a skip would
+#: only ever hide a broken install), while CONDITIONAL ones gate on the `[parquet]` extra,
+#: the only genuinely optional dependency set.
+CATEGORY_MARKER_NAMES = frozenset(
     {
         "requires_dask",
         "requires_dask_array",
-        "requires_dask_dataframe",
-        "requires_dask_geopandas",
         "requires_kerchunk",
         "requires_lazy",
         "requires_netcdf_lazy",
+    }
+)
+
+#: The `requires_*` names that DO gate on a condition -- all of them on the `[parquet]` extra.
+CONDITIONAL_MARKER_NAMES = frozenset(
+    {
+        "requires_dask_dataframe",
+        "requires_dask_geopandas",
         "requires_parquet",
         "requires_parquet_lazy",
         "requires_pyarrow",
     }
 )
+
+EXPECTED_MARKER_NAMES = CATEGORY_MARKER_NAMES | CONDITIONAL_MARKER_NAMES
 
 #: Every `reason="..."` literal declared in the suite, and whether the gate must see it.
 #:
@@ -86,14 +99,9 @@ EXPECTED_MARKER_NAMES = frozenset(
 #: optional, and because the gate must classify them correctly either way. Only the `parquet`
 #: extra is genuinely optional today.
 SUITE_REASONS: tuple[tuple[str, bool], ...] = (
-    ("dask + zarr (pyramids-lazy) not installed", True),
     ("dask-geopandas (pyramids-lazy[parquet]) not installed", True),
-    ("dask.array not installed", True),
-    ("dask.dataframe needs dask + pyarrow (pyramids-lazy[parquet])", True),
-    ("kerchunk + h5py (pyramids-lazy) not installed", True),
-    ("kerchunk not installed", True),
+    ("dask.dataframe needs pyarrow (pyramids-lazy[parquet])", True),
     ("pyramids-lazy[parquet] not installed", True),
-    ("zarr not installed", True),
     # Deliberately NOT a dependency skip: the `live` marker's own opt-in message.
     ("live network test; run it with `-m live`", False),
     # Deliberately NOT a dependency skip: the package is installed, it is simply older than the
@@ -135,10 +143,18 @@ class TestDependencySkipReason:
             f"marker set drifted; added {sorted(found - EXPECTED_MARKER_NAMES)}, "
             f"removed {sorted(EXPECTED_MARKER_NAMES - found)}"
         )
-        reasons = _marker_reasons()
-        assert len(reasons) == len(EXPECTED_MARKER_NAMES), (
-            f"expected a string reason per marker, got {len(reasons)} "
-            f"for {len(EXPECTED_MARKER_NAMES)} markers"
+        conditional = {
+            name
+            for name in found
+            if isinstance(
+                getattr(getattr(_marks, name), "kwargs", {}).get("reason"), str
+            )
+        }
+        assert conditional == CONDITIONAL_MARKER_NAMES, (
+            "the category/conditional split drifted; markers that newly carry a skip condition: "
+            f"{sorted(conditional - CONDITIONAL_MARKER_NAMES)}, markers that lost one: "
+            f"{sorted(CONDITIONAL_MARKER_NAMES - conditional)}. A hard dependency must not gain "
+            "a skipif -- it would hide a broken install behind a green 'skipped'."
         )
 
     @pytest.mark.parametrize("reason", sorted(set(_marker_reasons())))
@@ -192,12 +208,13 @@ class TestSuiteReasonInventory:
                 files_with_reasons += 1
                 found |= set(reasons)
 
-        # Counting FILES THAT CARRY A REASON, not every .py in the tree: the suite has ~60 modules
-        # but only a handful declare skips, so a glob that silently stopped matching those would
-        # still clear a threshold set against the total. Without this the subset check below is
-        # vacuously true on an empty scan -- the way the marker reflection went blind (round-1 M5).
-        assert files_with_reasons >= 5, (
-            f"expected several files declaring skip reasons, found {files_with_reasons}"
+        # An empty scan cannot pass silently: the reverse check at the end of this test requires
+        # every catalogued row to be found, so a glob that stopped matching fails there with a
+        # "stale row" message. This assertion exists only to make that failure legible, naming the
+        # scan rather than the catalogue as the thing that broke.
+        assert found, (
+            f"scanned {files_with_reasons} file(s) and found no skip reasons at all — the scan is "
+            "broken, not the catalogue"
         )
 
         catalogued = {reason for reason, _ in SUITE_REASONS}

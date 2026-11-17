@@ -105,10 +105,28 @@ swallowed.
 matched, so `reason="requires zarr"` would be invisible; the `zarr` skips in `tests/dataset/ops/` are worded
 `zarr not installed` for that reason.
 
-Note that most of the suite's skip reasons are currently **unreachable**: `zarr`, `dask`, `kerchunk` and `h5py`
-are hard dependencies in `[project] dependencies`, so their `is None` guards never fire in an installed
-environment. The `parquet` extra is the only genuinely optional one, which makes it the only place the gate can
-fire today. The wording convention still matters for anything that becomes optional later.
+### Category markers vs conditional skips
+
+The markers above split into two kinds, and the split is deliberate:
+
+- **Category markers** — `lazy`, `netcdf_lazy` — carry **no condition**. Their dependencies (`dask`, `zarr`,
+  `kerchunk`, `h5py`) are hard requirements in `[project] dependencies`, so they cannot be absent in an installed
+  environment. They exist purely for `-m` selection. A `skipif` here would be worse than useless: if one of those
+  packages ever broke or left the metadata, several hundred tests would quietly report `skipped` and CI would stay
+  green. Without one, a broken install fails at import, loudly.
+- **Conditional skips** — `parquet`, `parquet_lazy` — gate on the `[parquet]` extra, the only genuinely optional
+  dependency set, because the `base` environment installs without it on purpose. These are the only skips the gate
+  can ever see.
+
+So in any full-stack environment the suite skips **nothing** for a missing dependency:
+
+```bash
+$ pixi run -e dev python -m pytest tests -m "not live" --strict-extra-skips
+653 passed
+```
+
+Keep that split when adding a marker: condition on a dependency only if some environment genuinely installs
+without it.
 
 The flip side: matching is on **wording, not nature**. A platform or driver skip phrased with "not installed" —
 `reason="OGR Parquet driver not installed"` — *is* classified as a dependency skip and will fail an armed job.
