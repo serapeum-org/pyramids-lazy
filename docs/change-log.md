@@ -1,3 +1,15 @@
+## 0.2.0 (2026-11-17)
+
+### Feat
+
+- **mesh**: add lazy dask-backed mesh open_mfdataset (#26)
+
+### Fix
+
+- **deps**: require pyramids-core 0.80.0 and stop gating on hard deps (#36)
+- **release**: publish the bumped release branch to PyPI, not stale main (#34)
+- **release**: write the changelog on bump and drop the redundant lockfile step (#23)
+
 ## 0.1.1 (2026-11-15)
 
 ### Fix
