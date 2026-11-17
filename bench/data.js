@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794832640168,
+  "lastUpdate": 1794920633430,
   "repoUrl": "https://github.com/serapeum-org/pyramids-lazy",
   "entries": {
     "Benchmark": [
@@ -142,6 +142,77 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00024543476497396237",
             "extra": "mean: 6.448747076931864 msec\nrounds: 65"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Mostafa Farrag",
+            "username": "MAfarrag",
+            "email": "moah.farag@gmail.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "d5f797cefd4ce942133d2ca8c21791a7afd4eee8",
+          "message": "fix(release): publish the bumped release branch to PyPI, not stale main (#34)\n\npypi-release is triggered by workflow_run and checked out\nworkflow_run.head_branch, which for a dispatch-triggered github-release\nrun is main. In the manual-merge model the version bump lives on the\nrelease/auto-* branch until the release PR is merged, so pypi-release\nrebuilt main's already-published version and PyPI returned HTTP 400.\nworkflow_run carries no custom data and head_branch/head_sha both point\nat the pre-bump main, so the release branch is passed via an artifact.\n\n- github-release: upload the created branch as the release-ref artifact\n- pypi-release: download it by workflow_run.id and check it out; manual\n  dispatch publishes the selected ref\n- gate publishing on both paths: skip if the version is already on PyPI\n  (idempotent), retry transient PyPI errors instead of failing the\n  release, warn on a manual-dispatch skip, keep the draft gate\n- pass the admin-supplied branch via env, not shell interpolation, in\n  all three run blocks (script-injection hardening)\n- pin the artifact actions to the repo-standard upload-artifact v7.0.1\n  and download-artifact v8.0.1; add actions: read for the cross-run\n  download (keep contents: write, needed by the admin check)\n\nCloses #35",
+          "timestamp": "2026-11-16T15:57:50Z",
+          "url": "https://github.com/serapeum-org/pyramids-lazy/commit/d5f797cefd4ce942133d2ca8c21791a7afd4eee8"
+        },
+        "date": 1794920632869,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/test_bench_netcdf.py::test_read_array_eager",
+            "value": 6988.1693997866505,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000012056124794702846",
+            "extra": "mean: 143.09899242432934 usec\nrounds: 3168"
+          },
+          {
+            "name": "benchmarks/test_bench_netcdf.py::test_read_array_lazy_build",
+            "value": 724.6152075857717,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0002537930537002002",
+            "extra": "mean: 1.3800428000010356 msec\nrounds: 5"
+          },
+          {
+            "name": "benchmarks/test_bench_netcdf.py::test_read_array_lazy_compute",
+            "value": 374.49778068396296,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00021977695801988944",
+            "extra": "mean: 2.6702427933582222 msec\nrounds: 271"
+          },
+          {
+            "name": "benchmarks/test_bench_netcdf.py::test_chunk_lazy_cube",
+            "value": 174.4538989975062,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006424107276031974",
+            "extra": "mean: 5.732173403669785 msec\nrounds: 109"
+          },
+          {
+            "name": "benchmarks/test_bench_zarr.py::test_write_dataset_to_zarr",
+            "value": 12.839633339104214,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0042956519807133475",
+            "extra": "mean: 77.88384400000065 msec\nrounds: 11"
+          },
+          {
+            "name": "benchmarks/test_bench_zarr.py::test_write_dataset_to_zarr_with_overviews",
+            "value": 9.497901882012282,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00899730119856416",
+            "extra": "mean: 105.28641087500202 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_bench_zarr.py::test_read_dataset_from_zarr",
+            "value": 82.80778065984155,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00044306589705127763",
+            "extra": "mean: 12.076159897435335 msec\nrounds: 39"
           }
         ]
       }
