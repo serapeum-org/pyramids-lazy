@@ -1059,6 +1059,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-no-silent-skip-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The no-silent-skip gate
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The no-silent-skip gate">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#category-markers-vs-conditional-skips" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Category markers vs conditional skips
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-runs-in-ci" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1307,6 +1335,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-no-silent-skip-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The no-silent-skip gate
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The no-silent-skip gate">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#category-markers-vs-conditional-skips" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Category markers vs conditional skips
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-runs-in-ci" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1483,6 +1539,74 @@ in <code>pyproject.toml</code>:</p>
 </table>
 <p>Select or skip with <code>-m</code>, e.g. <code>-m "not live"</code> (the default in CI), <code>-m parquet_lazy</code>. <code>live</code> tests are skipped
 unless <code>live</code> appears as a whole token in <code>-m</code>.</p>
+<h2 id="the-no-silent-skip-gate"><a class="toclink" href="#the-no-silent-skip-gate">The no-silent-skip gate</a><a class="headerlink" href="#the-no-silent-skip-gate" title="Permanent link">#</a></h2>
+<p>A skip for a missing optional dependency is normally invisible: it is folded into <code>N skipped</code>, CI stays green, and a
+whole marker can run nowhere for months unnoticed. In a job whose environment <strong>has</strong> the extra, such a skip is
+never legitimate — it means the test was mis-marked or mis-routed.</p>
+<p>Passing <code>--strict-extra-skips</code> turns such a skip into a session failure, so the gap becomes loud instead. It is
+<code>store_true</code> with <code>default=False</code>, so an ordinary or partial-install run still skips cleanly. The decision lives in
+<code>tests/_skip_guard.py</code> (wired up in <code>tests/conftest.py</code>) and is unit-tested by <code>tests/test_skip_guard.py</code>.</p>
+<p><strong>No workflow passes the flag today</strong> (<a href="https://github.com/serapeum-org/pyramids-lazy/issues/37">#37</a>) — it is
+available for a per-extra job but not yet armed in CI, so for now it is a local check. Note that <code>-m</code> still
+applies, so this arms the gate for the <code>parquet_lazy</code> tests only and deselects the rest:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>pixi<span class="w"> </span>run<span class="w"> </span>-e<span class="w"> </span>dev<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>pytest<span class="w"> </span>tests<span class="w"> </span>-m<span class="w"> </span>parquet_lazy<span class="w"> </span>--strict-extra-skips
+</code></pre></div>
+<p>A skip is counted as a dependency-skip when its reason matches one of three canonical shapes:</p>
+<table>
+<thead>
+<tr>
+<th>Shape</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>not installed</code></td>
+<td><code>zarr not installed</code>, <code>pyramids-lazy[parquet] not installed</code></td>
+</tr>
+<tr>
+<td><code>could not import</code></td>
+<td><code>pytest.importorskip("kerchunk")</code>'s default reason</td>
+</tr>
+<tr>
+<td>a <code>pyramids…[</code> extra reference</td>
+<td><code>dask.dataframe needs dask + pyarrow (pyramids-lazy[parquet])</code></td>
+</tr>
+</tbody>
+</table>
+<p>The third shape is <code>pyramids(?:[_-][a-z0-9_-]+)?\[</code> — a bare <code>pyramids[</code> or any <code>pyramids-&lt;name&gt;[</code> /
+<code>pyramids_&lt;name&gt;[</code>, so a reason naming core's extras would match too, though none does today. Matching is
+<strong>case-insensitive</strong>. The separator is required so an unrelated distribution such as <code>pyramidsomething[</code> is not
+swallowed.</p>
+<p><strong>Write a dependency skip in one of those forms, or the gate cannot see it.</strong> Generic wording is deliberately not
+matched, so <code>reason="requires zarr"</code> would be invisible; the <code>zarr</code> skips in <code>tests/dataset/ops/</code> are worded
+<code>zarr not installed</code> for that reason.</p>
+<h3 id="category-markers-vs-conditional-skips"><a class="toclink" href="#category-markers-vs-conditional-skips">Category markers vs conditional skips</a><a class="headerlink" href="#category-markers-vs-conditional-skips" title="Permanent link">#</a></h3>
+<p>The markers above split into two kinds, and the split is deliberate:</p>
+<ul>
+<li><strong>Category markers</strong> — <code>lazy</code>, <code>netcdf_lazy</code> — carry <strong>no condition</strong>. Their dependencies (<code>dask</code>, <code>zarr</code>,
+  <code>kerchunk</code>, <code>h5py</code>) are hard requirements in <code>[project] dependencies</code>, so they cannot be absent in an installed
+  environment. They exist purely for <code>-m</code> selection. A <code>skipif</code> here would be worse than useless: if one of those
+  packages ever broke or left the metadata, several hundred tests would quietly report <code>skipped</code> and CI would stay
+  green. Without one, a broken install fails at import, loudly.</li>
+<li><strong>Conditional skips</strong> — <code>parquet</code>, <code>parquet_lazy</code> — gate on the <code>[parquet]</code> extra, the only genuinely optional
+  dependency set, because the <code>base</code> environment installs without it on purpose. These are the only skips the gate
+  can ever see.</li>
+</ul>
+<p>So in any full-stack environment the suite skips <strong>nothing</strong> for a missing dependency:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>$<span class="w"> </span>pixi<span class="w"> </span>run<span class="w"> </span>-e<span class="w"> </span>dev<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>pytest<span class="w"> </span>tests<span class="w"> </span>-m<span class="w"> </span><span class="s2">"not live"</span><span class="w"> </span>--strict-extra-skips
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="m">653</span><span class="w"> </span>passed
+</code></pre></div>
+<p>Keep that split when adding a marker: condition on a dependency only if some environment genuinely installs
+without it.</p>
+<p>The flip side: matching is on <strong>wording, not nature</strong>. A platform or driver skip phrased with "not installed" —
+<code>reason="OGR Parquet driver not installed"</code> — <em>is</em> classified as a dependency skip and will fail an armed job.
+That is usually right, since a missing driver is a missing dependency, but if you want such a skip to stay
+invisible, word it without the canonical phrases.</p>
+<p>Two things are excluded. Free-text skips (<code>pytest.skip("dask + zarr required")</code>, the <code>live</code> marker's own message)
+do not match. And an <code>xfail</code> is excluded before any reason matching: it also reports as skipped, but it ran and is
+visible as xfailed, so an xfail whose reason happens to name a dependency cannot trip the gate. That exclusion is
+a safeguard rather than a response to anything here — this suite currently declares no <code>xfail</code> marks at all.</p>
 <h2 id="what-runs-in-ci"><a class="toclink" href="#what-runs-in-ci">What runs in CI</a><a class="headerlink" href="#what-runs-in-ci" title="Permanent link">#</a></h2>
 <table>
 <thead>
@@ -1525,11 +1649,11 @@ only via the <code>benchmark</code> task and the nightly workflow.</p>
   build-only and build+compute) and <code>NetCDF.chunk</code> (<code>build_lazy_cube</code>).</li>
 </ul>
 <p><strong>Running them:</strong></p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">pixi</span> <span class="n">run</span> <span class="p">-</span><span class="n">-manifest-path</span> <span class="s2">"$M"</span> <span class="n">-e</span> <span class="n">dev</span> <span class="n">benchmark</span>                        <span class="c"># the whole suite, with a stats table</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">pixi</span> <span class="n">run</span> <span class="p">-</span><span class="n">-manifest-path</span> <span class="s2">"$M"</span> <span class="n">-e</span> <span class="n">dev</span> <span class="n">pytest</span> <span class="n">benchmarks</span> <span class="n">-k</span> <span class="n">zarr</span>        <span class="c"># one group</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="c"># save a baseline on a branch you trust, then compare a change against it</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">pixi</span> <span class="n">run</span> <span class="p">-</span><span class="n">-manifest-path</span> <span class="s2">"$M"</span> <span class="n">-e</span> <span class="n">dev</span> <span class="n">pytest</span> <span class="n">benchmarks</span> <span class="p">-</span><span class="n">-benchmark-autosave</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">pixi</span> <span class="n">run</span> <span class="p">-</span><span class="n">-manifest-path</span> <span class="s2">"$M"</span> <span class="n">-e</span> <span class="n">dev</span> <span class="n">pytest</span> <span class="n">benchmarks</span> <span class="p">-</span><span class="n">-benchmark-compare</span> <span class="p">-</span><span class="n">-benchmark-compare-fail</span><span class="p">=</span><span class="n">median</span><span class="p">:</span><span class="n">50</span><span class="p">%</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">pixi</span> <span class="n">run</span> <span class="p">-</span><span class="n">-manifest-path</span> <span class="s2">"$M"</span> <span class="n">-e</span> <span class="n">dev</span> <span class="n">benchmark</span>                        <span class="c"># the whole suite, with a stats table</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">pixi</span> <span class="n">run</span> <span class="p">-</span><span class="n">-manifest-path</span> <span class="s2">"$M"</span> <span class="n">-e</span> <span class="n">dev</span> <span class="n">pytest</span> <span class="n">benchmarks</span> <span class="n">-k</span> <span class="n">zarr</span>        <span class="c"># one group</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="c"># save a baseline on a branch you trust, then compare a change against it</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">pixi</span> <span class="n">run</span> <span class="p">-</span><span class="n">-manifest-path</span> <span class="s2">"$M"</span> <span class="n">-e</span> <span class="n">dev</span> <span class="n">pytest</span> <span class="n">benchmarks</span> <span class="p">-</span><span class="n">-benchmark-autosave</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">pixi</span> <span class="n">run</span> <span class="p">-</span><span class="n">-manifest-path</span> <span class="s2">"$M"</span> <span class="n">-e</span> <span class="n">dev</span> <span class="n">pytest</span> <span class="n">benchmarks</span> <span class="p">-</span><span class="n">-benchmark-compare</span> <span class="p">-</span><span class="n">-benchmark-compare-fail</span><span class="p">=</span><span class="n">median</span><span class="p">:</span><span class="n">50</span><span class="p">%</span>
 </code></pre></div>
 <p>Saved runs live under <code>.benchmarks/</code> (git-ignored). See <code>benchmarks/README.md</code> for the methodology notes.</p>
 <h3 id="where-to-check-the-benchmark-results"><a class="toclink" href="#where-to-check-the-benchmark-results">Where to check the benchmark results</a><a class="headerlink" href="#where-to-check-the-benchmark-results" title="Permanent link">#</a></h3>
@@ -1543,8 +1667,8 @@ compare absolute milliseconds commit-to-commit.</p>
   <code>benchmark-results.json</code> (the full <code>--benchmark-json</code>) and the <code>.benchmarks/</code> autosave. Download it from the run's
   <em>Artifacts</em> section, or with the CLI:</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>gh<span class="w"> </span>run<span class="w"> </span>list<span class="w"> </span>--workflow<span class="w"> </span>benchmarks.yml
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>gh<span class="w"> </span>run<span class="w"> </span>download<span class="w"> </span>&lt;run-id&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>gh<span class="w"> </span>run<span class="w"> </span>list<span class="w"> </span>--workflow<span class="w"> </span>benchmarks.yml
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>gh<span class="w"> </span>run<span class="w"> </span>download<span class="w"> </span>&lt;run-id&gt;
 </code></pre></div>
 <ul>
 <li><strong>Trend chart:</strong> <a href="https://serapeum-org.github.io/pyramids-lazy/bench/">https://serapeum-org.github.io/pyramids-lazy/bench/</a> — each nightly run feeds
@@ -1556,7 +1680,7 @@ compare absolute milliseconds commit-to-commit.</p>
   fails the nightly run. Alerts begin from the second run on <code>gh-pages</code> (the first seeds the baseline).</li>
 <li><strong>Comparing runs locally:</strong> compare two runs' JSON directly:</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>pytest-benchmark<span class="w"> </span>compare<span class="w"> </span>old.json<span class="w"> </span>new.json
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>pytest-benchmark<span class="w"> </span>compare<span class="w"> </span>old.json<span class="w"> </span>new.json
 </code></pre></div>
 
 
