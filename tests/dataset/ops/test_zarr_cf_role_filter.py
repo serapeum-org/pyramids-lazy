@@ -16,20 +16,18 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import zarr
 from pyramids.dataset.ops._geobox_zarr import (
     _attrs_reader,
     _cf_referenced_names,
     detect_data_var,
 )
 
-try:
-    import zarr
-except ImportError:  # pragma: no cover - exercised only without the extra
-    zarr = None
-
-# Guarded rather than a module-level `importorskip`, so the file still collects
-# without zarr installed; the tests that need a real store are marked.
-needs_zarr = pytest.mark.skipif(zarr is None, reason="requires zarr")
+# A plain category marker, not a conditional skip: `zarr` is a hard dependency in
+# `[project] dependencies`, so it cannot be absent in an installed environment. Importing
+# it at module scope means a broken install fails collection loudly instead of reporting a
+# green "skipped".
+needs_zarr = pytest.mark.lazy
 
 
 def _store(tmp_path, spec: dict[str, tuple[int, ...]], attrs=None):

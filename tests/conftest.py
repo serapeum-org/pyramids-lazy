@@ -110,7 +110,7 @@ def pytest_collection_modifyitems(config, items):
 # supposed to execute the test. It is a CLI flag (not an env var, per the project's marker-only
 # convention) and is off by default, so ordinary/local runs still skip cleanly on a partial
 # install. The reason-matching (and the xfail exclusion) lives in tests/_skip_guard.py so it is
-# unit-testable; see tests/guards/test_skip_guard_plugin.py.
+# unit-testable; see tests/test_skip_guard.py.
 _strict_extra_skips: list[str] = []
 
 

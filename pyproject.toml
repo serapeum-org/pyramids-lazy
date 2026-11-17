@@ -25,7 +25,7 @@ classifiers = [
 # No GDAL here: the plugin inherits pyramids-core's vendored GDAL (constraint C2). Declaring GDAL
 # would risk a second, ABI-mismatched libgdal on the path.
 dependencies = [
-    "pyramids-core>=0.79.0",
+    "pyramids-core>=0.80.0",
     "dask>=2024.1.0",
     "distributed>=2024.1.0",
     "zarr>=3",

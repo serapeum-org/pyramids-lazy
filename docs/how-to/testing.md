@@ -70,6 +70,74 @@ in `pyproject.toml`:
 Select or skip with `-m`, e.g. `-m "not live"` (the default in CI), `-m parquet_lazy`. `live` tests are skipped
 unless `live` appears as a whole token in `-m`.
 
+## The no-silent-skip gate
+
+A skip for a missing optional dependency is normally invisible: it is folded into `N skipped`, CI stays green, and a
+whole marker can run nowhere for months unnoticed. In a job whose environment **has** the extra, such a skip is
+never legitimate — it means the test was mis-marked or mis-routed.
+
+Passing `--strict-extra-skips` turns such a skip into a session failure, so the gap becomes loud instead. It is
+`store_true` with `default=False`, so an ordinary or partial-install run still skips cleanly. The decision lives in
+`tests/_skip_guard.py` (wired up in `tests/conftest.py`) and is unit-tested by `tests/test_skip_guard.py`.
+
+**No workflow passes the flag today** ([#37](https://github.com/serapeum-org/pyramids-lazy/issues/37)) — it is
+available for a per-extra job but not yet armed in CI, so for now it is a local check. Note that `-m` still
+applies, so this arms the gate for the `parquet_lazy` tests only and deselects the rest:
+
+```bash
+pixi run -e dev python -m pytest tests -m parquet_lazy --strict-extra-skips
+```
+
+A skip is counted as a dependency-skip when its reason matches one of three canonical shapes:
+
+| Shape | Example |
+|---|---|
+| `not installed` | `zarr not installed`, `pyramids-lazy[parquet] not installed` |
+| `could not import` | `pytest.importorskip("kerchunk")`'s default reason |
+| a `pyramids…[` extra reference | `dask.dataframe needs dask + pyarrow (pyramids-lazy[parquet])` |
+
+The third shape is `pyramids(?:[_-][a-z0-9_-]+)?\[` — a bare `pyramids[` or any `pyramids-<name>[` /
+`pyramids_<name>[`, so a reason naming core's extras would match too, though none does today. Matching is
+**case-insensitive**. The separator is required so an unrelated distribution such as `pyramidsomething[` is not
+swallowed.
+
+**Write a dependency skip in one of those forms, or the gate cannot see it.** Generic wording is deliberately not
+matched, so `reason="requires zarr"` would be invisible; the `zarr` skips in `tests/dataset/ops/` are worded
+`zarr not installed` for that reason.
+
+### Category markers vs conditional skips
+
+The markers above split into two kinds, and the split is deliberate:
+
+- **Category markers** — `lazy`, `netcdf_lazy` — carry **no condition**. Their dependencies (`dask`, `zarr`,
+  `kerchunk`, `h5py`) are hard requirements in `[project] dependencies`, so they cannot be absent in an installed
+  environment. They exist purely for `-m` selection. A `skipif` here would be worse than useless: if one of those
+  packages ever broke or left the metadata, several hundred tests would quietly report `skipped` and CI would stay
+  green. Without one, a broken install fails at import, loudly.
+- **Conditional skips** — `parquet`, `parquet_lazy` — gate on the `[parquet]` extra, the only genuinely optional
+  dependency set, because the `base` environment installs without it on purpose. These are the only skips the gate
+  can ever see.
+
+So in any full-stack environment the suite skips **nothing** for a missing dependency:
+
+```bash
+$ pixi run -e dev python -m pytest tests -m "not live" --strict-extra-skips
+653 passed
+```
+
+Keep that split when adding a marker: condition on a dependency only if some environment genuinely installs
+without it.
+
+The flip side: matching is on **wording, not nature**. A platform or driver skip phrased with "not installed" —
+`reason="OGR Parquet driver not installed"` — *is* classified as a dependency skip and will fail an armed job.
+That is usually right, since a missing driver is a missing dependency, but if you want such a skip to stay
+invisible, word it without the canonical phrases.
+
+Two things are excluded. Free-text skips (`pytest.skip("dask + zarr required")`, the `live` marker's own message)
+do not match. And an `xfail` is excluded before any reason matching: it also reports as skipped, but it ran and is
+visible as xfailed, so an xfail whose reason happens to name a dependency cannot trip the gate. That exclusion is
+a safeguard rather than a response to anything here — this suite currently declares no `xfail` marks at all.
+
 ## What runs in CI
 
 | Workflow | What it does |

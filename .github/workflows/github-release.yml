@@ -3,7 +3,8 @@ name: github-release
 # Manual release cutter (commitizen bump -> tag -> GitHub release -> auto-merged PR onto main),
 # ported from pyramids-mesh. Dispatch-only, so it never runs on ordinary CI. It gates on
 # pure-wheel-test, which installs the released pyramids-core from PyPI; that gate is unblocked now
-# core 0.79.0 ships the `pyramids.lazy_support` facade this backend requires.
+# core 0.79.0 ships the `pyramids.lazy_support` facade this backend requires; the floor is 0.80.0,
+# which additionally brands the lazy-vector install hint with this distribution's extra.
 #
 # Release-branch model: `release-branch` is the branch the release is cut on (the entry point). Leave
 # it empty and the `prepare` job creates one from the tip of main and uses it for everything, exactly

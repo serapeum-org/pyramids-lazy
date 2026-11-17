@@ -23,24 +23,22 @@ of which extras are installed in the dev env.
 from __future__ import annotations
 
 import pytest
-from pyramids.base._errors import OptionalPackageDoesNotExist
-from pyramids.base._utils import import_dask_geopandas
-
-pytestmark = pytest.mark.parquet_lazy
-
-try:
-    import_dask_geopandas("dask-geopandas not installed")
-    import dask_geopandas
-except OptionalPackageDoesNotExist:  # pragma: no cover
-    HAS_DASK_GP = False
-else:
-    HAS_DASK_GP = True
 
 
+# Marked per class rather than module-wide: only this one needs the extra. The two classes below
+# exercise the MINIMAL-install path -- one by monkeypatching core's feature-detection flag, the
+# other by importing the eager class -- so gating them on `parquet_lazy` hid them from every
+# extra-less leg for no reason.
+#
+# It would not, on its own, have caught core 0.80.0's rebranded hint any sooner: the legs that run
+# on a pull request install the LOCKED core, which was 0.79.0, so they could not have seen the new
+# wording whatever the marker said. The earlier signal comes from refreshing the lock, not from
+# un-gating these tests. Both wheel jobs live in one workflow that runs only on push-to-main and
+# workflow_dispatch, which is why the failure first appeared post-merge.
+@pytest.mark.parquet_lazy
 class TestGetattrHookFullInstall:
     """When ``dask-geopandas`` is installed, the symbol resolves normally."""
 
-    @pytest.mark.skipif(not HAS_DASK_GP, reason="dask-geopandas not installed")
     def test_from_import_returns_class(self):
         """``from pyramids.feature import LazyFeatureCollection`` works."""
         from pyramids.feature import LazyFeatureCollection
@@ -62,11 +60,16 @@ class TestGetattrHookMinimalInstall:
             so users see an actionable install hint rather than a
             ``TypeError: isinstance() arg 2 must be a type`` the
             old ``None`` sentinel produced downstream.
+
+            The hint names **this** distribution's extra. core 0.80.0
+            rebranded it from ``pyramids-core[parquet]``, which is the
+            correct owner: the lazy vector path ships in
+            ``pyramids-lazy[parquet]``, not in core's.
         """
         import pyramids.feature as pf
 
         monkeypatch.setattr(pf, "_HAS_DASK_GEOPANDAS", False)
-        with pytest.raises(ImportError, match=r"pyramids-core\[parquet\]"):
+        with pytest.raises(ImportError, match=r"pyramids-lazy\[parquet\]"):
             pf.LazyFeatureCollection  # noqa: B018 - attribute access IS the action
 
     def test_try_except_is_the_correct_guard(self, monkeypatch):
