@@ -1374,8 +1374,9 @@ point and routes every lazy operation to it — there is no import to add and no
 <h2 id="dependencies"><a class="toclink" href="#dependencies">Dependencies</a><a class="headerlink" href="#dependencies" title="Permanent link">#</a></h2>
 <h3 id="runtime"><a class="toclink" href="#runtime">Runtime</a><a class="headerlink" href="#runtime" title="Permanent link">#</a></h3>
 <ul>
-<li><code>pyramids-core &gt;= 0.79.0</code> (provides the <code>pyramids</code> import, the <code>ComputeBackend</code> contract and the
-  <code>pyramids.lazy_support</code> facade)</li>
+<li><code>pyramids-core &gt;= 0.80.0</code> (provides the <code>pyramids</code> import, the <code>ComputeBackend</code> contract and the
+  <code>pyramids.lazy_support</code> facade; 0.80.0 is the floor because it brands the lazy-vector install
+  hint with this distribution's extra, <code>pyramids-lazy[parquet]</code>)</li>
 <li><code>dask &gt;= 2024.1.0</code> and <code>distributed &gt;= 2024.1.0</code></li>
 <li><code>zarr &gt;= 3</code></li>
 <li><code>fsspec &gt;= 2024.1.0</code> and <code>s3fs &gt;= 2024.1.0</code></li>
