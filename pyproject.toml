@@ -1,6 +1,6 @@
 [project]
 name = "pyramids-lazy"
-version = "0.1.1"
+version = "0.2.0"
 description = "Lazy / dask compute backend for pyramids (the pyramids.compute_backend plugin)"
 readme = "README.md"
 requires-python = ">=3.11,<4"
