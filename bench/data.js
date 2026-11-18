@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794920633430,
+  "lastUpdate": 1795006506727,
   "repoUrl": "https://github.com/serapeum-org/pyramids-lazy",
   "entries": {
     "Benchmark": [
@@ -213,6 +213,77 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00044306589705127763",
             "extra": "mean: 12.076159897435335 msec\nrounds: 39"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "github-actions[bot]",
+            "username": "github-actions[bot]",
+            "email": "41898282+github-actions[bot]@users.noreply.github.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "a3b7611b0cff2d4d0e978f2159669609c02db4d8",
+          "message": "release: 0.2.0 (#39)",
+          "timestamp": "2026-11-17T20:25:15Z",
+          "url": "https://github.com/serapeum-org/pyramids-lazy/commit/a3b7611b0cff2d4d0e978f2159669609c02db4d8"
+        },
+        "date": 1795006506118,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/test_bench_netcdf.py::test_read_array_eager",
+            "value": 20574.935219702227,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000009706281636247011",
+            "extra": "mean: 48.60282617280933 usec\nrounds: 4562"
+          },
+          {
+            "name": "benchmarks/test_bench_netcdf.py::test_read_array_lazy_build",
+            "value": 1353.5030553957342,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00031671370780088863",
+            "extra": "mean: 738.8236000011261 usec\nrounds: 5"
+          },
+          {
+            "name": "benchmarks/test_bench_netcdf.py::test_read_array_lazy_compute",
+            "value": 674.3467375137144,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0003519612369648946",
+            "extra": "mean: 1.4829166426858595 msec\nrounds: 417"
+          },
+          {
+            "name": "benchmarks/test_bench_netcdf.py::test_chunk_lazy_cube",
+            "value": 381.7808391264293,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00014653716537830583",
+            "extra": "mean: 2.6193037929513356 msec\nrounds: 227"
+          },
+          {
+            "name": "benchmarks/test_bench_zarr.py::test_write_dataset_to_zarr",
+            "value": 5.9840908349372,
+            "unit": "iter/sec",
+            "range": "stddev: 0.11938513121670424",
+            "extra": "mean: 167.1097627999984 msec\nrounds: 5"
+          },
+          {
+            "name": "benchmarks/test_bench_zarr.py::test_write_dataset_to_zarr_with_overviews",
+            "value": 17.00472575385951,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0022433119898192335",
+            "extra": "mean: 58.80718186666627 msec\nrounds: 15"
+          },
+          {
+            "name": "benchmarks/test_bench_zarr.py::test_read_dataset_from_zarr",
+            "value": 170.2611735160964,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00018676560999840637",
+            "extra": "mean: 5.873329657894438 msec\nrounds: 76"
           }
         ]
       }
