@@ -14,7 +14,7 @@ set -euo pipefail
 
 CORE_VERSION="${CORE_VERSION:-}"
 ARROW_VERSION="${ARROW_VERSION:-26.0.1}"
-PLAT="${PLAT:-macosx_14_0_arm64}"
+PLAT="${PLAT:-macosx_11_0_arm64}"
 PYTAG="${PYTAG:-cp312}"
 OUTPUT="${OUTPUT:-/tmp/pp-out}"
 WORK="${WORK:-/tmp/pp}"

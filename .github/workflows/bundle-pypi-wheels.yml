@@ -9,7 +9,10 @@ name: Bundle PyPI Wheels
 # libpython), so it is ONE wheel per platform, not per CPython -- see setup.py for the forced
 # `py3-none-<plat>` tag. Not wired into pypi-release.yml yet: this proves the build on demand and
 # on PRs that touch it. Phase 1 is manylinux x86_64 + aarch64; macOS / musllinux / win_amd64
-# follow (plan Phasing), and win_arm64 is excluded (vcpkg compiles Arrow into libgdal there).
+# follow (plan Phasing). win_arm64 is NOT a companion target: conda-forge ships no win-arm64
+# libgdal-core (so no cpl_config.h source) and the vcpkg gdal port offers no standalone-plugin
+# build. The route for win_arm64 is to enable arrow+parquet in core's ci/vcpkg.json so the driver
+# is compiled INTO core's own libgdal there -- a pyramids-core change, tracked separately.
 
 permissions:
   contents: read
@@ -201,9 +204,9 @@ jobs:
           CIBW_ARCHS_MACOS: ${{ matrix.arch }}
           CIBW_ENVIRONMENT: >-
             PYRAMIDS_LAZY_NATIVE=1 OUTPUT=/tmp/pp-out
-            PLAT=macosx_14_0_${{ matrix.arch }}
+            PLAT=macosx_11_0_${{ matrix.arch }}
             CORE_VERSION=${{ inputs.core-version || env.PINNED_CORE_VERSION }}
-            MACOSX_DEPLOYMENT_TARGET=14.0
+            MACOSX_DEPLOYMENT_TARGET=11.0
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: wheels-macos-${{ matrix.arch }}
