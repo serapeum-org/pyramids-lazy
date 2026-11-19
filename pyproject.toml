@@ -87,6 +87,11 @@ dev = [
     # the `benchmark` fixture + marker; only run via the `benchmark` task — benchmarks/ is outside
     # testpaths, so the normal test tasks never collect it.
     "pytest-benchmark>=5.1.0",
+    # Test-only: the chunked to_xarray / from_xarray interop tests relocated from pyramids-core
+    # exercise a dask-backed xarray round-trip, so the plugin's test env needs xarray. It is
+    # backend-adjacent (xarray wraps the dask arrays this backend builds) and already resolves in
+    # the lock transitively; declared here so it is guaranteed importable in the dev env.
+    "xarray>=2023.1.0",
 ]
 # The MkDocs + mike documentation stack. Resolved by the `docs` pixi environment and the
 # github-pages-mkdocs workflow; mirrors pyramids-mesh. The site lives at `mkdocs.yml` + `docs/`.
@@ -186,6 +191,9 @@ markers = [
     "parquet: tests requiring the [parquet] extra (pyarrow)",
     "parquet_lazy: tests requiring dask-geopandas",
     "live: live network test against a real external service",
+    "e2e: end-to-end tests (pickle/subprocess/zarr round-trips) relocated from pyramids-core",
+    "slow: slow tests (e.g. a real distributed cluster round-trip)",
+    "plot: lazy-plot tests relocated from pyramids-core (need cleopatra; skip when absent)",
 ]
 
 [tool.pydocstyle]
