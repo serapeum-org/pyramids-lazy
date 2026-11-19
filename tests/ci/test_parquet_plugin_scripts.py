@@ -65,8 +65,8 @@ soname_mod = _load("soname.py")
 make_wheel = _load("make_wheel.py")
 verify = _load("verify.py")
 
-_PT_LOAD, _PT_DYNAMIC = 1, 2
-_DT_NULL, _DT_NEEDED, _DT_STRTAB, _DT_STRSZ, _DT_SONAME = 0, 1, 5, 10, 14
+_PT_LOAD, _PT_DYNAMIC, _PT_NOTE = 1, 2, 4
+_DT_NULL, _DT_NEEDED, _DT_STRTAB, _DT_STRSZ, _DT_SONAME, _DT_DEBUG = 0, 1, 5, 10, 14, 21
 
 
 def _elf(
@@ -172,6 +172,46 @@ def _elf(
     return bytes(out)
 
 
+def _retype_program_header(blob: bytes, index: int, p_type: int) -> bytes:
+    """Rewrite one program header's `p_type`, leaving the layout untouched.
+
+    Args:
+        blob: An object built by `_elf`.
+        index: Which program header to rewrite, counting from zero.
+        p_type: The segment type to stamp on it.
+
+    Returns:
+        bytes: The object with that header retyped.
+    """
+    (phoff,) = struct.unpack_from("<Q", blob, 0x20)
+    (phentsize,) = struct.unpack_from("<H", blob, 0x36)
+    out = bytearray(blob)
+    struct.pack_into("<I", out, phoff + index * phentsize, p_type)
+    return bytes(out)
+
+
+def _without_dt_null(blob: bytes) -> bytes:
+    """Retag the terminating `DT_NULL`, so the dynamic section runs to its declared end.
+
+    Args:
+        blob: An object built by `_elf`, whose last dynamic entry is `DT_NULL`.
+
+    Returns:
+        bytes: The object with that entry turned into a `DT_DEBUG` the parser ignores.
+    """
+    (phoff,) = struct.unpack_from("<Q", blob, 0x20)
+    phentsize, phnum = struct.unpack_from("<HH", blob, 0x36)
+    out = bytearray(blob)
+    for index in range(phnum):
+        base = phoff + index * phentsize
+        (p_type,) = struct.unpack_from("<I", blob, base)
+        if p_type == _PT_DYNAMIC:
+            (offset,) = struct.unpack_from("<Q", blob, base + 0x08)
+            (size,) = struct.unpack_from("<Q", blob, base + 0x20)
+            struct.pack_into("<Q", out, offset + size - 16, _DT_DEBUG)
+    return bytes(out)
+
+
 @pytest.fixture
 def elf_file(tmp_path: Path):
     """Write a synthetic ELF and return its path.
@@ -224,6 +264,36 @@ class TestSoname:
         assert soname_mod.soname(str(path)) == "libgdal-58beb45a.so.39.3.13.3", (
             "a text decoy in the body must not win over DT_SONAME"
         )
+
+    def test_a_segment_of_an_unrelated_type_is_walked_past(self, tmp_path: Path):
+        """A real library carries `PT_NOTE` / `PT_GNU_STACK` headers the parser must ignore.
+
+        Test scenario:
+            The program headers are `PT_LOAD`, `PT_DYNAMIC`, `PT_NOTE` in that order, so the
+            scan has to step over a header it recognises as neither and keep going.
+        """
+        path = tmp_path / "noted.so"
+        path.write_bytes(
+            _retype_program_header(
+                _elf(so_name="libgdal-abc.so.39", extra_dynamic=True), 2, _PT_NOTE
+            )
+        )
+
+        assert soname_mod.soname(str(path)) == "libgdal-abc.so.39"
+
+    def test_a_dynamic_section_with_no_terminator_is_read_to_its_declared_end(
+        self, tmp_path: Path
+    ):
+        """Without `DT_NULL`, the segment's own `p_filesz` has to bound the walk.
+
+        Test scenario:
+            The terminating entry is retagged `DT_DEBUG`, so the loop runs out of segment
+            instead of breaking; it must still report the soname rather than read past it.
+        """
+        path = tmp_path / "unterminated_dynamic.so"
+        path.write_bytes(_without_dt_null(_elf(so_name="libgdal-abc.so.39")))
+
+        assert soname_mod.soname(str(path)) == "libgdal-abc.so.39"
 
 
 class TestNeeded:
@@ -308,6 +378,24 @@ class TestMalformedInput:
         """An index inside `DT_STRSZ` whose string is cut off by it must also be refused."""
         with pytest.raises(ValueError, match="unterminated"):
             soname_mod.soname(str(elf_file(so_name="libgdal.so.39", strtab_size=4)))
+
+    def test_a_string_table_declared_past_the_end_of_the_file_is_rejected(
+        self, elf_file
+    ):
+        """`DT_STRSZ` may promise more bytes than the file holds, with the index inside them.
+
+        Test scenario:
+            The table starts one byte before EOF and declares itself 4 KiB long, so the index
+            clears the `DT_STRSZ` bound and still points past the last byte on disk -- the one
+            place a plausible-looking name could be invented from unrelated memory.
+        """
+        length = len(_elf(so_name="libgdal.so.39"))
+        path = elf_file(
+            so_name="libgdal.so.39", strtab_size=4096, strtab_vaddr=length - 1
+        )
+
+        with pytest.raises(ValueError, match=r"index 1 is outside the string table"):
+            soname_mod.soname(str(path))
 
     def test_an_unterminated_string_is_rejected(self, tmp_path):
         """A table whose last string has no NUL must raise rather than run off the end."""
@@ -588,6 +676,23 @@ class TestWheelAssembly:
         assert "pyramids_lazy_parquet/gdalplugins/ogr_Parquet.so" in names
         assert "pyramids_lazy_parquet/gdalplugins/libarrow.so.2600" in names
 
+    def test_a_subdirectory_beside_the_objects_is_skipped(self, stage, tmp_path: Path):
+        """Only files are zipped, so a staged directory must never reach `read_bytes`.
+
+        Test scenario:
+            A split-debug step leaves a `.debug` directory beside the objects. Treating it as a
+            member raises `IsADirectoryError` mid-build, and recording it would describe a
+            member the wheel does not contain.
+        """
+        (stage / "gdalplugins" / ".debug").mkdir()
+
+        wheel = self._build(stage, tmp_path / "dist")
+
+        with zipfile.ZipFile(wheel) as zf:
+            names = set(zf.namelist())
+        assert "pyramids_lazy_parquet/gdalplugins/ogr_Parquet.so" in names
+        assert not [name for name in names if ".debug" in name]
+
     def test_the_entry_point_core_scans_for_is_registered(self, stage, tmp_path: Path):
         """Without this, pyramids-core never learns the directory exists."""
         wheel = self._build(stage, tmp_path / "dist")
@@ -757,6 +862,50 @@ class TestMakeWheelCli:
         assert "py3-none-manylinux_2_28_aarch64.whl" in out
         assert "ogr_Parquet.so" in out
 
+    def test_an_empty_member_ships_but_is_left_out_of_the_size_report(
+        self, tmp_path: Path, capsys
+    ):
+        """A zero-byte member still has to be in the wheel; printing `0.0 MB` for it is noise.
+
+        Test scenario:
+            A licence file staged empty must not be silently dropped -- METADATA declares it as
+            a `License-File`, so pip would be pointed at a file that is not there -- but it has
+            no size worth reporting.
+        """
+        root = tmp_path / "out"
+        plugins = root / "gdalplugins"
+        plugins.mkdir(parents=True)
+        (plugins / "ogr_Parquet.so").write_bytes(_elf(needed=("libgdal-abc.so.39",)))
+        (root / "core-soname.txt").write_text("libgdal-abc.so.39\n")
+        (root / "core-wheel.txt").write_text("pyramids_core-0.80.0-x.whl\n")
+        (root / "licenses").mkdir()
+        (root / "licenses" / "GDAL-LICENSE.txt").write_text("text\n")
+        (root / "licenses" / "Arrow-NOTICE.txt").write_bytes(b"")
+
+        code = make_wheel.main(
+            [
+                "make_wheel.py",
+                "--stage",
+                str(root),
+                "--version",
+                "0.3.0",
+                "--plat",
+                "manylinux_2_28_x86_64",
+                "--core-requires",
+                "pyramids-core==0.80.0",
+                "--outdir",
+                str(tmp_path / "dist"),
+            ]
+        )
+
+        out = capsys.readouterr().out
+        assert code == 0
+        assert "Arrow-NOTICE.txt" not in out, "an empty member has no size to report"
+        wheel = next((tmp_path / "dist").glob("*.whl"))
+        with zipfile.ZipFile(wheel) as zf:
+            names = zf.namelist()
+        assert [n for n in names if n.endswith("/licenses/Arrow-NOTICE.txt")]
+
     @pytest.mark.parametrize("plat", ["manylinux 2 28", "MANYLINUX_2_28_X86_64", ""])
     def test_a_malformed_platform_tag_is_refused(self, tmp_path: Path, plat):
         """A bad tag yields a filename pip silently will not match -- so reject it here."""
@@ -861,6 +1010,25 @@ class TestVerifyDiscovery:
 
         with pytest.raises(SystemExit, match="no vendored library directory"):
             verify._core_libs()
+
+    def test_the_older_in_package_library_layout_is_accepted(
+        self, monkeypatch, tmp_path: Path
+    ):
+        """`auditwheel`'s older layout vendors into `pyramids/.libs`, which must still be found.
+
+        Test scenario:
+            Only the second candidate exists, so giving up after `pyramids_core.libs` would
+            report a perfectly verifiable install as unverifiable.
+        """
+        package = tmp_path / "pyramids"
+        (package / ".libs").mkdir(parents=True)
+
+        class _Spec:
+            submodule_search_locations = [str(package)]
+
+        monkeypatch.setattr(verify.importlib.util, "find_spec", lambda name: _Spec())
+
+        assert verify._core_libs() == package / ".libs"
 
 
 class TestVerifyDriverPath:
@@ -985,6 +1153,39 @@ class TestVerifyLinkCheck:
 
         with pytest.raises(SystemExit, match="no libgdal in"):
             verify.check_link(plugins)
+
+    def test_a_directory_holding_no_loadable_driver_is_refused(self, installed):
+        """A debug stub is not a driver: only `.so` and `.dylib` count as one.
+
+        Test scenario:
+            `ogr_Parquet.so.debug` matches the `ogr_Parquet.*` glob, so without the suffix
+            filter the verifier would read dependencies out of a symbol file and report on it.
+        """
+        plugins = installed("libgdal-abc.so.39", ("libgdal-abc.so.39",))
+        (plugins / "ogr_Parquet.so").rename(plugins / "ogr_Parquet.so.debug")
+
+        with pytest.raises(SystemExit, match="no ogr_Parquet"):
+            verify.check_link(plugins)
+
+    def test_a_core_libgdal_with_no_soname_falls_back_to_its_file_name(
+        self, monkeypatch, tmp_path: Path
+    ):
+        """With no `DT_SONAME` to read, the installed file's own name is what must be linked.
+
+        Test scenario:
+            A core built without `auditwheel`'s rewrite can vendor a libgdal that declares no
+            soname. Comparing the plugin's `DT_NEEDED` against `None` would then fail every
+            such pair, so the file name stands in.
+        """
+        libs = tmp_path / "pyramids_core.libs"
+        libs.mkdir()
+        (libs / "libgdal.so.39").write_bytes(_elf(so_name=None))
+        plugins = tmp_path / "gdalplugins"
+        plugins.mkdir()
+        (plugins / "ogr_Parquet.so").write_bytes(_elf(needed=("libgdal.so.39",)))
+        monkeypatch.setattr(verify, "_core_libs", lambda: libs)
+
+        assert verify.check_link(plugins) == "libgdal.so.39"
 
 
 class TestVerifyCli:
