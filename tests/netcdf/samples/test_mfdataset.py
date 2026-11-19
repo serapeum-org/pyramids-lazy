@@ -3,8 +3,8 @@
 import shutil
 
 import pytest
-
 from pyramids.netcdf import NetCDF
+
 from tests.netcdf.samples.conftest import AIR
 
 SERIES_ONLY = "none__11v__1d11.nc"  # eleven 1-D series, none of them a raster plane

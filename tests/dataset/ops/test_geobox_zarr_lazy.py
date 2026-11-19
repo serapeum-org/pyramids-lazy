@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
 from pyramids.dataset.ops._geobox_zarr import (
     GRID_MAPPING_VAR,
     detect_data_var,

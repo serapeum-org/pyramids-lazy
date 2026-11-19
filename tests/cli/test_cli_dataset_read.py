@@ -10,7 +10,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
 from pyramids.cli import main
 from pyramids.dataset import Dataset, GeoReference
 

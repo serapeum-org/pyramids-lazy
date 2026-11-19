@@ -28,7 +28,6 @@ import numpy as np
 import pytest
 import zarr
 from osgeo import gdal, osr
-
 from pyramids.base.georeference import GeoReference
 from pyramids.dataset import Dataset
 

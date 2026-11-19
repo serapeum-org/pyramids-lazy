@@ -10,11 +10,10 @@ from __future__ import annotations
 import geopandas as gpd
 import numpy as np
 import pytest
-from shapely.geometry import Point
-
 from pyramids.base.georeference import GeoReference
 from pyramids.dataset import Dataset
 from pyramids.feature import FeatureCollection
+from shapely.geometry import Point
 
 
 @pytest.fixture

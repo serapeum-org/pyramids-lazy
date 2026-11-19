@@ -45,7 +45,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 from osgeo import gdal, osr
-
 from pyramids.base._file_manager import (
     FILE_CACHE,
     CachingFileManager,
@@ -55,6 +54,7 @@ from pyramids.base._locks import DummyLock, SerializableLock
 from pyramids.dataset import Dataset
 from pyramids.dataset.ops import io as io_module
 from pyramids.dataset.ops.io import _read_chunk
+
 from tests._marks import requires_lazy
 
 pytestmark = pytest.mark.lazy

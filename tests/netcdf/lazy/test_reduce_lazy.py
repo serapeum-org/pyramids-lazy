@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
 from pyramids.netcdf import ExtraDimensions, GeoReference, NetCDF
+
 from tests._marks import requires_lazy
 
 _GEO = (0.0, 1.0, 0.0, 3.0, 0.0, -1.0)

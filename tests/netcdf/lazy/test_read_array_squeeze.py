@@ -8,8 +8,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
 from pyramids.netcdf import NetCDF
+
 from tests._marks import requires_lazy
 
 MULTIVAR = (

@@ -9,9 +9,8 @@ from __future__ import annotations
 import geopandas as gpd
 import numpy as np
 import pytest
-from shapely.geometry import box
-
 from pyramids.base.protocols import LazySpatialObject, SpatialObject
+from shapely.geometry import box
 
 # Module-marked `parquet_lazy`: the conftest hook auto-skips these when the [parquet] extra
 # (dask-geopandas) is absent, with the catalogued reason — so no per-test skipif is needed (a
@@ -25,7 +24,6 @@ class TestLazySpatialObject:
     def test_lazy_feature_collection_satisfies_lazy_protocol(self):
         """`isinstance(lfc, LazySpatialObject)` is True at runtime."""
         import dask_geopandas as dg
-
         from pyramids.feature import LazyFeatureCollection
 
         gdf = gpd.GeoDataFrame(
@@ -40,7 +38,6 @@ class TestLazySpatialObject:
     def test_lazy_feature_collection_does_not_satisfy_eager_protocol(self):
         """LazyFC no longer fakes eager `top_left_corner`."""
         import dask_geopandas as dg
-
         from pyramids.feature import LazyFeatureCollection
 
         gdf = gpd.GeoDataFrame(
@@ -55,7 +52,6 @@ class TestLazySpatialObject:
     def test_generic_consumer_accepts_lazy_via_union(self):
         """A function typed against `SpatialObject | LazySpatialObject` accepts both."""
         import dask_geopandas as dg
-
         from pyramids.feature import LazyFeatureCollection
 
         gdf = gpd.GeoDataFrame(
@@ -78,7 +74,6 @@ class TestComputeTotalBounds:
     def test_returns_four_element_array(self):
         """The helper materialises the lazy Scalar into a concrete array."""
         import dask_geopandas as dg
-
         from pyramids.feature import LazyFeatureCollection
 
         gdf = gpd.GeoDataFrame(
@@ -96,7 +91,6 @@ class TestComputeTotalBounds:
     def test_top_left_corner_property_is_gone(self):
         """Eager-only `top_left_corner` no longer exists on LazyFC."""
         import dask_geopandas as dg
-
         from pyramids.feature import LazyFeatureCollection
 
         gdf = gpd.GeoDataFrame(

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
 from pyramids.netcdf.ugrid import MeshDataset
 
 pytestmark = pytest.mark.lazy

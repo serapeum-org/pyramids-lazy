@@ -10,7 +10,6 @@ import dask.array as da
 import numpy as np
 import pytest
 from osgeo import gdal
-
 from pyramids.base.georeference import GeoReference
 from pyramids.dataset import Dataset
 from pyramids.dataset.collection import DatasetCollection, _unpack_lazy_timestep

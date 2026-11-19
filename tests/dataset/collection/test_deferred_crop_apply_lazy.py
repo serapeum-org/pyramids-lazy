@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
 from pyramids.dataset import Dataset, GeoReference
 from pyramids.dataset.collection import DatasetCollection
 

@@ -7,7 +7,6 @@ multiprocessing-spawn pickle tests stay in pyramids-core.
 from __future__ import annotations
 
 import pytest
-
 from pyramids.netcdf import NetCDF
 
 pytestmark = pytest.mark.lazy

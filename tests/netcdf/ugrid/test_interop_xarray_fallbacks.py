@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
 from pyramids.netcdf.ugrid.interop_xarray import chunked_variables
 from pyramids.netcdf.ugrid.models import MeshVariable
 

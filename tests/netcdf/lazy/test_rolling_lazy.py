@@ -10,8 +10,8 @@ from pathlib import Path
 
 import numpy as np
 from numpy.testing import assert_allclose
-
 from pyramids.netcdf import NetCDF
+
 from tests._marks import requires_lazy
 
 ERA5_T2M = (

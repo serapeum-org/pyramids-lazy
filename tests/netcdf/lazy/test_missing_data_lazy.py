@@ -9,7 +9,6 @@ from __future__ import annotations
 import dask.array as dask_array
 import numpy as np
 import pytest
-
 from pyramids.netcdf import ExtraDimensions, GeoReference, NetCDF
 
 pytestmark = pytest.mark.lazy

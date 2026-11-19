@@ -12,7 +12,6 @@ import os
 import numpy as np
 import pytest
 from osgeo import gdal
-
 from pyramids.netcdf import NetCDF
 
 pytestmark = pytest.mark.lazy

@@ -13,7 +13,6 @@ import zipfile
 
 import numpy as np
 import pytest
-
 from pyramids.base.georeference import GeoReference
 from pyramids.cli import main
 from pyramids.dataset import Dataset

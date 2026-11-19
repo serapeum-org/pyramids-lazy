@@ -8,11 +8,10 @@ cases live here, run against released core.
 import geopandas as gpd
 import numpy as np
 import pytest
-from shapely.geometry import Polygon
-
 from pyramids.feature import FeatureCollection
 from pyramids.netcdf import NetCDF
 from pyramids.netcdf.engines.selection import _read_curvilinear_window
+from shapely.geometry import Polygon
 
 pytestmark = pytest.mark.lazy
 

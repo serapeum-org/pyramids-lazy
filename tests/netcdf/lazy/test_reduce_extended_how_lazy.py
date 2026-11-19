@@ -12,7 +12,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose
-
 from pyramids.netcdf import ExtraDimensions, GeoReference, NetCDF
 from pyramids.netcdf.netcdf import Container, Variable
 
@@ -25,10 +24,16 @@ NT, NY, NX = 4, 3, 4
 ALL_MASKED = (0, 0)
 ONCE_MASKED = (1, 2)
 ERA5_T2M = (
-    Path(__file__).resolve().parents[2] / "data" / "netcdf" / "cf__5v__1d4-3d1__geog__y-desc.nc"
+    Path(__file__).resolve().parents[2]
+    / "data"
+    / "netcdf"
+    / "cf__5v__1d4-3d1__geog__y-desc.nc"
 )
 GEOS = (
-    Path(__file__).resolve().parents[2] / "data" / "netcdf" / "cf__9v__1d7-2d2__geos__y-desc.nc"
+    Path(__file__).resolve().parents[2]
+    / "data"
+    / "netcdf"
+    / "cf__9v__1d7-2d2__geos__y-desc.nc"
 )
 
 

@@ -16,7 +16,6 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import zarr
-
 from pyramids.dataset.ops._geobox_zarr import detect_data_var
 
 # Relocated from pyramids-core: the real-zarr detect_data_var tests. zarr is a hard dependency of

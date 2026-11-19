@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
 from pyramids.base.georeference import GeoReference
 from pyramids.dataset import Dataset, DatasetCollection
+
 from tests._marks import requires_lazy
 
 pytestmark = pytest.mark.lazy

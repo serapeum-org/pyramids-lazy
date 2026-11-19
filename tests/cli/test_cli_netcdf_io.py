@@ -11,7 +11,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
 from pyramids import cli_netcdf_io
 from pyramids._cli_shared import json_sanitize
 from pyramids.cli import main
@@ -157,5 +156,3 @@ class TestNcOpenMf:
         out = capsys.readouterr().out
         assert "variable: t" in out
         assert "files: 2" in out
-
-

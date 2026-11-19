@@ -11,8 +11,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from osgeo import gdal, osr
-
 from pyramids.dataset import Dataset
+
 from tests._marks import requires_lazy
 
 pytestmark = pytest.mark.lazy

@@ -9,8 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-
 from pyramids.netcdf import NetCDF
+
 from tests._marks import requires_lazy
 
 CF_STORE = Path(__file__).parents[2] / "data" / "netcdf" / "cf__5v__1d4-4d1__y-asc.nc"

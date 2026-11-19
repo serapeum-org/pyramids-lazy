@@ -13,10 +13,10 @@ import warnings
 import numpy as np
 import pandas as pd
 import pytest
-
 from pyramids.base._errors import AlignmentError
 from pyramids.base.georeference import GeoReference
 from pyramids.dataset import Dataset, DatasetCollection
+
 from tests._marks import requires_lazy
 
 pytestmark = pytest.mark.lazy

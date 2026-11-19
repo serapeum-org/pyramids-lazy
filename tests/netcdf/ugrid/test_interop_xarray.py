@@ -12,7 +12,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
 from pyramids.netcdf.ugrid import interop_xarray
 from pyramids.netcdf.ugrid.connectivity import Connectivity
 from pyramids.netcdf.ugrid.dataset import MeshDataset

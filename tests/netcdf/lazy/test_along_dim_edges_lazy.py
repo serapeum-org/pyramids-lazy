@@ -9,7 +9,6 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from numpy.testing import assert_array_equal
-
 from pyramids.base._reductions import (
     gaps_as_nan as _gaps_as_nan,
 )
@@ -19,6 +18,7 @@ from pyramids.base._reductions import (
 from pyramids.base._reductions import (
     slice_axis as _slice_axis,
 )
+
 from tests._marks import requires_lazy
 
 NDV = -9999.0

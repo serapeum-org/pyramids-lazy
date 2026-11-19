@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
 from pyramids.dataset import Dataset
+
 from tests._helpers import write_raster
 
 pytestmark = pytest.mark.lazy

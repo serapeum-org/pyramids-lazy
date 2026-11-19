@@ -15,7 +15,6 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose
-
 from pyramids.netcdf import Encoding, ExtraDimensions, GeoReference
 from pyramids.netcdf.engines.variables import (
     _is_dask_array,

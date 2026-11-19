@@ -11,7 +11,6 @@ import warnings
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
-
 from pyramids.netcdf import ExtraDimensions, GeoReference, NetCDF
 from pyramids.netcdf.engines._along_dim import _resize_axis
 from pyramids.netcdf.netcdf import Variable

@@ -10,7 +10,6 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from dask.delayed import Delayed
-
 from pyramids.base.georeference import GeoReference
 from pyramids.dataset import Dataset
 from pyramids.dataset.ops.reproject import Aligner, Reprojector

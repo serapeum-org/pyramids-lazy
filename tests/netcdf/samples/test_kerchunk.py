@@ -3,8 +3,8 @@
 import shutil
 
 import pytest
-
 from pyramids.netcdf import NetCDF
+
 from tests.netcdf.samples.conftest import AIR
 
 pytestmark = pytest.mark.netcdf_lazy

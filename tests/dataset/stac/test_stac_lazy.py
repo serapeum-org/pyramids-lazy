@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
 from pyramids.base.georeference import GeoReference
 from pyramids.dataset import Dataset, DatasetCollection
 
@@ -66,7 +65,6 @@ class TestCollectionGdalEnvLazyReads:
     def test_path_b_lazy_data_installs_env(self, three_tifs, monkeypatch):
         """Path B: the tiled `data` graph installs the collection's env around each open."""
         from osgeo import gdal
-
         from pyramids.dataset import collection as coll_mod
 
         captured: dict[str, str | None] = {}

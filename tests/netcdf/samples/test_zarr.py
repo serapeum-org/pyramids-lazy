@@ -1,8 +1,8 @@
 """Zarr write/read round-trip (optional dependency)."""
 
 import pytest
-
 from pyramids.netcdf import NetCDF
+
 from tests.netcdf.samples.conftest import TOS
 
 pytestmark = pytest.mark.lazy
