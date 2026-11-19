@@ -142,6 +142,28 @@ def check_link(plugins: Path) -> str:
     return installed_soname
 
 
+def _core_plugin_dir() -> Path | None:
+    """Locate pyramids-core's own bundled GDAL plugin directory, if the wheel ships one.
+
+    Core composes ``GDAL_DRIVER_PATH`` from this directory plus the companions, but this
+    script sets ``PYRAMIDS_KEEP_GDAL_ENV=1`` so that a released core leaves its value
+    alone -- which also means core never gets to add its own directory. Reading it here
+    is what keeps `gdal_netCDF`, `gdal_HDF5` and friends loadable during the check.
+
+    Only the conda-extract and vcpkg wheels ship it; the from-source Linux wheels compile
+    those drivers into libgdal, so ``None`` is a normal answer there.
+
+    Returns:
+        pathlib.Path | None: ``pyramids/_data/gdalplugins``, or ``None`` if absent.
+    """
+    spec = importlib.util.find_spec("pyramids")
+    if spec is None or not spec.submodule_search_locations:
+        return None
+    package = Path(next(iter(spec.submodule_search_locations)))
+    bundled = package / "_data" / "gdalplugins"
+    return bundled if bundled.is_dir() else None
+
+
 def _require_elf(path: Path) -> Path:
     """Reject a non-ELF object before handing it to the ELF-only parser.
 
@@ -264,8 +286,17 @@ def check_driver(plugins: Path, via_entry_point: bool) -> None:
         # Appended, not replaced: overwriting it drops core's own bundled plugin directory
         # and any inherited one, so unrelated drivers would disappear and this script would
         # report a Parquet success in an environment it had quietly broken.
+        # Core's own bundled directory is added explicitly. `driver_path` can only keep
+        # what it is given, and at this point the variable is whatever the shell had --
+        # normally nothing, because core has not run yet and will not touch it once
+        # PYRAMIDS_KEEP_GDAL_ENV is set. Without this the check ran with core's own
+        # plugins switched off.
+        inherited = [os.environ.get("GDAL_DRIVER_PATH", "")]
+        core_plugins = _core_plugin_dir()
+        if core_plugins is not None:
+            inherited.append(str(core_plugins))
         os.environ["GDAL_DRIVER_PATH"] = driver_path(
-            plugins, os.environ.get("GDAL_DRIVER_PATH", "")
+            plugins, os.pathsep.join(p for p in inherited if p)
         )
         os.environ["PYRAMIDS_KEEP_GDAL_ENV"] = "1"
 
@@ -277,6 +308,7 @@ def check_driver(plugins: Path, via_entry_point: bool) -> None:
     print(f"  GDAL build          : {gdal.VersionInfo('RELEASE_NAME')}")
     print(f"  GDAL_DRIVER_PATH    : {os.environ.get('GDAL_DRIVER_PATH')}")
 
+    # GetDriverByName still returns None rather than raising, so this guard is live.
     driver = ogr.GetDriverByName("Parquet")
     if driver is None:
         raise SystemExit("the OGR Parquet driver did not register")
@@ -308,7 +340,13 @@ def _round_trip(driver, target: Path) -> None:
     driver.CopyDataSource(source, str(target))
     print(f"  wrote               : {target.name} ({target.stat().st_size} bytes)")
 
-    opened = ogr.Open(str(target))
+    # `gdal.UseExceptions()` switches OGR to exceptions too, so a failure here arrives as
+    # RuntimeError and the `is None` branch this used to rely on was dead code -- the
+    # script would have ended in a traceback instead of saying what went wrong.
+    try:
+        opened = ogr.Open(str(target))
+    except RuntimeError as exc:
+        raise SystemExit(f"could not reopen {target}: {exc}") from exc
     if opened is None:
         raise SystemExit(f"could not reopen {target}")
     count = opened.GetLayer(0).GetFeatureCount()

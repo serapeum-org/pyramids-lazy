@@ -31,7 +31,7 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -1196,6 +1196,43 @@ class TestDamagedElfObjects:
                     outdir=str(tmp_path / "dist"),
                 )
             )
+
+
+class TestCorePluginDirectory:
+    """Core's own bundled plugins must survive PYRAMIDS_KEEP_GDAL_ENV."""
+
+    def test_the_bundled_directory_is_found_when_the_wheel_ships_one(
+        self, tmp_path, monkeypatch
+    ):
+        """Only the conda-extract and vcpkg wheels ship it; it must be picked up when present."""
+        package = tmp_path / "pyramids"
+        bundled = package / "_data" / "gdalplugins"
+        bundled.mkdir(parents=True)
+        monkeypatch.setattr(
+            verify.importlib.util,
+            "find_spec",
+            lambda name: SimpleNamespace(submodule_search_locations=[str(package)]),
+        )
+
+        assert verify._core_plugin_dir() == bundled
+
+    def test_its_absence_is_a_normal_answer(self, tmp_path, monkeypatch):
+        """The from-source Linux wheels compile those drivers in, so there is no directory."""
+        package = tmp_path / "pyramids"
+        package.mkdir()
+        monkeypatch.setattr(
+            verify.importlib.util,
+            "find_spec",
+            lambda name: SimpleNamespace(submodule_search_locations=[str(package)]),
+        )
+
+        assert verify._core_plugin_dir() is None
+
+    def test_an_uninstalled_core_is_a_normal_answer(self, monkeypatch):
+        """`check_link` already reports a missing core; this must not raise instead."""
+        monkeypatch.setattr(verify.importlib.util, "find_spec", lambda name: None)
+
+        assert verify._core_plugin_dir() is None
 
 
 class TestVerifyDriverPath:
