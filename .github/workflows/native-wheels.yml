@@ -1,0 +1,197 @@
+name: Native Wheels - Build & Verify
+
+# Builds pyramids-lazy's OWN wheel as a native `py3-none-<platform>` wheel carrying the compiled
+# OGR-Parquet driver + its Arrow runtime in `pyramids_lazy/gdalplugins/`. The driver is linked
+# against the libgdal inside a published pyramids-core wheel (not relinked after the fact); the
+# rationale is in planning/parquet-native-wheel-port-plan.md and issue #4.
+#
+# The wheel is interpreter-independent (the plugin loads via GDAL_DRIVER_PATH, nothing links
+# libpython), so it is ONE wheel per platform, not per CPython -- see setup.py for the forced
+# `py3-none-<plat>` tag. Not wired into pypi-release.yml yet: this proves the build on demand and
+# on PRs that touch it. Phase 1 is manylinux x86_64 + aarch64; macOS / musllinux / win_amd64
+# follow (plan Phasing), and win_arm64 is excluded (vcpkg compiles Arrow into libgdal there).
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      core-version:
+        description: "pyramids-core version to build against (blank = the pinned default)"
+        required: false
+        default: ""
+        type: string
+      gdal-version:
+        description: "override the GDAL version derived from the core wheel's soname"
+        required: false
+        default: ""
+        type: string
+      arrow-version:
+        description: "Arrow C++ version to build"
+        required: false
+        default: ""
+        type: string
+  pull_request:
+    paths:
+      - "ci/parquet-plugin/**"
+      - "setup.py"
+      - ".github/workflows/native-wheels.yml"
+
+# The core release the wheels build and link against. Pinned, not "latest": the GDAL version is
+# derived from whatever core serves and only the exact tarballs in build.sh's digest table are
+# accepted, so "latest" would fail this workflow on an unrelated PR the moment core bumps GDAL.
+# Bump together with the digest table. 0.81.0 is the release that ships the gdal_plugin_path seam
+# this wheel registers through.
+env:
+  PINNED_CORE_VERSION: "0.81.0"
+
+concurrency:
+  group: native-wheels-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  wheels:
+    name: wheel (${{ matrix.plat }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - plat: manylinux_2_28_x86_64
+            image: quay.io/pypa/manylinux_2_28_x86_64
+            runner: ubuntu-latest
+          - plat: manylinux_2_28_aarch64
+            image: quay.io/pypa/manylinux_2_28_aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Compile the driver inside ${{ matrix.image }}
+        # The same image pyramids-core's Linux wheels are built in, so the plugin lands at the
+        # same libc floor as the libgdal it links. build.sh stages gdalplugins/ + licenses/ +
+        # core-soname.txt / core-wheel.txt into $OUTPUT.
+        env:
+          CORE_VERSION: ${{ inputs.core-version || env.PINNED_CORE_VERSION }}
+          GDAL_VERSION: ${{ inputs.gdal-version }}
+          ARROW_VERSION: ${{ inputs.arrow-version || '26.0.1' }}
+          PLAT: ${{ matrix.plat }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          docker run --rm \
+            -v "$PWD:/src:ro" -v "$PWD/out:/out" \
+            -e CORE_VERSION="$CORE_VERSION" \
+            -e GDAL_VERSION="$GDAL_VERSION" \
+            -e ARROW_VERSION="$ARROW_VERSION" \
+            -e PLAT="$PLAT" \
+            -e OUTPUT=/out \
+            "$IMAGE" \
+            bash /src/ci/parquet-plugin/build.sh
+          # The container runs as root, so out/ is root-owned; take it back before the build
+          # step copies from it as the runner user.
+          sudo chown -R "$(id -u):$(id -g)" out
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          # Any CPython builds the identical py3-none wheel; 3.12 matches build.sh's PYTAG and
+          # the core wheel the plugin links, which the verify step then installs against.
+          python-version: "3.12"
+
+      - name: Build the native pyramids-lazy wheel
+        env:
+          PYRAMIDS_LAZY_NATIVE: "1"
+          PYRAMIDS_LAZY_WHEEL_PLAT: ${{ matrix.plat }}
+        run: |
+          set -euo pipefail
+          # Stage the compiled plugin + the vendored-component licences into the package tree.
+          # package-data (pyproject) then carries pyramids_lazy/gdalplugins/* into the wheel.
+          mkdir -p src/pyramids_lazy/gdalplugins
+          cp out/gdalplugins/* src/pyramids_lazy/gdalplugins/
+          cp out/licenses/* src/pyramids_lazy/gdalplugins/
+          python -m pip install --quiet --upgrade build
+          python -m build --wheel --outdir dist
+          echo "built:"; ls -1 dist/*.whl
+          # setup.py's forced tag must have produced a platform wheel, not py3-none-any.
+          case "$(ls dist/*.whl)" in
+            *py3-none-${{ matrix.plat }}.whl) echo "tag OK" ;;
+            *) echo "unexpected wheel tag: $(ls dist/*.whl)" >&2; exit 1 ;;
+          esac
+
+      - name: Verify against a clean install
+        # Each arch verifies its own wheel: a runner installs only its own architecture's core
+        # wheel, so the matrix is what gives coverage of both. --via-entry-point exercises core
+        # 0.81.0's real pyramids.gdal_plugin_path seam rather than setting GDAL_DRIVER_PATH by hand.
+        run: |
+          set -euo pipefail
+          python3 -m venv /tmp/venv
+          /tmp/venv/bin/python -m pip install -q --upgrade pip
+          # Installs pyramids-core too, via the pyramids-core>=0.81.0 dependency in pyproject.
+          /tmp/venv/bin/python -m pip install -q "$(ls dist/*.whl)"
+          /tmp/venv/bin/python ci/parquet-plugin/verify.py --via-entry-point
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-wheel-${{ matrix.plat }}
+          path: |
+            dist/*.whl
+            out/core-soname.txt
+            out/core-wheel.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  sdist:
+    name: sdist (pure)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Build the sdist
+        # No plugin staged and PYRAMIDS_LAZY_NATIVE unset, so this is the ordinary pure source
+        # distribution; a source install on an unsupported platform gets the pure backend and the
+        # OGR-Parquet path raises its branded hint.
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet --upgrade build
+          python -m build --sdist --outdir dist
+          test -z "$(tar tzf dist/*.tar.gz | grep gdalplugins || true)" \
+            || { echo "sdist must not carry gdalplugins/" >&2; exit 1; }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  report:
+    name: report
+    needs: [wheels, sdist]
+    if: needs.wheels.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: artifacts
+        continue-on-error: true
+      - name: Summarise what was produced
+        run: |
+          {
+            echo "## pyramids-lazy native wheels"
+            echo
+            echo "| artifact | size | linked libgdal |"
+            echo "|---|---|---|"
+            shopt -s nullglob
+            for d in artifacts/*/; do
+              whl="$(find "$d" -name '*.whl' -o -name '*.tar.gz' | head -1)"
+              [ -n "$whl" ] || continue
+              soname=$(cat "$d/core-soname.txt" 2>/dev/null || echo "-")
+              size=$(du -h "$whl" | cut -f1)
+              echo "| \`$(basename "$whl")\` | $size | \`$soname\` |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -328,7 +328,7 @@ while [ -n "$pending" ]; do
     done <<< "$current"
 done
 # $ORIGIN finds the Arrow libs beside the plugin; the second entry reaches core's private
-# lib directory from <site-packages>/pyramids_lazy_parquet/gdalplugins/. That directory's
+# lib directory from <site-packages>/pyramids_lazy/gdalplugins/. That directory's
 # name is read off the wheel that was actually extracted rather than hard-coded, so a core
 # that renames it (or reverts to the older pyramids/.libs) is followed instead of silently
 # producing a plugin whose RPATH points nowhere.

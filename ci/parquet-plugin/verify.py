@@ -61,9 +61,9 @@ def _plugin_dir() -> Path:
     Raises:
         SystemExit: If the plugin distribution is not installed.
     """
-    spec = importlib.util.find_spec("pyramids_lazy_parquet")
+    spec = importlib.util.find_spec("pyramids_lazy")
     if spec is None or not spec.submodule_search_locations:
-        raise SystemExit("pyramids_lazy_parquet is not installed")
+        raise SystemExit("pyramids_lazy is not installed")
     return Path(next(iter(spec.submodule_search_locations))) / "gdalplugins"
 
 
