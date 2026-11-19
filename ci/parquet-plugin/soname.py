@@ -104,6 +104,16 @@ def _dynamic_entries(data: bytes) -> tuple[list[tuple[int, int]], int, int | Non
         raise ValueError("not a little-endian ELF object")
     (e_phoff,) = _unpack("<Q", data, 0x20)
     e_phentsize, e_phnum = _unpack("<HH", data, 0x36)
+    # Sanity-check both before trusting them. A zero e_phentsize re-reads the same
+    # program header e_phnum times, which turns a single PT_DYNAMIC into "more than one"
+    # or hides it entirely -- a confident, wrong diagnosis. PN_XNUM (0xffff) means the
+    # real count lives in the section headers, which this parser does not read.
+    if e_phentsize < 56:
+        raise ValueError(f"implausible e_phentsize {e_phentsize} for ELF64")
+    if e_phnum == 0xFFFF:
+        raise ValueError("PN_XNUM program header count is not supported")
+    if e_phnum == 0:
+        raise ValueError("no program headers")
 
     loads: list[tuple[int, int, int]] = []
     dyn: tuple[int, int] | None = None
@@ -250,11 +260,10 @@ def main(argv: list[str]) -> int:
             object, or declares no ``DT_SONAME``, and ``2`` for a usage error. ``build.sh`` runs
             under ``set -euo pipefail`` and captures stdout, so the code is the signal.
     """
-    args = argv[1:]
-    want_needed = False
-    if args and args[0] == "--needed":
-        want_needed = True
-        args = args[1:]
+    # The flag is accepted in any position: `soname.py <file> --needed` used to treat
+    # `--needed` as a second path and report a usage error about the wrong thing.
+    want_needed = "--needed" in argv[1:]
+    args = [value for value in argv[1:] if value != "--needed"]
     if len(args) != 1:
         print(_USAGE, file=sys.stderr)
         return 2

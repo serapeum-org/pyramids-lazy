@@ -142,6 +142,12 @@ def check_link(plugins: Path) -> str:
     return installed_soname
 
 
+# Resolved once, at import. Inserting it per call grew sys.path with duplicates and
+# registered repeated `soname` modules under that bare, generic name.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+
 def _core_plugin_dir() -> Path | None:
     """Locate pyramids-core's own bundled GDAL plugin directory, if the wheel ships one.
 
@@ -209,7 +215,6 @@ def _parsed_needed(path: Path) -> list[str]:
         SystemExit: If it is not ELF, or is ELF but cannot be parsed.
     """
     _require_elf(path)
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
     from soname import needed
 
     try:
@@ -231,7 +236,6 @@ def _parsed_soname(path: Path) -> str | None:
         SystemExit: If it is not ELF, or is ELF but cannot be parsed.
     """
     _require_elf(path)
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
     from soname import soname as read_soname
 
     try:

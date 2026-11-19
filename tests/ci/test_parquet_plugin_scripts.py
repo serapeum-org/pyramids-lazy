@@ -408,6 +408,47 @@ class TestMalformedInput:
             soname_mod.soname(str(path))
 
 
+class TestProgramHeaderSanity:
+    """A garbage program-header table must be rejected, not half-believed."""
+
+    @staticmethod
+    def _with_ph_fields(blob: bytes, phentsize: int, phnum: int) -> bytes:
+        """Return `blob` with e_phentsize and e_phnum overwritten."""
+        out = bytearray(blob)
+        struct.pack_into("<HH", out, 0x36, phentsize, phnum)
+        return bytes(out)
+
+    def test_an_implausible_entry_size_is_rejected(self, tmp_path):
+        """A zero e_phentsize re-reads one header N times, inventing or hiding PT_DYNAMIC.
+
+        Test scenario:
+            Before the check this produced a confident wrong answer -- with the dynamic
+            segment first it reported "more than one PT_DYNAMIC", and otherwise "no
+            PT_DYNAMIC", neither of which is what is wrong with the file.
+        """
+        path = tmp_path / "bad_entsize.so"
+        path.write_bytes(self._with_ph_fields(_elf(so_name="libx.so"), 0, 2))
+
+        with pytest.raises(ValueError, match="implausible e_phentsize"):
+            soname_mod.soname(str(path))
+
+    def test_the_pn_xnum_escape_is_rejected(self, tmp_path):
+        """With e_phnum == 0xffff the real count lives in a section header this parser skips."""
+        path = tmp_path / "xnum.so"
+        path.write_bytes(self._with_ph_fields(_elf(so_name="libx.so"), 56, 0xFFFF))
+
+        with pytest.raises(ValueError, match="PN_XNUM"):
+            soname_mod.soname(str(path))
+
+    def test_an_object_with_no_program_headers_is_rejected(self, tmp_path):
+        """Zero headers cannot carry a dynamic section; say that rather than looping zero times."""
+        path = tmp_path / "noph.so"
+        path.write_bytes(self._with_ph_fields(_elf(so_name="libx.so"), 56, 0))
+
+        with pytest.raises(ValueError, match="no program headers"):
+            soname_mod.soname(str(path))
+
+
 class TestAgainstARealLibrary:
     """Cross-check the hand-rolled parser against an independent reader.
 
@@ -489,6 +530,16 @@ class TestUsageWithoutDocstrings:
 
 class TestSonameCli:
     """The command-line surface `build.sh` depends on."""
+
+    def test_the_needed_flag_is_accepted_after_the_path(self, elf_file, capsys):
+        """`soname.py <file> --needed` used to treat the flag as a second path."""
+        path = str(elf_file(needed=("libgdal-abc.so.39", "libarrow.so.2600")))
+
+        code = soname_mod.main(["soname.py", path, "--needed"])
+
+        out = capsys.readouterr().out
+        assert code == 0
+        assert out.split() == ["libgdal-abc.so.39", "libarrow.so.2600"]
 
     def test_printing_the_soname_succeeds(self, elf_file, capsys):
         """`build.sh` captures stdout into `core-soname.txt`."""
@@ -862,25 +913,56 @@ class TestMakeWheelCli:
         assert "py3-none-manylinux_2_28_aarch64.whl" in out
         assert "ogr_Parquet.so" in out
 
+    def test_an_empty_licence_file_is_refused(self, tmp_path: Path):
+        """An empty NOTICE passes an existence check while meeting none of Apache-2.0's terms."""
+        root = tmp_path / "out"
+        plugins = root / "gdalplugins"
+        plugins.mkdir(parents=True)
+        (plugins / "ogr_Parquet.so").write_bytes(_elf(needed=("libgdal-abc.so.39",)))
+        (root / "core-soname.txt").write_text("libgdal-abc.so.39")
+        (root / "core-wheel.txt").write_text("pyramids_core-0.80.0-x.whl")
+        (root / "licenses").mkdir()
+        (root / "licenses" / "Arrow-NOTICE.txt").write_text("   ")
+
+        with pytest.raises(SystemExit, match="empty licence file"):
+            make_wheel.main(
+                [
+                    "make_wheel.py",
+                    "--stage",
+                    str(root),
+                    "--version",
+                    "0.1.0",
+                    "--plat",
+                    "manylinux_2_28_x86_64",
+                    "--core-requires",
+                    "pyramids-core==0.80.0",
+                    "--outdir",
+                    str(tmp_path / "dist"),
+                ]
+            )
+
     def test_an_empty_member_ships_but_is_left_out_of_the_size_report(
         self, tmp_path: Path, capsys
     ):
         """A zero-byte member still has to be in the wheel; printing `0.0 MB` for it is noise.
 
         Test scenario:
-            A licence file staged empty must not be silently dropped -- METADATA declares it as
-            a `License-File`, so pip would be pointed at a file that is not there -- but it has
-            no size worth reporting.
+            GDAL reads an optional `drivers.ini` from its plugin directory and an empty one
+            is legitimate, so a zero-byte member has to ship: RECORD covers every member and
+            omitting it would make pip reject the wheel. It simply has no size worth
+            printing. This used to stage an empty licence file, which `_licenses` now
+            refuses -- an empty NOTICE passes an existence check while satisfying none of
+            Apache-2.0's terms.
         """
         root = tmp_path / "out"
         plugins = root / "gdalplugins"
         plugins.mkdir(parents=True)
         (plugins / "ogr_Parquet.so").write_bytes(_elf(needed=("libgdal-abc.so.39",)))
+        (plugins / "drivers.ini").write_bytes(b"")
         (root / "core-soname.txt").write_text("libgdal-abc.so.39\n")
         (root / "core-wheel.txt").write_text("pyramids_core-0.80.0-x.whl\n")
         (root / "licenses").mkdir()
         (root / "licenses" / "GDAL-LICENSE.txt").write_text("text\n")
-        (root / "licenses" / "Arrow-NOTICE.txt").write_bytes(b"")
 
         code = make_wheel.main(
             [
@@ -900,11 +982,11 @@ class TestMakeWheelCli:
 
         out = capsys.readouterr().out
         assert code == 0
-        assert "Arrow-NOTICE.txt" not in out, "an empty member has no size to report"
+        assert "drivers.ini" not in out, "an empty member has no size to report"
         wheel = next((tmp_path / "dist").glob("*.whl"))
         with zipfile.ZipFile(wheel) as zf:
             names = zf.namelist()
-        assert [n for n in names if n.endswith("/licenses/Arrow-NOTICE.txt")]
+        assert [n for n in names if n.endswith("/gdalplugins/drivers.ini")]
 
     @pytest.fixture
     def complete_stage(self, tmp_path: Path) -> Path:

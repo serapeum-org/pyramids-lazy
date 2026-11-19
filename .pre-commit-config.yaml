@@ -94,8 +94,10 @@ repos:
         # src-layout path: the package lives at src/pyramids_lazy/.
         files: ^src/pyramids_lazy/
 
-  # beautysh + shell-lint are dormant parity scaffolding: the only shell script in the tree is the
-  # excluded tests/data/netcdf/download.sh, so both are no-ops until a first-party `.sh` lands.
+  # beautysh + shell-lint are LIVE as of ci/parquet-plugin/build.sh, the tree's first
+  # first-party shell script. They were dormant parity scaffolding before that (the only .sh
+  # was the excluded tests/data/netcdf/download.sh), and waking them turned up a beautysh
+  # crash and five shellcheck findings that had never had anything to run against.
   - repo: https://github.com/lovesegfault/beautysh
     rev: v6.2.1
     hooks:

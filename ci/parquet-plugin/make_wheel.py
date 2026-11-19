@@ -46,6 +46,12 @@ ENTRY_POINT_GROUP = "pyramids.gdal_plugin_path"
 #: 1980-01-01 is the earliest a zip entry can express.
 _EPOCH = (1980, 1, 1, 0, 0, 0)
 
+# Resolved once. Doing this inside the function re-inserted the directory on every call
+# and registered a second `soname` module under that bare, generic name -- the exact
+# shadowing the test loader goes out of its way to avoid.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 _INIT = '''"""Compiled GDAL OGR Parquet driver for pyramids.
 
 This package contains no Python API. It exists to carry `gdalplugins/ogr_Parquet.so` and the
@@ -106,6 +112,12 @@ def _licenses(stage: Path) -> list[tuple[str, bytes]]:
             f"no licence files in {directory}; the wheel redistributes GDAL and Arrow "
             "binaries and must carry their licences"
         )
+    # An empty file would satisfy the existence check while satisfying nothing Apache-2.0
+    # actually asks for, so a truncated copy is a build error rather than a shipped
+    # placeholder.
+    empty = [name for name, data in files if not data.strip()]
+    if empty:
+        raise SystemExit(f"empty licence file(s): {', '.join(empty)}")
     return files
 
 
@@ -208,7 +220,13 @@ def _metadata(
         "refuses to load rather than misbehaving.\n"
     )
     return (
-        "Metadata-Version: 2.1\n"
+        # 2.4, not 2.1: `License-File` was standardised by PEP 639 in Metadata 2.4, and
+        # emitting it under 2.1 works today only because setuptools has done it for
+        # years. Declaring the version that actually defines the field removes a latent
+        # upload failure. The `License:` field below is deprecated in 2.4 but still
+        # accepted; which licence this distribution should declare is a maintainer
+        # decision (the payload is GDAL MIT/X11 + Arrow Apache-2.0), so it is left as is.
+        "Metadata-Version: 2.4\n"
         f"Name: {DISTRIBUTION}\n"
         f"Version: {version}\n"
         f"Summary: {summary}\n"
@@ -242,12 +260,14 @@ def _assert_interpreter_independent(stage: Path) -> list[str]:
 
     Raises:
         SystemExit: If a staged object links ``libpython``.
-        ValueError: If a staged ``*.so*`` file is not a parseable ELF64 object. Nothing
+        SystemExit: If a staged ``*.so*`` file cannot be read as an ELF64 object. It is
+            reported as a diagnosis naming the file, not surfaced as the parser's
+            ``ValueError``, because this runs as a script. Nothing
             filters the glob, so a stray non-ELF file with that suffix reaches the parser.
     """
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
     # Deliberately local: this file runs as a script beside soname.py in a container with
-    # nothing installed, so there is no package to import it from at module scope.
+    # nothing installed, so there is no package to import it from at module scope. The
+    # sys.path entry it needs is added once at import time, above.
     from soname import needed
 
     objects = sorted(p for p in stage.glob("*.so*") if p.is_file())
