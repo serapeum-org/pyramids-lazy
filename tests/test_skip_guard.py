@@ -111,6 +111,10 @@ SUITE_REASONS: tuple[tuple[str, bool], ...] = (
         "installed pyramids-core has no open_mfdataset(chunks=) forwarder yet (#1458)",
         False,
     ),
+    # Deliberately NOT a dependency skip: nothing is missing, the platform simply has no ELF.
+    # `tests/ci` cross-checks `soname.py` against a real shared object, which only exists on
+    # Linux; the macOS and Windows legs have nothing to read and no install could change that.
+    ("ELF is Linux-only here", False),
 )
 
 
