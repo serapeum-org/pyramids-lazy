@@ -150,8 +150,9 @@ repair-wheel-command = [
     "python -m pip install --quiet wheel",
     # build.sh already vendored + stripped + RPATH'd the plugin, so this only upgrades the bare
     # linux_<arch> tag setuptools emits to manylinux_2_28_<arch> (the container guarantees the
-    # floor). `wheel tags` writes the retagged wheel into the CWD, so run it in {dest_dir}.
-    "bash -c 'cd {dest_dir} && python -m wheel tags --platform-tag manylinux_2_28_${AUDITWHEEL_ARCH} --remove {wheel}'",
+    # floor). `wheel tags` writes the retagged wheel beside its input, so run it there and move
+    # the result into {dest_dir} (cibuildwheel fails the build if the repaired wheel is not there).
+    "bash -c 'cd \"$(dirname {wheel})\" && python -m wheel tags --platform-tag manylinux_2_28_${AUDITWHEEL_ARCH} --remove {wheel} && mv ./*manylinux*.whl {dest_dir}/'",
 ]
 
 

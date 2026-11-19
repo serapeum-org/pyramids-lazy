@@ -33,8 +33,11 @@ Remove-Item -Recurse -Force "$Work/core" -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path "$Work/core" | Out-Null
 $wheel = Get-ChildItem "$Work/corewheel/pyramids_core-*.whl" | Select-Object -First 1
 & $py -c "import sys,zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" $wheel.FullName "$Work/core"
-$coreGdal = Get-ChildItem -Recurse "$Work/core" -Filter "libgdal*.dll" | Select-Object -First 1
-if (-not $coreGdal) { throw "no libgdal*.dll in the core win_amd64 wheel" }
+# Windows names it gdal-<hash>.dll (no lib prefix) under *.libs; the gdalplugins/*.dll are the
+# per-driver plugins, not the main library. The hash changes between core releases.
+$coreGdal = Get-ChildItem -Recurse "$Work/core" -Filter "gdal-*.dll" |
+    Where-Object { $_.FullName -notmatch "gdalplugins" } | Select-Object -First 1
+if (-not $coreGdal) { throw "no gdal-*.dll in the core win_amd64 wheel" }
 Write-Host "vendored libgdal : $($coreGdal.Name)"
 # The import library (.lib) the plugin links against; core's wheel ships the DLL, so generate an
 # import lib from it if one is not present (CI-iteration item -- may need dumpbin/lib /def).

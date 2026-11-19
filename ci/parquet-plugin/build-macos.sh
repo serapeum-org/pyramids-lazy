@@ -66,8 +66,10 @@ case "$PLAT" in
     *x86_64) CONDA_SUBDIR=osx-64 ;;
     *) die "unknown macOS platform $PLAT" ;;
 esac
+"$PY" -c 'import compression.zstd' 2>/dev/null || "$PY" -m pip install --quiet "zstandard==0.23.0" \
+    || die "could not install a zstd decoder for cpl_config.h"
 "$PY" "$SCRIPT_DIR/fetch_cpl_config.py" "$GDAL_VERSION" "$CONDA_SUBDIR" "$GEN_INCLUDE" \
-    || die "could not obtain cpl_config.h for $CONDA_SUBDIR (known gap: add the osx digests)"
+    || die "could not obtain cpl_config.h for $CONDA_SUBDIR"
 
 step "3. minimal Arrow $ARROW_VERSION"
 curl -fsSL -o arrow.tar.gz \
