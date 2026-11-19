@@ -216,6 +216,17 @@ class LazyComputeBackend:
 
         return delayed(func, *args, **kwargs)
 
+    def focal_lazy(self, source: Any, guarded: Any, *, depth: Any, dtype: Any) -> Any:
+        """Back the lazy arm of ``Dataset`` focal filters (``chunks=``).
+
+        Additive, duck-typed capability reached via ``getattr`` — not a ``ComputeBackend`` Protocol
+        member. Tiles core's no-data-aware kernel with ``dask.array.map_overlap``; see
+        :func:`pyramids_lazy._focal.focal_lazy`.
+        """
+        from pyramids_lazy._focal import focal_lazy
+
+        return focal_lazy(source, guarded, depth=depth, dtype=dtype)
+
 
 #: The singleton core resolves through the entry point. A single object, per the Protocol contract.
 backend = LazyComputeBackend()
