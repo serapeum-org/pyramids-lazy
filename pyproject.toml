@@ -197,7 +197,10 @@ match = '(?!test_).*\.py'
 # Branch coverage, measured wherever the suite runs (the pixi tasks and the pre-commit
 # pytest-check hook alike), not just line coverage.
 branch = true
-source = ["src/pyramids_lazy"]
+# ci/parquet-plugin is included deliberately: those three scripts decide what goes into a
+# published wheel, tests/ci exercises them, and leaving them out of `source` meant that
+# coverage was reported as if they did not exist.
+source = ["src/pyramids_lazy", "ci/parquet-plugin"]
 
 [tool.commitizen]
 name = "cz_conventional_commits"

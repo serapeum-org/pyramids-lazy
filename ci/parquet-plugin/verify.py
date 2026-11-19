@@ -112,7 +112,11 @@ def check_link(plugins: Path) -> str:
     if not installed:
         raise SystemExit(f"no libgdal in {libs}")
     installed_soname = soname(str(installed[0])) or installed[0].name
-    plugin_needs = needed(str(plugins / "ogr_Parquet.so"))
+    drivers = sorted(plugins.glob("ogr_Parquet.*"))
+    drivers = [p for p in drivers if p.suffix in {".so", ".dylib"}]
+    if not drivers:
+        raise SystemExit(f"no ogr_Parquet.so or .dylib in {plugins}")
+    plugin_needs = needed(str(drivers[0]))
 
     print(f"  installed libgdal   : {installed[0].name}")
     print(f"  its DT_SONAME       : {installed_soname}")
@@ -132,6 +136,32 @@ def check_link(plugins: Path) -> str:
     return installed_soname
 
 
+def driver_path(plugins: Path, existing: str) -> str:
+    """Put the plugin directory first on ``GDAL_DRIVER_PATH`` without losing the rest.
+
+    Replacing the variable outright drops core's own bundled plugin directory and any
+    inherited one, so unrelated drivers would disappear and this script would report a
+    Parquet success in an environment it had quietly broken.
+
+    Args:
+        plugins: The installed ``gdalplugins`` directory to put first.
+        existing: The current value, possibly empty.
+
+    Returns:
+        str: The composed value, de-duplicated and with empty segments dropped.
+    """
+    parts = [str(plugins)]
+    seen = {os.path.normcase(os.path.normpath(parts[0]))}
+    for part in existing.split(os.pathsep):
+        if not part:
+            continue
+        key = os.path.normcase(os.path.normpath(part))
+        if key not in seen:
+            seen.add(key)
+            parts.append(part)
+    return os.pathsep.join(parts)
+
+
 def check_driver(plugins: Path, via_entry_point: bool) -> None:
     """Assertions 3 + 4: GDAL registers the driver, and a .parquet round-trips.
 
@@ -146,9 +176,14 @@ def check_driver(plugins: Path, via_entry_point: bool) -> None:
             features that were written.
     """
     if not via_entry_point:
-        # A released core forces GDAL_DRIVER_PATH to its own bundled dir unless this is set;
-        # the companion seam that would append our directory is not in a release yet.
-        os.environ["GDAL_DRIVER_PATH"] = str(plugins)
+        # A released core forces GDAL_DRIVER_PATH to its own bundled dir unless this is
+        # set; the companion seam that would append our directory is not in a release yet.
+        # Appended, not replaced: overwriting it drops core's own bundled plugin directory
+        # and any inherited one, so unrelated drivers would disappear and this script would
+        # report a Parquet success in an environment it had quietly broken.
+        os.environ["GDAL_DRIVER_PATH"] = driver_path(
+            plugins, os.environ.get("GDAL_DRIVER_PATH", "")
+        )
         os.environ["PYRAMIDS_KEEP_GDAL_ENV"] = "1"
 
     import pyramids  # noqa: F401,PLC0415 - import triggers core's GDAL bootstrap
@@ -164,7 +199,23 @@ def check_driver(plugins: Path, via_entry_point: bool) -> None:
         raise SystemExit("the OGR Parquet driver did not register")
     print(f"  Parquet driver      : {driver.GetName()}")
 
-    target = Path(tempfile.mkdtemp()) / "points.parquet"
+    with tempfile.TemporaryDirectory() as scratch:
+        _round_trip(driver, Path(scratch) / "points.parquet")
+
+
+def _round_trip(driver, target: Path) -> None:
+    """Write five points, read them back, and reach a GeoDataFrame.
+
+    Args:
+        driver: The registered OGR Parquet driver.
+        target: Path to write the ``.parquet`` to.
+
+    Raises:
+        SystemExit: If the file cannot be reopened, the feature count differs, or the
+            rows reach pyramids without geometry.
+    """
+    from osgeo import ogr  # noqa: PLC0415
+
     source = ogr.GetDriverByName("MEM").CreateDataSource("mem")
     layer = source.CreateLayer("pts")
     for index in range(5):
@@ -216,10 +267,10 @@ def main(argv: list[str]) -> int:
     plugins = _plugin_dir()
     print(f"plugin directory: {plugins}")
     print("--- link ---")
-    check_link(plugins)
+    installed_soname = check_link(plugins)
     print("--- runtime ---")
     check_driver(plugins, args.via_entry_point)
-    print("\nALL CHECKS PASSED")
+    print(f"\nALL CHECKS PASSED (linked against {installed_soname})")
     return 0
 
 

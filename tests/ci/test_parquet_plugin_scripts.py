@@ -23,6 +23,7 @@ hyphen), so they are loaded from their paths.
 from __future__ import annotations
 
 import importlib.util
+import os
 import re
 import shutil
 import struct
@@ -49,10 +50,13 @@ def _load(name: str) -> ModuleType:
         ModuleType: The loaded module.
     """
     path = CI_DIR / name
-    spec = importlib.util.spec_from_file_location(path.stem, path)
+    # Registered under a prefixed key, not the bare stem: `verify` and `soname` are generic
+    # enough to shadow a real installed module for the rest of the session.
+    key = f"_ci_parquet_plugin_{path.stem}"
+    spec = importlib.util.spec_from_file_location(key, path)
     assert spec is not None and spec.loader is not None, f"cannot load {path}"
     module = importlib.util.module_from_spec(spec)
-    sys.modules[path.stem] = module
+    sys.modules[key] = module
     spec.loader.exec_module(module)
     return module
 
@@ -550,6 +554,31 @@ class TestWheelAssembly:
                 checked += 1
         assert checked >= 4, f"expected several hashed entries, checked {checked}"
 
+    def test_record_lists_every_member_of_the_wheel(self, stage, tmp_path: Path):
+        """A member absent from RECORD is a wheel pip may install incompletely.
+
+        Test scenario:
+            The hashes were checked, but nothing checked that RECORD *covers* the archive,
+            so a file added to the wheel without going through `write()` would ship
+            unrecorded and unnoticed.
+        """
+        import csv
+        import io
+
+        wheel = self._build(stage, tmp_path / "dist")
+        with zipfile.ZipFile(wheel) as zf:
+            record = next(n for n in zf.namelist() if n.endswith("/RECORD"))
+            listed = {
+                row[0]
+                for row in csv.reader(io.StringIO(zf.read(record).decode()))
+                if row
+            }
+            present = set(zf.namelist())
+        assert present - listed == set(), f"unrecorded members: {present - listed}"
+        assert listed - present == set(), (
+            f"RECORD names absent files: {listed - present}"
+        )
+
     def test_the_plugin_directory_is_carried_verbatim(self, stage, tmp_path: Path):
         """Both the driver and the Arrow library it links must ship."""
         wheel = self._build(stage, tmp_path / "dist")
@@ -832,6 +861,47 @@ class TestVerifyDiscovery:
 
         with pytest.raises(SystemExit, match="no vendored library directory"):
             verify._core_libs()
+
+
+class TestVerifyDriverPath:
+    """Composing GDAL_DRIVER_PATH without discarding what is already there."""
+
+    def test_the_plugin_directory_comes_first(self):
+        """GDAL takes the first match, so the companion directory must lead."""
+        plugins = Path("/site/companion/gdalplugins")
+
+        composed = verify.driver_path(plugins, "")
+
+        assert composed == str(plugins)
+
+    def test_an_existing_value_is_kept(self):
+        """Overwriting it drops core's own bundled plugins and any inherited directory.
+
+        Test scenario:
+            Assigning the variable outright made unrelated drivers disappear while this
+            script still reported success, which is worse than failing.
+        """
+        existing = os.pathsep.join(["/site/pyramids/gdalplugins", "/opt/gdal/plugins"])
+
+        composed = verify.driver_path(Path("/site/companion/gdalplugins"), existing)
+
+        assert composed.split(os.pathsep) == [
+            str(Path("/site/companion/gdalplugins")),
+            "/site/pyramids/gdalplugins",
+            "/opt/gdal/plugins",
+        ]
+
+    def test_empty_segments_are_dropped(self):
+        """A trailing separator otherwise becomes an empty path GDAL scans as the cwd."""
+        composed = verify.driver_path(Path("/a"), os.pathsep.join(["", "/b", ""]))
+
+        assert composed.split(os.pathsep) == [str(Path("/a")), "/b"]
+
+    def test_a_repeated_directory_appears_once(self):
+        """Re-running must not grow the variable without bound."""
+        composed = verify.driver_path(Path("/a"), os.pathsep.join(["/a", "/b"]))
+
+        assert composed.split(os.pathsep) == [str(Path("/a")), "/b"]
 
 
 class TestVerifyLinkCheck:
