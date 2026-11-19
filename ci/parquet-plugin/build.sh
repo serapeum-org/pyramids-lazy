@@ -283,14 +283,13 @@ done
 # producing a plugin whose RPATH points nowhere.
 CORE_LIBS_NAME="$(basename "$CORE_LIBS")"
 case "$CORE_LIBS_NAME" in
-    .libs) CORE_RPATH='$ORIGIN:$ORIGIN/../../pyramids/.libs' ;;
+    .libs) CORE_RPATH="\$ORIGIN:\$ORIGIN/../../pyramids/.libs" ;;
     *)     CORE_RPATH="\$ORIGIN:\$ORIGIN/../../$CORE_LIBS_NAME" ;;
 esac
 echo "core lib dir: $CORE_LIBS_NAME -> RPATH $CORE_RPATH"
 patchelf --set-rpath "$CORE_RPATH" "$STAGE/ogr_Parquet.so"
 for so in "$STAGE"/libarrow*.so* "$STAGE"/libparquet*.so*; do
-    # shellcheck disable=SC2016  # literal loader token, as above
-    [ -f "$so" ] && patchelf --set-rpath '$ORIGIN' "$so"
+    [ -f "$so" ] && patchelf --set-rpath "\$ORIGIN" "$so"
 done
 strip --strip-unneeded "$STAGE"/*.so* 2>/dev/null || true
 
