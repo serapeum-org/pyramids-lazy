@@ -38,27 +38,6 @@ CURL_OPTS=(-fsSL --retry 5 --retry-delay 5 --retry-connrefused --connect-timeout
 step() { echo; echo "=== $* ==="; }
 die() { echo "ERROR: $*" >&2; exit 1; }
 
-# Pinned source digests. These binaries are published to PyPI, so the sources they are
-# built from are verified rather than trusted: an unpinned tarball means whatever the
-# mirror served that day ends up inside a wheel users install.
-#
-# The GDAL digest is the same one pyramids-core's own ci/source-build/config.sh pins for
-# 3.13.3, confirmed by downloading the tarball and hashing it. The Arrow digest is the
-# value Apache publishes alongside the release, likewise confirmed against the download.
-#
-# An unknown version fails loudly instead of skipping the check -- a silent skip is how an
-# unverified tarball would reach a published wheel.
-sha256_for() {
-    case "$1" in
-        gdal-3.13.3)
-            echo 5e0c388d83da2d686cc00a40272882432cdb54edff43d4af173e532844a0a0ea ;;
-        arrow-26.0.1)
-            echo 1dd1b6701d9de58a4ed82b107539682f46ef6b9e22747e18e03204125c05a987 ;;
-        *)
-            return 1 ;;
-    esac
-}
-
 verify_sha256() {
     # $1 = pin key, $2 = downloaded file
     local expected actual
@@ -82,6 +61,11 @@ fi
 # Resolved before any `cd`: every later use of soname.py runs from $WORK, where a
 # relative $0 would no longer point at this script.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# The pure decision logic lives in lib.sh so `tests/ci/test_parquet_plugin_lib.py` can
+# source it and exercise it directly. Everything needing the filesystem, the network or
+# a compiler stays here.
+# shellcheck source=ci/parquet-plugin/lib.sh
+. "$SCRIPT_DIR/lib.sh"
 step "0. toolchain"
 echo "python=$PY  cmake=$(cmake --version | head -1)  gcc=$(gcc -dumpversion)  jobs=$JOBS"
 echo "target: pyramids-core ${CORE_VERSION:-<latest>} / $PLAT / Arrow $ARROW_VERSION"
@@ -120,7 +104,7 @@ basename "$CORE_WHL" > "$OUTPUT/core-wheel.txt"
 # silently went stale the moment core bumped GDAL, while CORE_VERSION defaults to "latest":
 # the driver would then be compiled from one version's sources and linked against another,
 # which GDAL's standalone build rejects only because it happens to check (STRICT_VERSION_CHECK).
-SONAME_GDAL_VERSION="$(printf '%s' "$CORE_SONAME" | sed -nE 's/.*[.]so[.][0-9]+[.]([0-9]+[.][0-9]+[.][0-9]+)$/\1/p')"
+SONAME_GDAL_VERSION="$(derive_gdal_version "$CORE_SONAME" || true)"
 if [ -z "$GDAL_VERSION" ]; then
     if [ -z "$SONAME_GDAL_VERSION" ]; then
         die "cannot derive a GDAL version from soname '$CORE_SONAME'; pass GDAL_VERSION"
@@ -295,10 +279,7 @@ while [ -n "$pending" ]; do
     pending=""
     while read -r need; do
         [ -n "$need" ] || continue
-        case "$need" in
-            libarrow*|libparquet*) ;;
-            *) continue ;;
-        esac
+        is_vendorable_dep "$need" || continue
         case " $staged " in
             *" $need "*) continue ;;
         esac
@@ -321,10 +302,7 @@ done
 # that renames it (or reverts to the older pyramids/.libs) is followed instead of silently
 # producing a plugin whose RPATH points nowhere.
 CORE_LIBS_NAME="$(basename "$CORE_LIBS")"
-case "$CORE_LIBS_NAME" in
-    .libs) CORE_RPATH="\$ORIGIN:\$ORIGIN/../../pyramids/.libs" ;;
-    *)     CORE_RPATH="\$ORIGIN:\$ORIGIN/../../$CORE_LIBS_NAME" ;;
-esac
+CORE_RPATH="$(rpath_for_core_libs "$CORE_LIBS_NAME")"
 echo "core lib dir: $CORE_LIBS_NAME -> RPATH $CORE_RPATH"
 patchelf --set-rpath "$CORE_RPATH" "$STAGE/ogr_Parquet.so"
 for so in "$STAGE"/libarrow*.so* "$STAGE"/libparquet*.so*; do
@@ -348,10 +326,9 @@ final_needs="$(patchelf --print-needed "$STAGE/ogr_Parquet.so" | tr -d '\r')" \
     || die "patchelf --print-needed failed on the staged plugin"
 echo "DT_NEEDED of the plugin:"
 printf '%s\n' "$final_needs" | sed 's/^/  /'
-case $'\n'"$final_needs"$'\n' in
-    *$'\n'"$CORE_SONAME"$'\n'*) ;;
-    *) die "plugin does not link the wheel's libgdal soname ($CORE_SONAME)" ;;
-esac
+if ! needs_contains "$final_needs" "$CORE_SONAME"; then
+    die "plugin does not link the wheel's libgdal soname ($CORE_SONAME)"
+fi
 case "$final_needs" in
     *libpython*) die "plugin links libpython; it must stay interpreter-independent" ;;
 esac

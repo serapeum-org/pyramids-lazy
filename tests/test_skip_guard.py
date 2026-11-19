@@ -115,6 +115,9 @@ SUITE_REASONS: tuple[tuple[str, bool], ...] = (
     # `tests/ci` cross-checks `soname.py` against a real shared object, which only exists on
     # Linux; the macOS and Windows legs have nothing to read and no install could change that.
     ("ELF is Linux-only here", False),
+    # Deliberately NOT a dependency skip: `bash` is a system tool the lib.sh tests drive,
+    # not an optional dependency of this package, so no install could satisfy it.
+    ("bash unavailable on this machine", False),
 )
 
 
