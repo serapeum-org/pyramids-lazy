@@ -1,4 +1,4 @@
-name: Native Wheels - Build & Verify
+name: Bundle PyPI Wheels
 
 # Builds pyramids-lazy's OWN wheel as a native `py3-none-<platform>` wheel carrying the compiled
 # OGR-Parquet driver + its Arrow runtime in `pyramids_lazy/gdalplugins/`. The driver is linked
@@ -36,7 +36,7 @@ on:
     paths:
       - "ci/parquet-plugin/**"
       - "setup.py"
-      - ".github/workflows/native-wheels.yml"
+      - ".github/workflows/bundle-pypi-wheels.yml"
 
 # The core release the wheels build and link against. Pinned, not "latest": the GDAL version is
 # derived from whatever core serves and only the exact tarballs in build.sh's digest table are
@@ -47,7 +47,7 @@ env:
   PINNED_CORE_VERSION: "0.81.0"
 
 concurrency:
-  group: native-wheels-${{ github.ref }}
+  group: bundle-pypi-wheels-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
