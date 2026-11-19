@@ -20,7 +20,17 @@ on:
   workflow_dispatch:
     inputs:
       core-version:
-        description: "pyramids-core version to build against (blank = latest on PyPI)"
+        description: "pyramids-core version to build against (blank = the pinned default)"
+        required: false
+        default: ""
+        type: string
+      gdal-version:
+        description: "override the GDAL version derived from the core wheel's soname"
+        required: false
+        default: ""
+        type: string
+      arrow-version:
+        description: "Arrow C++ version to build"
         required: false
         default: ""
         type: string
@@ -33,7 +43,18 @@ on:
     paths:
       - "ci/parquet-plugin/**"
       - ".github/workflows/parquet-plugin.yml"
-      - "tests/ci/**"
+      # NOT tests/ci/** -- this workflow never invokes pytest, and tests.yml already runs
+      # those tests on every pull request. Including it spent two ~15-minute docker
+      # builds, Arrow compile included, proving nothing the cheap job had not already.
+
+# The core release pull requests build against. Deliberately pinned rather than "latest on
+# PyPI": the GDAL version is derived from whatever core serves, and only the exact GDAL and
+# Arrow tarballs in build.sh's digest table are accepted. With "latest", the first core
+# release that bumps GDAL would fail this workflow on whatever unrelated PR happened to touch
+# these paths -- a correct refusal landing on the wrong change. Bump this together with the
+# digest table.
+env:
+  PINNED_CORE_VERSION: "0.80.0"
 
 concurrency:
   group: parquet-plugin-${{ github.ref }}
@@ -65,15 +86,22 @@ jobs:
         env:
           # Passed through the environment rather than interpolated into the script: a
           # dispatch input lands in `run:` as text the shell would then parse.
-          CORE_VERSION: ${{ inputs.core-version }}
+          CORE_VERSION: ${{ inputs.core-version || env.PINNED_CORE_VERSION }}
+          GDAL_VERSION: ${{ inputs.gdal-version }}
+          ARROW_VERSION: ${{ inputs.arrow-version || '26.0.1' }}
           PLAT: ${{ matrix.plat }}
           IMAGE: ${{ matrix.image }}
         run: |
           set -euo pipefail
           mkdir -p out dist
+          # /src is mounted read-only: the build reads the scripts and never needs to
+          # write into the checkout, and it runs as root in the container. /out stays
+          # writable.
           docker run --rm \
-            -v "$PWD:/src" -v "$PWD/out:/out" \
+            -v "$PWD:/src:ro" -v "$PWD/out:/out" \
             -e CORE_VERSION="$CORE_VERSION" \
+            -e GDAL_VERSION="$GDAL_VERSION" \
+            -e ARROW_VERSION="$ARROW_VERSION" \
             -e PLAT="$PLAT" \
             -e OUTPUT=/out \
             "$IMAGE" \
@@ -106,6 +134,16 @@ jobs:
             --core-requires "pyramids-core==${CORE_VER}" \
             --outdir dist
 
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          # Must match build.sh's PYTAG (cp312), which selects the core wheel the plugin
+          # is linked against. Verifying on the runner image's default python instead
+          # meant an image bump could install a different core wheel, whose vendored
+          # libgdal may carry a different hashed soname -- `check_link` would then fail
+          # correctly for an infrastructure reason, which is the kind of red that gets
+          # waved through.
+          python-version: "3.12"
+
       - name: Verify against a clean install
         # Runs on BOTH arches, each verifying its own wheel: a runner can only install the
         # core wheel for its own architecture, so cross-checking is impossible and the
@@ -119,6 +157,7 @@ jobs:
             echo "expected exactly one wheel in dist/, found ${#wheels[@]}" >&2
             exit 1
           fi
+          python3 -VV
           python3 -m venv /tmp/venv
           /tmp/venv/bin/python -m pip install -q --upgrade pip
           # Installs pyramids-core too, via the Requires-Dist pin the packaging step set.
@@ -139,14 +178,19 @@ jobs:
     name: report
     needs: build
     # Not `always()`: with no artifacts to download this job failed too, reporting one
-    # broken build as two red checks and hiding which one actually mattered.
-    if: needs.build.result == 'success'
+    # broken build as two red checks and hiding which one actually mattered. Not
+    # `== 'success'` either -- that is the implicit default, and with `fail-fast: false`
+    # it suppressed the summary for the arch that DID build whenever the other failed.
+    if: needs.build.result != 'skipped'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: artifacts
+        # A failed arch uploads nothing, so with one arch broken there may be no
+        # artifacts at all; that must not fail the summary on top of the build.
+        continue-on-error: true
       - name: Summarise what was produced
         run: |
           {
@@ -154,8 +198,9 @@ jobs:
             echo
             echo "| wheel | size | linked libgdal |"
             echo "|---|---|---|"
+            shopt -s nullglob
             for d in artifacts/*/; do
-              whl=$(find "$d" -name '*.whl' | head -1)
+              whl="$(find "$d" -name '*.whl' -print -quit)"
               [ -n "$whl" ] || continue
               soname=$(cat "$d/out/core-soname.txt" 2>/dev/null || echo "?")
               size=$(du -h "$whl" | cut -f1)
