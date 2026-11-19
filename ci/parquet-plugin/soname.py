@@ -63,6 +63,18 @@ def _dynamic_entries(data: bytes) -> tuple[list[tuple[int, int]], int]:
         raise ValueError("no PT_DYNAMIC segment")
 
     def to_offset(vaddr: int) -> int:
+        """Translate a virtual address to a file offset using the PT_LOAD segments.
+
+        Args:
+            vaddr: A virtual address taken from a dynamic entry.
+
+        Returns:
+            int: The corresponding offset into the file.
+
+        Raises:
+            ValueError: If no loadable segment covers ``vaddr`` — a corrupt object, which must
+                be rejected rather than read from the wrong place.
+        """
         for seg_vaddr, seg_offset, seg_size in loads:
             if seg_vaddr <= vaddr < seg_vaddr + seg_size:
                 return seg_offset + (vaddr - seg_vaddr)
@@ -83,14 +95,36 @@ def _dynamic_entries(data: bytes) -> tuple[list[tuple[int, int]], int]:
 
 
 def _string(data: bytes, strtab_offset: int, index: int) -> str:
-    """Read the NUL-terminated string at ``index`` within the dynamic string table."""
+    """Read the NUL-terminated string at ``index`` within the dynamic string table.
+
+    Args:
+        data: The whole ELF file.
+        strtab_offset: File offset of ``DT_STRTAB``.
+        index: Byte index into the string table, as a dynamic entry stores it.
+
+    Returns:
+        str: The decoded string.
+    """
     start = strtab_offset + index
     end = data.index(b"\x00", start)
     return data[start:end].decode()
 
 
 def soname(path: str) -> str | None:
-    """Return the ``DT_SONAME`` of ``path``, or ``None`` when it declares none."""
+    """Return the ``DT_SONAME`` of ``path``, or ``None`` when it declares none.
+
+    A GDAL driver plugin declares none, so ``None`` is a normal answer and not an error.
+
+    Args:
+        path: Path to an ELF64 shared object.
+
+    Returns:
+        str | None: The declared soname, or ``None``.
+
+    Raises:
+        ValueError: If ``path`` is not an ELF64 object with a readable dynamic section.
+        OSError: If ``path`` cannot be read.
+    """
     data = open(path, "rb").read()
     entries, strtab = _dynamic_entries(data)
     index = next((value for tag, value in entries if tag == _DT_SONAME), None)
@@ -98,14 +132,33 @@ def soname(path: str) -> str | None:
 
 
 def needed(path: str) -> list[str]:
-    """Return every ``DT_NEEDED`` of ``path``, in declaration order."""
+    """Return every ``DT_NEEDED`` of ``path``, in declaration order.
+
+    Args:
+        path: Path to an ELF64 shared object.
+
+    Returns:
+        list[str]: The dependency names, empty when the object declares none.
+
+    Raises:
+        ValueError: If ``path`` is not an ELF64 object with a readable dynamic section.
+        OSError: If ``path`` cannot be read.
+    """
     data = open(path, "rb").read()
     entries, strtab = _dynamic_entries(data)
     return [_string(data, strtab, value) for tag, value in entries if tag == _DT_NEEDED]
 
 
 def main(argv: list[str]) -> int:
-    """Print the soname, or with ``--needed`` the dependency list."""
+    """Print the soname, or with ``--needed`` the dependency list.
+
+    Args:
+        argv: Process argv. ``--needed`` switches to listing dependencies.
+
+    Returns:
+        int: ``0`` on success, ``1`` when the value is absent or the file unreadable, ``2`` for
+            a usage error. ``build.sh`` runs under ``set -e``, so the code is the signal.
+    """
     args = argv[1:]
     want_needed = False
     if args and args[0] == "--needed":

@@ -34,7 +34,14 @@ def _plugin_dir() -> Path:
     """Locate the installed plugin directory without importing the package.
 
     Mirrors what pyramids-core's own discovery does -- `find_spec` only -- so this check cannot
-    pass by a route the real consumer does not use.
+    pass by a route the real consumer does not use. Importing the companion during discovery
+    would drag its dependency tree into `import pyramids`, which is exactly what core avoids.
+
+    Returns:
+        pathlib.Path: The installed ``gdalplugins`` directory.
+
+    Raises:
+        SystemExit: If the plugin distribution is not installed.
     """
     spec = importlib.util.find_spec("pyramids_lazy_parquet")
     if spec is None or not spec.submodule_search_locations:
@@ -43,7 +50,15 @@ def _plugin_dir() -> Path:
 
 
 def _core_libs() -> Path:
-    """Locate the installed core wheel's private native library directory."""
+    """Locate the installed core wheel's private native library directory.
+
+    Returns:
+        pathlib.Path: ``pyramids_core.libs`` (or the older ``pyramids/.libs``).
+
+    Raises:
+        SystemExit: If pyramids-core is absent, or is a source/editable install with no
+            vendored libraries to link against.
+    """
     spec = importlib.util.find_spec("pyramids")
     if spec is None or not spec.submodule_search_locations:
         raise SystemExit("pyramids-core is not installed")
@@ -55,7 +70,22 @@ def _core_libs() -> Path:
 
 
 def check_link(plugins: Path) -> str:
-    """Assertion 1 + 2: the plugin links the installed libgdal, and no interpreter."""
+    """Assertion 1 + 2: the plugin links the installed libgdal, and no interpreter.
+
+    This is the check neither artefact can make alone: a plugin wheel and a core wheel can each
+    be valid and still be unusable together, because the plugin names a soname the installed
+    core does not provide.
+
+    Args:
+        plugins: The installed ``gdalplugins`` directory.
+
+    Returns:
+        str: The soname of the libgdal actually installed.
+
+    Raises:
+        SystemExit: If no libgdal is present, the sonames disagree, or an object links
+            ``libpython``.
+    """
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from soname import needed, soname  # noqa: PLC0415 - sibling script
 
@@ -85,7 +115,18 @@ def check_link(plugins: Path) -> str:
 
 
 def check_driver(plugins: Path, via_entry_point: bool) -> None:
-    """Assertions 3 + 4: GDAL registers the driver, and a .parquet round-trips."""
+    """Assertions 3 + 4: GDAL registers the driver, and a .parquet round-trips.
+
+    Args:
+        plugins: The installed ``gdalplugins`` directory.
+        via_entry_point: Rely on core's ``pyramids.gdal_plugin_path`` seam instead of setting
+            ``GDAL_DRIVER_PATH`` directly. The seam is unreleased as of 2026-11-19, so the
+            default is the explicit route, which works against any released core.
+
+    Raises:
+        SystemExit: If the driver does not register, or the round-trip does not return the
+            features that were written.
+    """
     if not via_entry_point:
         # A released core forces GDAL_DRIVER_PATH to its own bundled dir unless this is set;
         # the companion seam that would append our directory is not in a release yet.
@@ -133,7 +174,14 @@ def check_driver(plugins: Path, via_entry_point: bool) -> None:
 
 
 def main(argv: list[str]) -> int:
-    """Run every assertion, printing what was checked."""
+    """Run every assertion, printing what was checked.
+
+    Args:
+        argv: Process argv.
+
+    Returns:
+        int: ``0`` when every assertion passed; failures raise ``SystemExit``.
+    """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--via-entry-point",

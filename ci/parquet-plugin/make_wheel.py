@@ -51,7 +51,16 @@ __all__: list[str] = []
 
 
 def _hash_and_size(data: bytes) -> tuple[str, int]:
-    """Return the ``sha256=<urlsafe-b64>`` digest and byte length, as RECORD wants them."""
+    """Return the ``sha256=<urlsafe-b64>`` digest and byte length, as RECORD wants them.
+
+    Args:
+        data: The archive member's bytes.
+
+    Returns:
+        tuple[str, int]: ``("sha256=<digest>", length)``. pip rejects a wheel whose RECORD
+            disagrees with its contents, so both must be computed from the bytes actually
+            written.
+    """
     digest = hashlib.sha256(data).digest()
     encoded = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
     return f"sha256={encoded}", len(data)
@@ -63,6 +72,17 @@ def _metadata(version: str, core_requires: str, core_wheel: str, soname: str) ->
     The description is not marketing copy: it records which core wheel the binaries were linked
     against and the soname they resolve, because a user debugging a load failure needs exactly
     those two facts and they are otherwise invisible.
+
+    Args:
+        version: Version to stamp on the distribution.
+        core_requires: The ``Requires-Dist`` pin, e.g. ``"pyramids-core==0.81.0"``. Pinned to
+            the exact release the binaries were linked against, since a different core build
+            may carry a different libgdal soname.
+        core_wheel: File name of the core wheel the plugin was built against.
+        soname: The libgdal soname the plugin resolves.
+
+    Returns:
+        str: The complete ``METADATA`` document.
     """
     summary = "GDAL OGR Parquet driver plugin for pyramids-core"
     description = (
@@ -100,6 +120,9 @@ def _assert_interpreter_independent(stage: Path) -> list[str]:
     anything here linked ``libpython`` that promise would be false and the wheel would break on a
     different CPython, so this is checked rather than assumed.
 
+    Args:
+        stage: The staged ``gdalplugins`` directory whose objects are inspected.
+
     Returns:
         list[str]: The staged shared objects, for logging.
 
@@ -123,7 +146,20 @@ def _assert_interpreter_independent(stage: Path) -> list[str]:
 
 
 def build(args: argparse.Namespace) -> Path:
-    """Write the wheel and return its path."""
+    """Write the wheel and return its path.
+
+    Args:
+        args: Parsed options — ``stage``, ``version``, ``plat``, ``core_requires``, ``outdir``.
+            ``plat`` is the platform tag of the *core wheel* the plugin was linked against, not
+            the build host's, so an aarch64 plugin cannot be tagged for x86_64.
+
+    Returns:
+        pathlib.Path: The wheel that was written.
+
+    Raises:
+        SystemExit: If the staging directory is missing, the driver is absent from it, or any
+            staged object links ``libpython``.
+    """
     stage = Path(args.stage)
     plugins = stage / "gdalplugins"
     if not plugins.is_dir():
@@ -146,6 +182,13 @@ def build(args: argparse.Namespace) -> Path:
     records: list[tuple[str, str, int]] = []
 
     def write(zf: zipfile.ZipFile, arcname: str, data: bytes) -> None:
+        """Add one member to the wheel, recording its digest and size for RECORD.
+
+        Args:
+            zf: The open wheel archive.
+            arcname: Path of the member inside the wheel.
+            data: The member's bytes.
+        """
         zf.writestr(arcname, data)
         digest, size = _hash_and_size(data)
         records.append((arcname, digest, size))
@@ -187,7 +230,14 @@ def build(args: argparse.Namespace) -> Path:
 
 
 def main(argv: list[str]) -> int:
-    """Parse arguments, build the wheel, report what landed in it."""
+    """Parse arguments, build the wheel, report what landed in it.
+
+    Args:
+        argv: Process argv.
+
+    Returns:
+        int: ``0`` on success; failures raise ``SystemExit`` from :func:`build`.
+    """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--stage", required=True, help="output dir written by build.sh")
     parser.add_argument("--version", required=True, help="distribution version")
