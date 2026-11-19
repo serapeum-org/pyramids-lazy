@@ -13,7 +13,6 @@ from collections.abc import Callable
 from typing import Any
 
 import numpy as np
-
 from pyramids.lazy_support import is_lazy
 
 from pyramids_lazy._optional import lazy_hint

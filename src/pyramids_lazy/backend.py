@@ -250,6 +250,33 @@ class LazyComputeBackend:
 
         return map_blocks_lazy(func, source, **kwargs)
 
+    def read_zarr_cube(self, store: Any, **kwargs: Any) -> Any:
+        """Back the Zarr-backed arm of ``DatasetCollection.data`` (duck-typed).
+
+        See :func:`pyramids_lazy._collection_cube.read_zarr_cube`.
+        """
+        from pyramids_lazy._collection_cube import read_zarr_cube
+
+        return read_zarr_cube(store, **kwargs)
+
+    def stack_lazy(self, arrays: Any, *, axis: int = 0) -> Any:
+        """Back ``DatasetCollection.data``'s time-axis stack (duck-typed).
+
+        See :func:`pyramids_lazy._collection_cube.stack_lazy`.
+        """
+        from pyramids_lazy._collection_cube import stack_lazy
+
+        return stack_lazy(arrays, axis=axis)
+
+    def from_array_lazy(self, array: Any, *, chunks: Any) -> Any:
+        """Back the in-memory arm of ``DatasetCollection.data`` (duck-typed).
+
+        See :func:`pyramids_lazy._collection_cube.from_array_lazy`.
+        """
+        from pyramids_lazy._collection_cube import from_array_lazy
+
+        return from_array_lazy(array, chunks=chunks)
+
 
 #: The singleton core resolves through the entry point. A single object, per the Protocol contract.
 backend = LazyComputeBackend()
