@@ -492,6 +492,10 @@ class TestWheelAssembly:
         (root / "core-wheel.txt").write_text(
             "pyramids_core-0.80.0-cp312-cp312-manylinux_2_28_x86_64.whl\n"
         )
+        licenses = root / "licenses"
+        licenses.mkdir()
+        (licenses / "GDAL-LICENSE.txt").write_text("GDAL license text\n")
+        (licenses / "Arrow-NOTICE.txt").write_text("Apache Arrow NOTICE\n")
         return root
 
     def _build(self, stage: Path, outdir: Path) -> Path:
@@ -605,20 +609,88 @@ class TestWheelAssembly:
         with pytest.raises(SystemExit, match="ogr_Parquet.so missing"):
             self._build(root, tmp_path / "dist")
 
-    def test_absent_provenance_files_do_not_break_the_build(
+    @pytest.mark.parametrize("missing", ["core-soname.txt", "core-wheel.txt"])
+    def test_absent_provenance_stops_the_build(self, stage, tmp_path: Path, missing):
+        """Which core build the binaries can load is the one fact that must not be lost.
+
+        Test scenario:
+            These two files are the only record of the targeted core wheel and its
+            libgdal soname. Defaulting them to "unknown" produced a publishable wheel
+            that nobody could diagnose a load failure against, so an incomplete build
+            must now fail instead.
+        """
+        (stage / missing).unlink()
+
+        with pytest.raises(SystemExit, match=missing):
+            self._build(stage, tmp_path / "dist")
+
+    @pytest.mark.parametrize("empty", ["core-soname.txt", "core-wheel.txt"])
+    def test_empty_provenance_stops_the_build(self, stage, tmp_path: Path, empty):
+        """A present-but-empty file means build.sh died midway; treat it as missing."""
+        (stage / empty).write_text("   \n")
+
+        with pytest.raises(SystemExit, match=empty):
+            self._build(stage, tmp_path / "dist")
+
+    def test_the_vendored_licences_are_carried_and_declared(
         self, stage, tmp_path: Path
     ):
-        """`build.sh` writes them, but the packager must not crash without them."""
-        (stage / "core-soname.txt").unlink()
-        (stage / "core-wheel.txt").unlink()
-
+        """Apache-2.0 requires Arrow's NOTICE to travel with its redistributed binaries."""
         wheel = self._build(stage, tmp_path / "dist")
 
         with zipfile.ZipFile(wheel) as zf:
-            text = zf.read(
-                next(n for n in zf.namelist() if n.endswith("/METADATA"))
+            names = zf.namelist()
+            metadata = zf.read(
+                next(n for n in names if n.endswith("/METADATA"))
             ).decode()
-        assert "unknown" in text
+        assert any(n.endswith("/licenses/Arrow-NOTICE.txt") for n in names)
+        assert any(n.endswith("/licenses/GDAL-LICENSE.txt") for n in names)
+        assert "License-File: licenses/Arrow-NOTICE.txt" in metadata
+        assert "License-File: licenses/GDAL-LICENSE.txt" in metadata
+
+    def test_a_stage_without_licences_is_refused(self, stage, tmp_path: Path):
+        """Shipping the binaries without their terms is a packaging error, not a nicety."""
+        for item in (stage / "licenses").iterdir():
+            item.unlink()
+
+        with pytest.raises(SystemExit, match="licence"):
+            self._build(stage, tmp_path / "dist")
+
+    def test_the_wheel_is_byte_identical_across_builds(self, stage, tmp_path: Path):
+        """Two builds of identical inputs must agree, so a rebuild is verifiable.
+
+        Test scenario:
+            zipfile stamps members with the build clock by default, which made every
+            rebuild differ and left no way to confirm a published wheel came from the
+            inputs it claims.
+        """
+        first = self._build(stage, tmp_path / "a")
+        second = self._build(stage, tmp_path / "b")
+
+        assert first.read_bytes() == second.read_bytes()
+
+    def test_the_staged_objects_are_world_readable(self, stage, tmp_path: Path):
+        """A 0o600 shared object is unreadable to other users of a shared prefix."""
+        wheel = self._build(stage, tmp_path / "dist")
+
+        with zipfile.ZipFile(wheel) as zf:
+            modes = {
+                info.filename: (info.external_attr >> 16) & 0o777
+                for info in zf.infolist()
+            }
+        driver = next(n for n in modes if n.endswith("ogr_Parquet.so"))
+        metadata = next(n for n in modes if n.endswith("/METADATA"))
+        assert modes[driver] == 0o755
+        assert modes[metadata] == 0o644
+
+    def test_the_dist_info_is_named_for_the_distribution(self, stage, tmp_path: Path):
+        """dist-info takes the normalised *distribution* name, not the import name."""
+        wheel = self._build(stage, tmp_path / "dist")
+
+        with zipfile.ZipFile(wheel) as zf:
+            dist_infos = {n.split("/")[0] for n in zf.namelist() if ".dist-info/" in n}
+        expected = make_wheel.DISTRIBUTION.replace("-", "_") + "-0.1.0.dist-info"
+        assert dist_infos == {expected}
 
 
 class TestMakeWheelCli:
@@ -630,6 +702,10 @@ class TestMakeWheelCli:
         plugins = root / "gdalplugins"
         plugins.mkdir(parents=True)
         (plugins / "ogr_Parquet.so").write_bytes(_elf(needed=("libgdal-abc.so.39",)))
+        (root / "core-soname.txt").write_text("libgdal-abc.so.39\n")
+        (root / "core-wheel.txt").write_text("pyramids_core-0.80.0-x.whl\n")
+        (root / "licenses").mkdir()
+        (root / "licenses" / "GDAL-LICENSE.txt").write_text("text\n")
 
         code = make_wheel.main(
             [
@@ -640,6 +716,8 @@ class TestMakeWheelCli:
                 "0.2.0",
                 "--plat",
                 "manylinux_2_28_aarch64",
+                "--core-requires",
+                "pyramids-core==0.80.0",
                 "--outdir",
                 str(tmp_path / "dist"),
             ]
@@ -649,6 +727,59 @@ class TestMakeWheelCli:
         assert code == 0
         assert "py3-none-manylinux_2_28_aarch64.whl" in out
         assert "ogr_Parquet.so" in out
+
+    @pytest.mark.parametrize("plat", ["manylinux 2 28", "MANYLINUX_2_28_X86_64", ""])
+    def test_a_malformed_platform_tag_is_refused(self, tmp_path: Path, plat):
+        """A bad tag yields a filename pip silently will not match -- so reject it here."""
+        with pytest.raises(SystemExit):
+            make_wheel.main(
+                [
+                    "make_wheel.py",
+                    "--stage",
+                    str(tmp_path),
+                    "--version",
+                    "0.1.0",
+                    "--plat",
+                    plat,
+                    "--core-requires",
+                    "pyramids-core==0.80.0",
+                ]
+            )
+
+    @pytest.mark.parametrize("version", ["0.1.0-dev", "v0.1.0", "not-a-version"])
+    def test_a_malformed_version_is_refused(self, tmp_path: Path, version):
+        """A dash in the version splits the wheel filename into the wrong fields."""
+        with pytest.raises(SystemExit):
+            make_wheel.main(
+                [
+                    "make_wheel.py",
+                    "--stage",
+                    str(tmp_path),
+                    "--version",
+                    version,
+                    "--plat",
+                    "manylinux_2_28_x86_64",
+                    "--core-requires",
+                    "pyramids-core==0.80.0",
+                ]
+            )
+
+    def test_an_unpinned_core_requirement_is_refused(self, tmp_path: Path):
+        """--core-requires is mandatory: an unpinned wheel installs beside a core it
+        cannot load.
+        """
+        with pytest.raises(SystemExit):
+            make_wheel.main(
+                [
+                    "make_wheel.py",
+                    "--stage",
+                    str(tmp_path),
+                    "--version",
+                    "0.1.0",
+                    "--plat",
+                    "manylinux_2_28_x86_64",
+                ]
+            )
 
 
 class TestVerifyDiscovery:

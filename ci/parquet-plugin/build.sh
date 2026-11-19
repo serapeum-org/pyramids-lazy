@@ -115,7 +115,9 @@ basename "$CORE_WHL" > "$OUTPUT/core-wheel.txt"
 # which GDAL's standalone build rejects only because it happens to check (STRICT_VERSION_CHECK).
 SONAME_GDAL_VERSION="$(printf '%s' "$CORE_SONAME" | sed -nE 's/.*[.]so[.][0-9]+[.]([0-9]+[.][0-9]+[.][0-9]+)$/\1/p')"
 if [ -z "$GDAL_VERSION" ]; then
-    [ -n "$SONAME_GDAL_VERSION" ]         || die "cannot derive a GDAL version from soname '$CORE_SONAME'; pass GDAL_VERSION"
+    if [ -z "$SONAME_GDAL_VERSION" ]; then
+        die "cannot derive a GDAL version from soname '$CORE_SONAME'; pass GDAL_VERSION"
+    fi
     GDAL_VERSION="$SONAME_GDAL_VERSION"
     echo "derived GDAL version: $GDAL_VERSION (from the soname)"
 elif [ -n "$SONAME_GDAL_VERSION" ] && [ "$GDAL_VERSION" != "$SONAME_GDAL_VERSION" ]; then
@@ -140,8 +142,18 @@ GDAL_SRC="$WORK/gdal-${GDAL_VERSION}"
 GEN_INCLUDE="$WORK/gdal-include"
 mkdir -p "$GEN_INCLUDE"
 cp "$GDAL_SRC/gcore/gdal_version.h.in" "$GEN_INCLUDE/gdal_version.h"
-grep -q 'GDAL_RELEASE_NAME' "$GEN_INCLUDE/gdal_version.h"     || die "generated gdal_version.h carries no GDAL_RELEASE_NAME for FindGDAL to read"
+if ! grep -q 'GDAL_RELEASE_NAME' "$GEN_INCLUDE/gdal_version.h"; then
+    die "generated gdal_version.h has no GDAL_RELEASE_NAME for FindGDAL to read"
+fi
 echo "generated $GEN_INCLUDE/gdal_version.h"
+
+# Apache-2.0 requires the NOTICE file to travel with any redistribution of Arrow, and the
+# wheel ships Arrow and GDAL-derived binaries. Taken from the digest-verified tarballs, so
+# the licence text matches the sources that were actually built.
+LICENSE_DIR="$OUTPUT/licenses"
+mkdir -p "$LICENSE_DIR"
+cp "$GDAL_SRC/LICENSE.TXT" "$LICENSE_DIR/GDAL-LICENSE.txt" \
+    || die "GDAL LICENSE.TXT missing from the source tarball"
 
 step "3. minimal Arrow $ARROW_VERSION (only what the driver links)"
 # downloads.apache.org, not the GitHub archive tarball: GitHub generates archives on the
@@ -153,6 +165,10 @@ verify_sha256 "arrow-${ARROW_VERSION}" arrow.tar.gz
 tar -xzf arrow.tar.gz
 ARROW_SRC="$WORK/apache-arrow-${ARROW_VERSION}/cpp"
 [ -d "$ARROW_SRC" ] || die "unexpected Arrow tarball layout: no $ARROW_SRC"
+cp "$WORK/apache-arrow-${ARROW_VERSION}/LICENSE.txt" "$LICENSE_DIR/Arrow-LICENSE.txt" \
+    || die "Arrow LICENSE.txt missing from the source tarball"
+cp "$WORK/apache-arrow-${ARROW_VERSION}/NOTICE.txt" "$LICENSE_DIR/Arrow-NOTICE.txt" \
+    || die "Arrow NOTICE.txt missing from the source tarball"
 mkdir -p "$ARROW_SRC/build" && cd "$ARROW_SRC/build"
 # -D_GNU_SOURCE: glibc 2.28 (the manylinux_2_28 floor) declares reallocarray only under it, and
 # GCC 14 makes an implicit declaration a hard error. Arrow's bundled uriparser calls it, and
