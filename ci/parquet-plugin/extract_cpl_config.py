@@ -27,6 +27,8 @@ import sys
 import tarfile
 import zipfile
 
+# Printed on the usage path. A literal rather than a slice of `__doc__`, which `python -OO`
+# strips -- the same trap that made the other two scripts crash on `--help`.
 _SUMMARY = (
     "Extract GDAL's generated cpl_config.h from a conda-forge libgdal-core package."
 )
@@ -180,7 +182,7 @@ def main(argv: list[str]) -> int:
     """
     if len(argv) != 3:
         print(
-            "usage: extract_cpl_config.py <libgdal-core.conda> <output-dir>",
+            f"{_SUMMARY}\nusage: extract_cpl_config.py <libgdal-core.conda> <output-dir>",
             file=sys.stderr,
         )
         return 2

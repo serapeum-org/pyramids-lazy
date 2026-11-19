@@ -269,6 +269,14 @@ class TestCli:
         assert "SIZEOF_VOIDP 8" in out
         assert "VSI_STAT64_T stat64" in out
 
+    def test_the_usage_line_names_what_the_script_does(self, capsys):
+        """`_SUMMARY` was dead: this script has no argparse, so nothing consumed it."""
+        code = extract_mod.main(["extract_cpl_config.py"])
+
+        err = capsys.readouterr().err
+        assert code == 2
+        assert extract_mod._SUMMARY in err
+
     def test_wrong_argument_count_is_a_usage_error(self, tmp_path: Path, capsys):
         """build.sh runs under `set -e`, so the exit code is the signal."""
         code = extract_mod.main(["extract_cpl_config.py", str(tmp_path)])

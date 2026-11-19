@@ -350,13 +350,13 @@ def _round_trip(driver, target: Path) -> None:
         target: Path to write the ``.parquet`` to.
 
     Raises:
-        SystemExit: If the file cannot be reopened, the layer reports a feature count other
-            than five, ``datasource_to_gdf`` produces a different number of rows, or those
-            rows reach pyramids without geometry.
-        RuntimeError: If ``driver.CopyDataSource`` cannot write ``target``. Under
-            ``gdal.UseExceptions()`` the write raises, and it is deliberately not wrapped: a
-            driver that registered but cannot write is a GDAL-level fault whose own message
-            says more than a rephrasing would.
+        SystemExit: If ``target`` cannot be written, the file cannot be reopened, the layer
+            reports a feature count other than five, ``datasource_to_gdf`` produces a
+            different number of rows, or those rows reach pyramids without geometry.
+            GDAL's own message is carried through for the write failure, since a driver
+            that registered but cannot write is a GDAL-level fault and its text says more
+            than a rephrasing would -- but it still arrives as an exit rather than a
+            traceback, because that is this script's contract.
     """
     from osgeo import ogr  # noqa: PLC0415
 
@@ -366,7 +366,13 @@ def _round_trip(driver, target: Path) -> None:
         feature = ogr.Feature(layer.GetLayerDefn())
         feature.SetGeometry(ogr.CreateGeometryFromWkt(f"POINT({index} {index})"))
         layer.CreateFeature(feature)
-    driver.CopyDataSource(source, str(target))
+    # Wrapped for the same reason as `ogr.Open` below: `gdal.UseExceptions()` turns OGR
+    # failures into exceptions, and an unhandled one ends this script in a traceback
+    # instead of the diagnosis it exists to produce. GDAL's message is kept verbatim.
+    try:
+        driver.CopyDataSource(source, str(target))
+    except RuntimeError as exc:
+        raise SystemExit(f"could not write {target}: {exc}") from exc
     print(f"  wrote               : {target.name} ({target.stat().st_size} bytes)")
 
     # `gdal.UseExceptions()` switches OGR to exceptions too, so a failure here arrives as
