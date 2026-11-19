@@ -227,6 +227,29 @@ class LazyComputeBackend:
 
         return focal_lazy(source, guarded, depth=depth, dtype=dtype)
 
+    def read_raster_array_lazy(self, read_chunk: Any, **kwargs: Any) -> Any:
+        """Back ``Dataset.read_array(chunks=)`` (and the collection cube's per-timestep reader).
+
+        Additive, duck-typed capability reached via ``getattr`` — not a ``ComputeBackend`` Protocol
+        member — that assembles the dask graph from the pieces core prepared (manager, lock, shape,
+        dtype) over the pickle-safe ``_read_chunk`` reader. Distinct from :meth:`read_array_lazy`,
+        which reads an MDArray *variable* (NetCDF); this reads classic raster bands. See
+        :func:`pyramids_lazy._raster_read.read_raster_array_lazy`.
+        """
+        from pyramids_lazy._raster_read import read_raster_array_lazy
+
+        return read_raster_array_lazy(read_chunk, **kwargs)
+
+    def map_blocks_lazy(self, func: Any, source: Any, **kwargs: Any) -> Any:
+        """Back ``Dataset.map_blocks(chunks=)``.
+
+        Additive, duck-typed capability reached via ``getattr``. See
+        :func:`pyramids_lazy._raster_read.map_blocks_lazy`.
+        """
+        from pyramids_lazy._raster_read import map_blocks_lazy
+
+        return map_blocks_lazy(func, source, **kwargs)
+
 
 #: The singleton core resolves through the entry point. A single object, per the Protocol contract.
 backend = LazyComputeBackend()
