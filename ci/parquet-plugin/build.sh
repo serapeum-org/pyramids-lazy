@@ -151,6 +151,28 @@ for sub in gcore port ogr ogr/ogrsf_frmts alg apps; do
     find "$GDAL_SRC/$sub" -maxdepth 1 -name '*.h' -exec cp -n {} "$GEN_INCLUDE/" \;
 done
 cp "$GDAL_SRC/gcore/gdal_version.h.in" "$GEN_INCLUDE/gdal_version.h"
+
+# `cpl_config.h` is the other generated header, and the one that stops the *compile* rather
+# than the configure: every GDAL source includes it via cpl_port.h. It records ~40 platform
+# probe results, among them SIZEOF_VOIDP and the VSI_*64 large-file macros, which decide
+# struct layouts the plugin shares with libgdal -- so writing it by hand would risk a plugin
+# that compiles and then misbehaves. Taken from conda-forge's libgdal-core for the SAME GDAL
+# version and architecture, digest-pinned, and used for this one header only; no binary from
+# that package goes anywhere near the wheel.
+CONDA_SUBDIR="$(conda_subdir_for_plat "$PLAT")" \
+    || die "no conda subdir known for $PLAT; cpl_config.h cannot be fetched for it yet"
+CONDA_PKG="libgdal-core-${GDAL_VERSION}-$([ "$CONDA_SUBDIR" = "linux-64" ] \
+    && echo hfbddf44_11 || echo hf8750bb_11).conda"
+curl "${CURL_OPTS[@]}" -o "$WORK/libgdal-core.conda" \
+    "https://conda.anaconda.org/conda-forge/${CONDA_SUBDIR}/${CONDA_PKG}" \
+    || die "could not download $CONDA_PKG"
+verify_sha256 "libgdal-core-${GDAL_VERSION}-${CONDA_SUBDIR}" "$WORK/libgdal-core.conda"
+# python < 3.14 has no stdlib zstd decoder and the .conda format is a zstd tarball.
+"$PY" -c 'import compression.zstd' 2>/dev/null \
+    || "$PY" -m pip install --quiet "zstandard==0.23.0" \
+    || die "could not install the zstandard decoder"
+"$PY" "$SCRIPT_DIR/extract_cpl_config.py" "$WORK/libgdal-core.conda" "$GEN_INCLUDE" \
+    || die "could not extract cpl_config.h"
 collisions="$(for sub in gcore port ogr ogr/ogrsf_frmts alg apps; do
         find "$GDAL_SRC/$sub" -maxdepth 1 -name '*.h' -printf '%f\n'
 done | sort | uniq -d)"
@@ -160,7 +182,8 @@ if [ -n "$collisions" ]; then
 fi
 header_count="$(find "$GEN_INCLUDE" -name '*.h' | wc -l)"
 echo "flattened $header_count GDAL headers into $GEN_INCLUDE (no basename collisions)"
-for required in gdal.h gdal_priv.h ogrsf_frmts.h ogr_api.h cpl_port.h cpl_conv.h; do
+for required in gdal.h gdal_priv.h ogrsf_frmts.h ogr_api.h cpl_port.h cpl_conv.h \
+    cpl_config.h gdal_version.h; do
     if [ ! -f "$GEN_INCLUDE/$required" ]; then
         die "$required missing from the flattened include dir"
     fi

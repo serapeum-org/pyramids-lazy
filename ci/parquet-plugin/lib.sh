@@ -18,7 +18,9 @@
 #
 # The GDAL digest is the one pyramids-core's own ci/source-build/config.sh pins for 3.13.3,
 # confirmed by downloading the tarball and hashing it. The Arrow digest is the value Apache
-# publishes alongside the release, likewise confirmed against the download.
+# publishes alongside the release, likewise confirmed against the download. The libgdal-core
+# digests are conda-forge's, each confirmed against the downloaded package; that package is
+# used for one generated header only (see extract_cpl_config.py), never for a binary.
 #
 # An unknown version returns non-zero so the caller fails loudly instead of skipping the check
 # -- a silent skip is how an unverified tarball would reach a published wheel.
@@ -29,6 +31,12 @@ sha256_for() {
             ;;
         arrow-26.0.1)
             echo 1dd1b6701d9de58a4ed82b107539682f46ef6b9e22747e18e03204125c05a987
+            ;;
+        libgdal-core-3.13.3-linux-64)
+            echo 34eb1e43f5731ea4d8af7a0ac040222d0594d3d17ef04b5e49634705ed832688
+            ;;
+        libgdal-core-3.13.3-linux-aarch64)
+            echo f0f7a82c99978abec4d4992e53ca8739a372824bd4d4afbee2b54dbd1ea9c3cc
             ;;
         *)
             return 1
@@ -91,6 +99,22 @@ needs_contains() {
         [ "$needle" = "$2" ] && return 0
     done <<< "$1"
     return 1
+}
+
+# Map a wheel platform tag to the conda-forge subdir carrying the same architecture.
+#
+# Only used to fetch GDAL's generated cpl_config.h, which a release source tarball does not
+# contain. manylinux ONLY, deliberately: conda-forge builds against glibc, so its generated
+# header carries glibc's large-file and feature macros. A musllinux wheel matching on
+# architecture alone would get a header describing the wrong libc -- it would compile and
+# then disagree with libgdal about struct layouts at runtime, which is the whole failure
+# mode this header is fetched to avoid. macOS and Windows are refused rather than guessed.
+conda_subdir_for_plat() {
+    case "$1" in
+        manylinux*_x86_64) printf '%s\n' "linux-64" ;;
+        manylinux*_aarch64) printf '%s\n' "linux-aarch64" ;;
+        *) return 1 ;;
+    esac
 }
 
 # Should this DT_NEEDED entry be vendored beside the plugin?

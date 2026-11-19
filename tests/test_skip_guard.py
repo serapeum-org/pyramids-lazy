@@ -118,6 +118,13 @@ SUITE_REASONS: tuple[tuple[str, bool], ...] = (
     # Deliberately NOT a dependency skip: `bash` is a system tool the lib.sh tests drive,
     # not an optional dependency of this package, so no install could satisfy it.
     ("bash unavailable on this machine", False),
+    # The zstd decoders the cpl_config.h extractor uses. NOT dependency skips: `compression
+    # .zstd` is a 3.14 stdlib module, and `zstandard` is a build-time tool the manylinux
+    # container pip-installs -- neither is a dependency of pyramids-lazy, and the extractor
+    # is tested through whichever decoder the running interpreter has.
+    ("stdlib zstd needs python 3.14", False),
+    ("zstandard unavailable on this machine", False),
+    ("zstd encoder unavailable on this machine", False),
 )
 
 

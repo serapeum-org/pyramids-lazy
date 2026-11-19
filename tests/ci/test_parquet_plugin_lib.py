@@ -239,6 +239,82 @@ class TestNeedsMembership:
 
 
 @requires_bash
+class TestCondaSubdirMapping:
+    """Which conda-forge subdir supplies GDAL's generated cpl_config.h for a wheel platform."""
+
+    @pytest.mark.parametrize(
+        "plat, subdir",
+        [
+            ("manylinux_2_28_x86_64", "linux-64"),
+            ("manylinux_2_28_aarch64", "linux-aarch64"),
+            ("manylinux_2_17_x86_64", "linux-64"),
+        ],
+    )
+    def test_a_manylinux_tag_maps_to_its_architecture(self, plat, subdir):
+        """conda-forge builds against glibc, which is what manylinux wheels target."""
+        result = _run(f'conda_subdir_for_plat "{plat}"')
+
+        assert result.returncode == 0
+        assert result.stdout.strip() == subdir
+
+    @pytest.mark.parametrize(
+        "plat",
+        [
+            "musllinux_1_2_x86_64",
+            "musllinux_1_2_aarch64",
+            "macosx_11_0_arm64",
+            "macosx_10_9_x86_64",
+            "win_amd64",
+            "win_arm64",
+            "",
+        ],
+    )
+    def test_every_non_glibc_platform_is_refused(self, plat):
+        """Matching on architecture alone would hand musl a glibc header.
+
+        Test scenario:
+            An earlier spelling globbed `*_x86_64`, so `musllinux_1_2_x86_64` resolved to
+            `linux-64`. The header would have described glibc's large-file API and feature
+            macros, compiled cleanly, and then disagreed with libgdal about struct layouts at
+            runtime -- precisely the failure the header is fetched to prevent.
+        """
+        result = _run(f'conda_subdir_for_plat "{plat}" || echo REFUSED')
+
+        assert result.stdout.strip() == "REFUSED"
+
+
+@requires_bash
+class TestCondaPackageDigests:
+    """The libgdal-core packages are pinned like the source tarballs."""
+
+    @pytest.mark.parametrize(
+        "key, digest",
+        [
+            (
+                "libgdal-core-3.13.3-linux-64",
+                "34eb1e43f5731ea4d8af7a0ac040222d0594d3d17ef04b5e49634705ed832688",
+            ),
+            (
+                "libgdal-core-3.13.3-linux-aarch64",
+                "f0f7a82c99978abec4d4992e53ca8739a372824bd4d4afbee2b54dbd1ea9c3cc",
+            ),
+        ],
+    )
+    def test_each_package_has_a_pinned_digest(self, key, digest):
+        """Confirmed against the downloaded package, as with the tarballs."""
+        result = _run(f'sha256_for "{key}"')
+
+        assert result.returncode == 0
+        assert result.stdout.strip() == digest
+
+    def test_an_unpinned_architecture_fails_closed(self):
+        """A new platform must stop the build rather than skip the integrity check."""
+        result = _run('sha256_for "libgdal-core-3.13.3-osx-arm64" || echo REFUSED')
+
+        assert result.stdout.strip() == "REFUSED"
+
+
+@requires_bash
 class TestVendorableDeps:
     """Which dependencies travel in the wheel and which come from elsewhere."""
 
