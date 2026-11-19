@@ -121,6 +121,62 @@ docs = [
     "mkdocs-mermaid2-plugin>=1.2.1",
 ]
 
+[tool.cibuildwheel]
+# ONE CPython per platform, on purpose. The payload (ogr_Parquet + Arrow) links no libpython,
+# so the wheel is py3-none-<platform> (one wheel serves every interpreter -- see setup.py). A
+# per-ABI matrix like core's would build identical wheels cp311..cp315; we only need one.
+build = ["cp312-*"]
+# musllinux is built by a separate job that overrides this skip (as in core), because its
+# generated cpl_config.h has no conda-forge source and needs its own handling.
+skip = ["*pp*", "*musllinux*", "cp31*t-*"]
+archs = ["auto64"]
+build-verbosity = 1
+test-skip = "*"
+
+[tool.cibuildwheel.linux]
+manylinux-x86_64-image = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
+# before-all compiles ogr_Parquet + a minimal Arrow against the libgdal inside a downloaded
+# pyramids-core wheel and stages the plugin into the package tree; build.sh self-vendors the
+# Arrow libs (RPATH $ORIGIN) and strips. So repair does NOT re-vendor -- auditwheel would try to
+# pull in core's libgdal (the second-libgdal hazard). It only upgrades the platform tag from the
+# bare linux_<arch> setuptools emits to manylinux_2_28_<arch>, which the manylinux_2_28 build
+# container guarantees by construction.
+before-all = [
+    "bash ci/parquet-plugin/build.sh",
+    "bash -c 'mkdir -p src/pyramids_lazy/gdalplugins && cp \"$OUTPUT\"/gdalplugins/* \"$OUTPUT\"/licenses/* src/pyramids_lazy/gdalplugins/'",
+]
+repair-wheel-command = [
+    "python -m pip install --quiet wheel",
+    # build.sh already vendored + stripped + RPATH'd the plugin, so this only upgrades the bare
+    # linux_<arch> tag setuptools emits to manylinux_2_28_<arch> (the container guarantees the
+    # floor). `wheel tags` writes the retagged wheel into the CWD, so run it in {dest_dir}.
+    "bash -c 'cd {dest_dir} && python -m wheel tags --platform-tag manylinux_2_28_${AUDITWHEEL_ARCH} --remove {wheel}'",
+]
+
+
+[tool.cibuildwheel.macos]
+# NEW and CI-iterated: build-macos.sh compiles ogr_Parquet.dylib + Arrow against the libgdal in
+# core's macOS wheel. delocate vendors the Arrow dylibs but EXCLUDES core's libgdal (it is
+# resolved at load time from the installed pyramids-core, exactly like Linux).
+before-all = ["bash ci/parquet-plugin/build-macos.sh"]
+repair-wheel-command = [
+    "delocate-wheel --require-archs {delocate_archs} --exclude libgdal -w {dest_dir} {wheel}",
+]
+
+
+[tool.cibuildwheel.windows]
+# NEW and CI-iterated: build-windows.ps1 compiles ogr_Parquet.dll + Arrow against the libgdal in
+# core's win_amd64 wheel. delvewheel vendors the Arrow DLLs but EXCLUDES core's libgdal (hashed
+# name, resolved from the installed pyramids-core). The hashed-DLL name changing between core
+# releases and the duckdb.dll dependency are the known rough edges here.
+before-all = ["powershell -File ci/parquet-plugin/build-windows.ps1"]
+before-build = ["python -m pip install delvewheel wheel"]
+repair-wheel-command = [
+    "delvewheel repair --exclude libgdal --add-path src/pyramids_lazy/gdalplugins -w {dest_dir} {wheel}",
+]
+
+
 [tool.pixi.workspace]
 channels = ["conda-forge"]
 # macOS floor 14.0 so the pyproj cp311 arm64 wheel (tagged macosx_14_0) resolves instead of its sdist.

@@ -109,97 +109,128 @@ jobs:
           echo "resolved ref: ${REF}"
           echo "ref=${REF}" >> "$GITHUB_OUTPUT"
 
-  wheels:
-    name: wheel (${{ matrix.plat }})
+
+  build-linux-wheels:
+    name: linux ${{ matrix.arch }}
     needs: resolve-ref
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
-          - plat: manylinux_2_28_x86_64
-            image: quay.io/pypa/manylinux_2_28_x86_64
-            runner: ubuntu-latest
-          - plat: manylinux_2_28_aarch64
-            image: quay.io/pypa/manylinux_2_28_aarch64
-            runner: ubuntu-24.04-arm
+          - arch: x86_64
+            runs-on: ubuntu-latest
+          - arch: aarch64
+            runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.resolve-ref.outputs.ref }}
-
-      - name: Compile the driver inside ${{ matrix.image }}
-        # The same image pyramids-core's Linux wheels are built in, so the plugin lands at the
-        # same libc floor as the libgdal it links. build.sh stages gdalplugins/ + licenses/ +
-        # core-soname.txt / core-wheel.txt into $OUTPUT.
+      - uses: pypa/cibuildwheel@f9b966cfadf4109556cadc5bb39ddb72d0ce664e # v4.3.5
         env:
-          CORE_VERSION: ${{ inputs.core-version || env.PINNED_CORE_VERSION }}
-          GDAL_VERSION: ${{ inputs.gdal-version }}
-          ARROW_VERSION: ${{ inputs.arrow-version || '26.0.1' }}
-          PLAT: ${{ matrix.plat }}
-          IMAGE: ${{ matrix.image }}
-        run: |
-          set -euo pipefail
-          mkdir -p out
-          docker run --rm \
-            -v "$PWD:/src:ro" -v "$PWD/out:/out" \
-            -e CORE_VERSION="$CORE_VERSION" \
-            -e GDAL_VERSION="$GDAL_VERSION" \
-            -e ARROW_VERSION="$ARROW_VERSION" \
-            -e PLAT="$PLAT" \
-            -e OUTPUT=/out \
-            "$IMAGE" \
-            bash /src/ci/parquet-plugin/build.sh
-          # The container runs as root, so out/ is root-owned; take it back before the build
-          # step copies from it as the runner user.
-          sudo chown -R "$(id -u):$(id -g)" out
-
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          # Any CPython builds the identical py3-none wheel; 3.12 matches build.sh's PYTAG and
-          # the core wheel the plugin links, which the verify step then installs against.
-          python-version: "3.12"
-
-      - name: Build the native pyramids-lazy wheel
-        env:
-          PYRAMIDS_LAZY_NATIVE: "1"
-          PYRAMIDS_LAZY_WHEEL_PLAT: ${{ matrix.plat }}
-        run: |
-          set -euo pipefail
-          # Stage the compiled plugin + the vendored-component licences into the package tree.
-          # package-data (pyproject) then carries pyramids_lazy/gdalplugins/* into the wheel.
-          mkdir -p src/pyramids_lazy/gdalplugins
-          cp out/gdalplugins/* src/pyramids_lazy/gdalplugins/
-          cp out/licenses/* src/pyramids_lazy/gdalplugins/
-          python -m pip install --quiet --upgrade build
-          python -m build --wheel --outdir dist
-          echo "built:"; ls -1 dist/*.whl
-          # setup.py's forced tag must have produced a platform wheel, not py3-none-any.
-          case "$(ls dist/*.whl)" in
-            *py3-none-${{ matrix.plat }}.whl) echo "tag OK" ;;
-            *) echo "unexpected wheel tag: $(ls dist/*.whl)" >&2; exit 1 ;;
-          esac
-
-      - name: Verify against a clean install
-        # Each arch verifies its own wheel: a runner installs only its own architecture's core
-        # wheel, so the matrix is what gives coverage of both. --via-entry-point exercises core
-        # 0.81.0's real pyramids.gdal_plugin_path seam rather than setting GDAL_DRIVER_PATH by hand.
-        run: |
-          set -euo pipefail
-          python3 -m venv /tmp/venv
-          /tmp/venv/bin/python -m pip install -q --upgrade pip
-          # Installs pyramids-core too, via the pyramids-core>=0.81.0 dependency in pyproject.
-          /tmp/venv/bin/python -m pip install -q "$(ls dist/*.whl)"
-          /tmp/venv/bin/python ci/parquet-plugin/verify.py --via-entry-point
-
+          CIBW_ARCHS_LINUX: ${{ matrix.arch }}
+          # before-all (build.sh) runs inside the manylinux container; pass what it needs in.
+          CIBW_ENVIRONMENT: >-
+            PYRAMIDS_LAZY_NATIVE=1 OUTPUT=/tmp/pp-out
+            PLAT=manylinux_2_28_${{ matrix.arch }}
+            CORE_VERSION=${{ inputs.core-version || env.PINNED_CORE_VERSION }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: native-wheel-${{ matrix.plat }}
-          path: |
-            dist/*.whl
-            out/core-soname.txt
-            out/core-wheel.txt
+          name: wheels-linux-${{ matrix.arch }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+          retention-days: 14
+
+  build-musl-wheels:
+    name: musl ${{ matrix.arch }}
+    needs: resolve-ref
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runs-on: ubuntu-latest
+          - arch: aarch64
+            runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-ref.outputs.ref }}
+      - uses: pypa/cibuildwheel@f9b966cfadf4109556cadc5bb39ddb72d0ce664e # v4.3.5
+        # Override the TOML skip (*musllinux*) to build ONLY musl here, and re-tag to
+        # musllinux_1_2 in repair. KNOWN BLOCKER: conda-forge has no musllinux libgdal-core, so
+        # fetch_cpl_config.py has no source for cpl_config.h -- this job is expected to fail until
+        # a musl header source is found (it may need core to publish musl dev headers).
+        env:
+          CIBW_BUILD: "cp312-musllinux_*"
+          CIBW_SKIP: ""
+          CIBW_ARCHS_LINUX: ${{ matrix.arch }}
+          CIBW_ENVIRONMENT: >-
+            PYRAMIDS_LAZY_NATIVE=1 OUTPUT=/tmp/pp-out
+            PLAT=musllinux_1_2_${{ matrix.arch }}
+            CORE_VERSION=${{ inputs.core-version || env.PINNED_CORE_VERSION }}
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
+            python -m pip install --quiet wheel &&
+            python -m wheel tags --platform-tag musllinux_1_2_${{ matrix.arch }} --remove {wheel} &&
+            bash -c 'mv *.whl {dest_dir}/'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wheels-musl-${{ matrix.arch }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+          retention-days: 14
+
+  build-macos-wheels:
+    name: macos ${{ matrix.arch }}
+    needs: resolve-ref
+    runs-on: macos-15
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x86_64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-ref.outputs.ref }}
+      - uses: pypa/cibuildwheel@f9b966cfadf4109556cadc5bb39ddb72d0ce664e # v4.3.5
+        env:
+          CIBW_ARCHS_MACOS: ${{ matrix.arch }}
+          CIBW_ENVIRONMENT: >-
+            PYRAMIDS_LAZY_NATIVE=1 OUTPUT=/tmp/pp-out
+            PLAT=macosx_14_0_${{ matrix.arch }}
+            CORE_VERSION=${{ inputs.core-version || env.PINNED_CORE_VERSION }}
+            MACOSX_DEPLOYMENT_TARGET=14.0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wheels-macos-${{ matrix.arch }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+          retention-days: 14
+
+  build-windows-wheels:
+    name: windows AMD64
+    needs: resolve-ref
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-ref.outputs.ref }}
+      - uses: pypa/cibuildwheel@f9b966cfadf4109556cadc5bb39ddb72d0ce664e # v4.3.5
+        env:
+          CIBW_ARCHS_WINDOWS: AMD64
+          CIBW_ENVIRONMENT: >-
+            PYRAMIDS_LAZY_NATIVE=1 OUTPUT=C:/pp-out
+            PLAT=win_amd64
+            CORE_VERSION=${{ inputs.core-version || env.PINNED_CORE_VERSION }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wheels-windows-AMD64
+          path: wheelhouse/*.whl
           if-no-files-found: error
           retention-days: 14
 
@@ -217,7 +248,7 @@ jobs:
           python-version: "3.12"
       - name: Build the sdist
         # No plugin staged and PYRAMIDS_LAZY_NATIVE unset, so this is the ordinary pure source
-        # distribution; a source install on an unsupported platform gets the pure backend and the
+        # dist; a source install on an unsupported platform gets the pure backend and the
         # OGR-Parquet path raises its branded hint.
         run: |
           set -euo pipefail
@@ -232,14 +263,144 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  verify-debian12:
+    name: verify debian12 (glibc)
+    needs: build-linux-wheels
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: python:3.12-slim-bookworm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-ref.outputs.ref }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wheels-linux-x86_64
+          path: wheelhouse
+      - name: Install the wheel (pulls pyramids-core) and verify the driver loads
+        shell: bash
+        run: |
+          set -euo pipefail
+          ldd --version | head -1
+          pip install "$(ls wheelhouse/*.whl)" --only-binary=:all:
+          python ci/parquet-plugin/verify.py --via-entry-point
+
+  verify-rocky9:
+    name: verify rocky9 (glibc)
+    needs: build-linux-wheels
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: rockylinux:9
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-ref.outputs.ref }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wheels-linux-x86_64
+          path: wheelhouse
+      - name: Install python + the wheel, verify the driver loads
+        shell: bash
+        run: |
+          set -euo pipefail
+          dnf install -y python3.12 python3.12-pip >/dev/null
+          python3.12 -m pip install "$(ls wheelhouse/*.whl)" --only-binary=:all:
+          python3.12 ci/parquet-plugin/verify.py --via-entry-point
+
+  verify-rocky9-aarch64:
+    name: verify rocky9 aarch64 (glibc)
+    needs: build-linux-wheels
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    container:
+      image: rockylinux:9
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-ref.outputs.ref }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wheels-linux-aarch64
+          path: wheelhouse
+      - name: Install python + the wheel, verify the driver loads
+        shell: bash
+        run: |
+          set -euo pipefail
+          dnf install -y python3.12 python3.12-pip >/dev/null
+          python3.12 -m pip install "$(ls wheelhouse/*.whl)" --only-binary=:all:
+          python3.12 ci/parquet-plugin/verify.py --via-entry-point
+
+  verify-alpine:
+    name: verify alpine (musl)
+    needs: build-musl-wheels
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runs-on: ubuntu-latest
+          - arch: aarch64
+            runs-on: ubuntu-24.04-arm
+    container:
+      image: python:3.12-alpine
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-ref.outputs.ref }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wheels-musl-${{ matrix.arch }}
+          path: wheelhouse
+      - name: Install the wheel, verify the driver loads
+        shell: sh
+        run: |
+          set -eu
+          pip install "$(ls wheelhouse/*.whl)" --only-binary=:all:
+          python ci/parquet-plugin/verify.py --via-entry-point
+
+  verify-macos:
+    name: verify macos ${{ matrix.arch }}
+    needs: build-macos-wheels
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runs-on: macos-15
+          - arch: x86_64
+            runs-on: macos-13
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-ref.outputs.ref }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wheels-macos-${{ matrix.arch }}
+          path: wheelhouse
+      - name: Install the wheel, verify the driver loads
+        run: |
+          set -euo pipefail
+          python -m pip install "$(ls wheelhouse/*.whl)" --only-binary=:all:
+          python ci/parquet-plugin/verify.py --via-entry-point
+
   report:
     name: report
-    needs: [wheels, sdist]
-    if: needs.wheels.result != 'skipped'
+    needs:
+      [build-linux-wheels, build-musl-wheels, build-macos-wheels, build-windows-wheels, sdist]
+    if: always() && needs.resolve-ref.result != 'skipped'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: artifacts
         continue-on-error: true
@@ -248,14 +409,10 @@ jobs:
           {
             echo "## pyramids-lazy native wheels"
             echo
-            echo "| artifact | size | linked libgdal |"
-            echo "|---|---|---|"
+            echo "| artifact | size |"
+            echo "|---|---|"
             shopt -s nullglob
-            for d in artifacts/*/; do
-              whl="$(find "$d" -name '*.whl' -o -name '*.tar.gz' | head -1)"
-              [ -n "$whl" ] || continue
-              soname=$(cat "$d/core-soname.txt" 2>/dev/null || echo "-")
-              size=$(du -h "$whl" | cut -f1)
-              echo "| \`$(basename "$whl")\` | $size | \`$soname\` |"
+            for f in artifacts/*/*.whl artifacts/*/*.tar.gz; do
+              echo "| \`$(basename "$f")\` | $(du -h "$f" | cut -f1) |"
             done
           } >> "$GITHUB_STEP_SUMMARY"
