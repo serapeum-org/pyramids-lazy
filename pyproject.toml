@@ -142,17 +142,9 @@ manylinux-aarch64-image = "manylinux_2_28"
 # pull in core's libgdal (the second-libgdal hazard). It only upgrades the platform tag from the
 # bare linux_<arch> setuptools emits to manylinux_2_28_<arch>, which the manylinux_2_28 build
 # container guarantees by construction.
-before-all = [
-    "bash ci/parquet-plugin/build.sh",
-    "bash -c 'mkdir -p src/pyramids_lazy/gdalplugins && cp \"$OUTPUT\"/gdalplugins/* \"$OUTPUT\"/licenses/* src/pyramids_lazy/gdalplugins/'",
-]
+before-all = ["bash ci/parquet-plugin/cibw-before-all-linux.sh"]
 repair-wheel-command = [
-    "python -m pip install --quiet wheel",
-    # build.sh already vendored + stripped + RPATH'd the plugin, so this only upgrades the bare
-    # linux_<arch> tag setuptools emits to manylinux_2_28_<arch> (the container guarantees the
-    # floor). `wheel tags` writes the retagged wheel beside its input, so run it there and move
-    # the result into {dest_dir} (cibuildwheel fails the build if the repaired wheel is not there).
-    "bash -c 'cd \"$(dirname {wheel})\" && python -m wheel tags --platform-tag manylinux_2_28_${AUDITWHEEL_ARCH} --remove {wheel} && mv ./*manylinux*.whl {dest_dir}/'",
+    "bash ci/parquet-plugin/cibw-retag.sh {wheel} {dest_dir} manylinux_2_28_${AUDITWHEEL_ARCH}",
 ]
 
 
