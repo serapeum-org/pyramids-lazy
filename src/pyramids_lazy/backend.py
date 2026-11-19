@@ -202,6 +202,109 @@ class LazyComputeBackend:
 
         return read_parquet_dask(source, **kwargs)
 
+    def delayed(self, func: Any, *args: Any, **kwargs: Any) -> Any:
+        """Back the Dataset/DatasetCollection deferred paths (``compute=False``).
+
+        Wraps an eager pyramids-core body (``to_file`` / reproject / align) in ``dask.delayed``;
+        see :func:`pyramids_lazy._deferred.delayed`. An **additive, duck-typed** capability core
+        reaches via ``getattr`` (``require_backend_method``) — deliberately **not** a
+        ``ComputeBackend`` Protocol member, like :meth:`classify_zarr_store` /
+        :meth:`open_mesh_mfdataset`, so a backend predating it is not rejected by core's structural
+        ``isinstance`` check.
+        """
+        from pyramids_lazy._deferred import delayed
+
+        return delayed(func, *args, **kwargs)
+
+    def focal_lazy(self, source: Any, guarded: Any, *, depth: Any, dtype: Any) -> Any:
+        """Back the lazy arm of ``Dataset`` focal filters (``chunks=``).
+
+        Additive, duck-typed capability reached via ``getattr`` — not a ``ComputeBackend`` Protocol
+        member. Tiles core's no-data-aware kernel with ``dask.array.map_overlap``; see
+        :func:`pyramids_lazy._focal.focal_lazy`.
+        """
+        from pyramids_lazy._focal import focal_lazy
+
+        return focal_lazy(source, guarded, depth=depth, dtype=dtype)
+
+    def read_raster_array_lazy(self, read_chunk: Any, **kwargs: Any) -> Any:
+        """Back ``Dataset.read_array(chunks=)`` (and the collection cube's per-timestep reader).
+
+        Additive, duck-typed capability reached via ``getattr`` — not a ``ComputeBackend`` Protocol
+        member — that assembles the dask graph from the pieces core prepared (manager, lock, shape,
+        dtype) over the pickle-safe ``_read_chunk`` reader. Distinct from :meth:`read_array_lazy`,
+        which reads an MDArray *variable* (NetCDF); this reads classic raster bands. See
+        :func:`pyramids_lazy._raster_read.read_raster_array_lazy`.
+        """
+        from pyramids_lazy._raster_read import read_raster_array_lazy
+
+        return read_raster_array_lazy(read_chunk, **kwargs)
+
+    def map_blocks_lazy(self, func: Any, source: Any, **kwargs: Any) -> Any:
+        """Back ``Dataset.map_blocks(chunks=)``.
+
+        Additive, duck-typed capability reached via ``getattr``. See
+        :func:`pyramids_lazy._raster_read.map_blocks_lazy`.
+        """
+        from pyramids_lazy._raster_read import map_blocks_lazy
+
+        return map_blocks_lazy(func, source, **kwargs)
+
+    def read_zarr_cube(self, store: Any, **kwargs: Any) -> Any:
+        """Back the Zarr-backed arm of ``DatasetCollection.data`` (duck-typed).
+
+        See :func:`pyramids_lazy._collection_cube.read_zarr_cube`.
+        """
+        from pyramids_lazy._collection_cube import read_zarr_cube
+
+        return read_zarr_cube(store, **kwargs)
+
+    def stack_lazy(self, arrays: Any, *, axis: int = 0) -> Any:
+        """Back ``DatasetCollection.data``'s time-axis stack (duck-typed).
+
+        See :func:`pyramids_lazy._collection_cube.stack_lazy`.
+        """
+        from pyramids_lazy._collection_cube import stack_lazy
+
+        return stack_lazy(arrays, axis=axis)
+
+    def from_array_lazy(self, array: Any, *, chunks: Any) -> Any:
+        """Back the in-memory arm of ``DatasetCollection.data`` (duck-typed).
+
+        See :func:`pyramids_lazy._collection_cube.from_array_lazy`.
+        """
+        from pyramids_lazy._collection_cube import from_array_lazy
+
+        return from_array_lazy(array, chunks=chunks)
+
+    def resolve_dask_op(self, op_name: Any, *, skipna: Any) -> Any:
+        """Back ``DatasetCollection`` associative time reductions (duck-typed).
+
+        Returns the ``dask.array`` reduction callable; see
+        :func:`pyramids_lazy._reduce.resolve_dask_op`.
+        """
+        from pyramids_lazy._reduce import resolve_dask_op
+
+        return resolve_dask_op(op_name, skipna=skipna)
+
+    def build_group_reduction(self, group: Any, op: Any, **kwargs: Any) -> Any:
+        """Back ``DatasetCollection.reduce_time`` per-window reductions (duck-typed).
+
+        See :func:`pyramids_lazy._reduce.build_group_reduction`.
+        """
+        from pyramids_lazy._reduce import build_group_reduction
+
+        return build_group_reduction(group, op, **kwargs)
+
+    def compute(self, *arrays: Any) -> Any:
+        """Back the single-pass ``dask.compute`` batching of collection reductions (duck-typed).
+
+        See :func:`pyramids_lazy._reduce.compute`.
+        """
+        from pyramids_lazy._reduce import compute
+
+        return compute(*arrays)
+
 
 #: The singleton core resolves through the entry point. A single object, per the Protocol contract.
 backend = LazyComputeBackend()

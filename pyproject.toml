@@ -25,7 +25,10 @@ classifiers = [
 # No GDAL here: the plugin inherits pyramids-core's vendored GDAL (constraint C2). Declaring GDAL
 # would risk a second, ABI-mismatched libgdal on the path.
 dependencies = [
-    "pyramids-core>=0.80.0",
+    # 0.81.0 is the release that routes the dataset lazy ops through the compute-backend seam and
+    # re-exports the reduce_axis / _SUPPORTED_OPS / _NAN_TABLE primitives this backend imports
+    # (serapeum-org/pyramids-core#1590); an older core resolves but is missing those symbols.
+    "pyramids-core>=0.81.0",
     "dask>=2024.1.0",
     "distributed>=2024.1.0",
     "zarr>=3",
