@@ -14,9 +14,30 @@ name: Bundle PyPI Wheels
 permissions:
   contents: read
 
+# Triggers mirror pyramids-core's bundle-pypi-wheels.yml: build on every push to main and
+# after a release, with a dormant pull_request arm and manual dispatch. NOTE: the output is not
+# consumed by pypi-release yet (that wiring is the publish PR, plan P4), so until then these
+# builds produce verified artifacts only -- nothing is published from here.
 on:
+  push:
+    branches: [main]
+  # Dormant, as in core: flip on to build the native wheels on a PR touching the build.
+  # pull_request:
+  #   branches: [main]
+  #   paths:
+  #     - "ci/parquet-plugin/**"
+  #     - "setup.py"
+  #     - ".github/workflows/bundle-pypi-wheels.yml"
+  workflow_run:
+    workflows: ["github-release"]
+    types: [completed]
   workflow_dispatch:
     inputs:
+      branch:
+        description: "Branch / ref to build wheels from (defaults to the ref selected in the UI)"
+        required: false
+        default: ""
+        type: string
       core-version:
         description: "pyramids-core version to build against (blank = the pinned default)"
         required: false
@@ -32,11 +53,6 @@ on:
         required: false
         default: ""
         type: string
-  pull_request:
-    paths:
-      - "ci/parquet-plugin/**"
-      - "setup.py"
-      - ".github/workflows/bundle-pypi-wheels.yml"
 
 # The core release the wheels build and link against. Pinned, not "latest": the GDAL version is
 # derived from whatever core serves and only the exact tarballs in build.sh's digest table are
@@ -47,8 +63,10 @@ env:
   PINNED_CORE_VERSION: "0.81.0"
 
 concurrency:
-  group: bundle-pypi-wheels-${{ github.ref }}
-  cancel-in-progress: true
+  # Per-run group (unique run_id) for push / workflow_run so a merge to main or a release is
+  # always built to completion; only pull_request builds share a per-branch group and cancel.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   wheels:
@@ -67,6 +85,8 @@ jobs:
             runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_branch || inputs.branch || github.sha }}
 
       - name: Compile the driver inside ${{ matrix.image }}
         # The same image pyramids-core's Linux wheels are built in, so the plugin lands at the
@@ -148,6 +168,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_branch || inputs.branch || github.sha }}
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
