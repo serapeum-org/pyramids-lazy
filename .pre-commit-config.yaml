@@ -101,10 +101,12 @@ repos:
     hooks:
       - id: beautysh
         name: "[bash - format] beautysh"
-        # beautysh 6.2.1 imports `pkg_resources`, which modern setuptools (>=81) and Python 3.12
-        # no longer provide by default — without this it crashes on import. Only our own shell
+        # beautysh 6.2.1 imports `pkg_resources`, which setuptools REMOVED in 81.0. Depending on
+        # a bare `setuptools` therefore stopped helping the moment that release went out: the hook
+        # crashed with ModuleNotFoundError the first time a first-party .sh woke it. The upper
+        # bound is the fix -- pkg_resources still ships below 81. Only our own shell
         # scripts are in scope; the tests/data helper is byte-faithful fixture territory.
-        additional_dependencies: ["setuptools"]
+        additional_dependencies: ["setuptools<81"]
         exclude: ^tests/data/
 
   # pre-commit-shell: checks shell scripts against shellcheck.
