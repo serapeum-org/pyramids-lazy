@@ -906,58 +906,115 @@ class TestMakeWheelCli:
             names = zf.namelist()
         assert [n for n in names if n.endswith("/licenses/Arrow-NOTICE.txt")]
 
+    @pytest.fixture
+    def complete_stage(self, tmp_path: Path) -> Path:
+        """A staging directory that would build successfully, so only argparse can object.
+
+        Pointing these tests at an empty directory made them vacuous: `build` raised
+        `SystemExit("no staged plugin directory")` before argparse's verdict mattered, so
+        they passed whether or not the validation existed.
+        """
+        root = tmp_path / "out"
+        plugins = root / "gdalplugins"
+        plugins.mkdir(parents=True)
+        (plugins / "ogr_Parquet.so").write_bytes(_elf(needed=("libgdal-abc.so.39",)))
+        (root / "core-soname.txt").write_text("libgdal-abc.so.39\n")
+        (root / "core-wheel.txt").write_text("pyramids_core-0.80.0-x.whl\n")
+        (root / "licenses").mkdir()
+        (root / "licenses" / "GDAL-LICENSE.txt").write_text("text\n")
+        return root
+
+    def test_the_complete_stage_builds(self, complete_stage, tmp_path: Path, capsys):
+        """Guards the three tests below: they only mean something if this one passes."""
+        code = make_wheel.main(
+            [
+                "make_wheel.py",
+                "--stage",
+                str(complete_stage),
+                "--version",
+                "0.1.0",
+                "--plat",
+                "manylinux_2_28_x86_64",
+                "--core-requires",
+                "pyramids-core==0.80.0",
+                "--outdir",
+                str(tmp_path / "dist"),
+            ]
+        )
+        capsys.readouterr()
+
+        assert code == 0
+
     @pytest.mark.parametrize("plat", ["manylinux 2 28", "MANYLINUX_2_28_X86_64", ""])
-    def test_a_malformed_platform_tag_is_refused(self, tmp_path: Path, plat):
+    def test_a_malformed_platform_tag_is_refused(self, complete_stage, tmp_path, plat):
         """A bad tag yields a filename pip silently will not match -- so reject it here."""
-        with pytest.raises(SystemExit):
+        with pytest.raises(SystemExit) as excinfo:
             make_wheel.main(
                 [
                     "make_wheel.py",
                     "--stage",
-                    str(tmp_path),
+                    str(complete_stage),
                     "--version",
                     "0.1.0",
                     "--plat",
                     plat,
                     "--core-requires",
                     "pyramids-core==0.80.0",
+                    "--outdir",
+                    str(tmp_path / "dist"),
                 ]
             )
 
+        assert excinfo.value.code == 2, (
+            "expected argparse's usage error, not a build failure"
+        )
+
     @pytest.mark.parametrize("version", ["0.1.0-dev", "v0.1.0", "not-a-version"])
-    def test_a_malformed_version_is_refused(self, tmp_path: Path, version):
+    def test_a_malformed_version_is_refused(self, complete_stage, tmp_path, version):
         """A dash in the version splits the wheel filename into the wrong fields."""
-        with pytest.raises(SystemExit):
+        with pytest.raises(SystemExit) as excinfo:
             make_wheel.main(
                 [
                     "make_wheel.py",
                     "--stage",
-                    str(tmp_path),
+                    str(complete_stage),
                     "--version",
                     version,
                     "--plat",
                     "manylinux_2_28_x86_64",
                     "--core-requires",
                     "pyramids-core==0.80.0",
+                    "--outdir",
+                    str(tmp_path / "dist"),
                 ]
             )
 
-    def test_an_unpinned_core_requirement_is_refused(self, tmp_path: Path):
+        assert excinfo.value.code == 2, (
+            "expected argparse's usage error, not a build failure"
+        )
+
+    def test_an_unpinned_core_requirement_is_refused(self, complete_stage, tmp_path):
         """--core-requires is mandatory: an unpinned wheel installs beside a core it
         cannot load.
         """
-        with pytest.raises(SystemExit):
+        with pytest.raises(SystemExit) as excinfo:
             make_wheel.main(
                 [
                     "make_wheel.py",
                     "--stage",
-                    str(tmp_path),
+                    str(complete_stage),
                     "--version",
                     "0.1.0",
                     "--plat",
                     "manylinux_2_28_x86_64",
+                    "--outdir",
+                    str(tmp_path / "dist"),
                 ]
             )
+
+        assert excinfo.value.code == 2, (
+            "expected argparse's usage error, not a build failure"
+        )
 
 
 class TestVerifyDiscovery:

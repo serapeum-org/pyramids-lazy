@@ -137,7 +137,7 @@ repos:
     hooks:
       - id: pytest-check
         name: pytest-check
-        entry: pytest -v --cov=src/pyramids_lazy --cov-report=term-missing -m "not live"
+        entry: pytest -v --cov=src/pyramids_lazy --cov=ci/parquet-plugin --cov-report=term-missing -m "not live"
         language: system
         pass_filenames: false
         always_run: true
