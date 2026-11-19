@@ -1,10 +1,12 @@
 name: Parquet Plugin - Build & Verify
 
 # Builds GDAL's OGR Parquet driver as a standalone plugin and packages it as the
-# `pyramids-lazy-parquet` platform wheel. See planning/parquet-plugin-plan.md for why this is a
-# separate distribution (pyramids-lazy's own wheel must stay pure) and why the plugin is linked
-# directly against the libgdal inside a published pyramids-core wheel rather than relinked after
-# the fact.
+# `pyramids-lazy-parquet` platform wheel. The rationale -- why this is a separate distribution
+# (pyramids-lazy's own wheel must stay pure `py3-none-any`), and why the plugin is linked
+# directly against the libgdal inside a published pyramids-core wheel rather than relinked
+# after the fact -- is recorded on serapeum-org/pyramids-lazy#4 and in pyramids-core's
+# planning/bundle/ notes. Both are reachable; the planning file this used to point at is
+# untracked by convention, so it was a dead reference.
 #
 # Not wired into the release flow yet: this runs on demand and on pull requests that touch the
 # build, so the pipeline can be proven before anything is published. Phase 1 is manylinux only;
@@ -31,7 +33,7 @@ on:
     paths:
       - "ci/parquet-plugin/**"
       - ".github/workflows/parquet-plugin.yml"
-      - "planning/parquet-plugin-plan.md"
+      - "tests/ci/**"
 
 concurrency:
   group: parquet-plugin-${{ github.ref }}
@@ -41,6 +43,9 @@ jobs:
   build:
     name: build (${{ matrix.plat }})
     runs-on: ${{ matrix.runner }}
+    # The Arrow build is ~8 minutes and the whole job ~15; 45 bounds a hang without
+    # tripping on a slow runner. GitHub's default is 6 hours.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -57,39 +62,67 @@ jobs:
       - name: Build the plugin inside ${{ matrix.image }}
         # The same image pyramids-core's Linux wheels are built in, so the plugin lands at the
         # same libc floor as the wheel it links against.
+        env:
+          # Passed through the environment rather than interpolated into the script: a
+          # dispatch input lands in `run:` as text the shell would then parse.
+          CORE_VERSION: ${{ inputs.core-version }}
+          PLAT: ${{ matrix.plat }}
+          IMAGE: ${{ matrix.image }}
         run: |
           set -euo pipefail
           mkdir -p out dist
           docker run --rm \
             -v "$PWD:/src" -v "$PWD/out:/out" \
-            -e CORE_VERSION="${{ inputs.core-version }}" \
-            -e PLAT="${{ matrix.plat }}" \
+            -e CORE_VERSION="$CORE_VERSION" \
+            -e PLAT="$PLAT" \
             -e OUTPUT=/out \
-            "${{ matrix.image }}" \
+            "$IMAGE" \
             bash /src/ci/parquet-plugin/build.sh
 
       - name: Package the wheel
+        env:
+          PLUGIN_VERSION: ${{ inputs.plugin-version || '0.1.0.dev0' }}
+          PLAT: ${{ matrix.plat }}
         run: |
           set -euo pipefail
           CORE_WHEEL="$(cat out/core-wheel.txt)"
-          # Pin to the exact core release the binaries were linked against: a different core
-          # build may carry a different libgdal soname, and then the plugin cannot load.
-          CORE_VER="$(printf '%s' "$CORE_WHEEL" | sed -E 's/^pyramids_core-([^-]+)-.*/\1/')"
+          # Pin to the exact core release the binaries were linked against: a different
+          # core build may carry a different libgdal soname, and then the plugin cannot
+          # load. `sed` echoes its input unchanged when the pattern misses, which turned an
+          # unexpected filename into the pin `pyramids-core==pyramids_core-0.80.0-...whl`
+          # -- unsatisfiable, and only discoverable by a user at install time. Match
+          # explicitly and stop if it does not.
+          CORE_VER="$(printf '%s' "$CORE_WHEEL" \
+            | sed -nE 's/^pyramids_core-([^-]+)-.*\.whl$/\1/p')"
+          if [ -z "$CORE_VER" ]; then
+            echo "cannot read a version out of core wheel name: $CORE_WHEEL" >&2
+            exit 1
+          fi
+          echo "core version: $CORE_VER"
           python3 ci/parquet-plugin/make_wheel.py \
             --stage out \
-            --version "${{ inputs.plugin-version || '0.1.0.dev0' }}" \
-            --plat "${{ matrix.plat }}" \
+            --version "$PLUGIN_VERSION" \
+            --plat "$PLAT" \
             --core-requires "pyramids-core==${CORE_VER}" \
             --outdir dist
 
       - name: Verify against a clean install
-        # x86_64 only: the arm runner cannot install the x86_64 core wheel, and vice versa, so
-        # the aarch64 wheel is verified by the same script on an arm runner via the matrix.
+        # Runs on BOTH arches, each verifying its own wheel: a runner can only install the
+        # core wheel for its own architecture, so cross-checking is impossible and the
+        # matrix is what gives coverage of each.
         run: |
           set -euo pipefail
+          shopt -s nullglob
+          wheels=(dist/*.whl)
+          shopt -u nullglob
+          if [ "${#wheels[@]}" -ne 1 ]; then
+            echo "expected exactly one wheel in dist/, found ${#wheels[@]}" >&2
+            exit 1
+          fi
           python3 -m venv /tmp/venv
           /tmp/venv/bin/python -m pip install -q --upgrade pip
-          /tmp/venv/bin/python -m pip install -q "$(ls dist/*.whl)"
+          # Installs pyramids-core too, via the Requires-Dist pin the packaging step set.
+          /tmp/venv/bin/python -m pip install -q "${wheels[0]}"
           /tmp/venv/bin/python ci/parquet-plugin/verify.py
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -105,8 +138,11 @@ jobs:
   report:
     name: report
     needs: build
-    if: always()
+    # Not `always()`: with no artifacts to download this job failed too, reporting one
+    # broken build as two red checks and hiding which one actually mattered.
+    if: needs.build.result == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
