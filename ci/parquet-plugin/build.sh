@@ -178,9 +178,10 @@ cmake .. \
     -DARROW_USE_GLOG=OFF -DARROW_WITH_OPENTELEMETRY=OFF \
     > "$WORK/arrow-cmake.log" 2>&1 || { tail -40 "$WORK/arrow-cmake.log"; die "Arrow configure"; }
 ARROW_START=$(date +%s)
-cmake --build . -j "$JOBS" > "$WORK/arrow-build.log" 2>&1 || {
+if ! cmake --build . -j "$JOBS" > "$WORK/arrow-build.log" 2>&1; then
     grep -nE "error:|fatal error" "$WORK/arrow-build.log" | head -20
-    die "Arrow build"; }
+    die "Arrow build"
+fi
 cmake --install . > /dev/null
 echo "Arrow built in $(( ($(date +%s) - ARROW_START) / 60 ))m"
 for lib in "$ARROW_PREFIX"/lib/libarrow*.so* "$ARROW_PREFIX"/lib/libparquet*.so*; do
@@ -210,9 +211,10 @@ cmake "$GDAL_SRC/ogr/ogrsf_frmts/parquet" \
     -DArrowAcero_DIR="$ARROW_PREFIX/lib/cmake/ArrowAcero" \
     -DGDAL_USE_ARROWDATASET=ON -DGDAL_USE_ARROWCOMPUTE=ON \
     > "$WORK/plugin-cmake.log" 2>&1 || { tail -50 "$WORK/plugin-cmake.log"; die "plugin configure"; }
-cmake --build . -j "$JOBS" > "$WORK/plugin-build.log" 2>&1 || {
+if ! cmake --build . -j "$JOBS" > "$WORK/plugin-build.log" 2>&1; then
     grep -nE "error:|fatal error|undefined reference" "$WORK/plugin-build.log" | head -25
-    die "plugin build"; }
+    die "plugin build"
+fi
 PLUGIN_SO="$(find "$PLUGIN_BUILD" -name 'ogr_Parquet.so' | head -1)"
 [ -n "$PLUGIN_SO" ] || die "ogr_Parquet.so was not produced"
 echo "built: $PLUGIN_SO"
@@ -224,7 +226,7 @@ cp "$PLUGIN_SO" "$STAGE/"
 # Capture first and check the exit status: `for need in $(patchelf ...)` iterates an empty
 # list when patchelf fails, so the staging loop would stage nothing and the build would
 # carry on and produce a wheel missing every Arrow library it needs.
-plugin_needs="$(patchelf --print-needed "$STAGE/ogr_Parquet.so")" \
+plugin_needs="$(patchelf --print-needed "$STAGE/ogr_Parquet.so" | tr -d '\r')" \
     || die "patchelf --print-needed failed on the built plugin"
 [ -n "$plugin_needs" ] || die "the built plugin declares no DT_NEEDED at all"
 # Walk the closure, not just the plugin's direct DT_NEEDED: libparquet needs libarrow,
@@ -237,7 +239,6 @@ while [ -n "$pending" ]; do
     current="$pending"
     pending=""
     while read -r need; do
-        need="${need%$''}"   # tolerate a CRLF-emitting reader; the set check is exact
         [ -n "$need" ] || continue
         case "$need" in
             libarrow*|libparquet*) ;;
@@ -251,7 +252,10 @@ while [ -n "$pending" ]; do
         cp "$src" "$STAGE/$need"
         staged="$staged $need"
         echo "  staged $need"
-        deps="$("$PY" "$SCRIPT_DIR/soname.py" --needed "$src")" \
+        # `tr -d` rather than a $'\r' suffix trim: the visited-set test below is an exact
+        # string match, so a stray CR from a CRLF-emitting reader would defeat it and stage the
+        # same library twice. (Avoiding the $'...' form also keeps `beautysh` from rewriting it.)
+        deps="$("$PY" "$SCRIPT_DIR/soname.py" --needed "$src" | tr -d '\r')" \
             || die "could not read DT_NEEDED of $src"
         pending="$pending$deps"$'\n'
     done <<< "$current"
