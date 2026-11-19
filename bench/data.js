@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795006506727,
+  "lastUpdate": 1795092497340,
   "repoUrl": "https://github.com/serapeum-org/pyramids-lazy",
   "entries": {
     "Benchmark": [
@@ -284,6 +284,77 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00018676560999840637",
             "extra": "mean: 5.873329657894438 msec\nrounds: 76"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Mostafa Farrag",
+            "username": "MAfarrag",
+            "email": "moah.farag@gmail.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "3f88a77e21eda0d35797f2999af99ac1fd273847",
+          "message": "feat(parquet): build the OGR Parquet driver as a standalone plugin wheel (#40)\n\n  Add the pipeline that compiles GDAL's OGR Parquet driver and packages                                      \n  it as the `pyramids-lazy-parquet` platform wheel, so a pip install can                                     \n  read `.parquet` vector data. It publishes nothing yet: the workflow                                        \n  runs on demand and on pull requests that touch it, so the pipeline can                                     \n  be proven before anything reaches PyPI.                                                                    \n                                                                                                             \n  - Link the driver against the `libgdal` inside a downloaded                                                \n    `pyramids-core` wheel. auditwheel rewrites that library's                                                \n    `DT_SONAME` to a content-hashed name, so compiling against the exact                                     \n    binary that will `dlopen` the plugin makes `DT_NEEDED` carry the                                         \n    right name with no relink step and no ABI gamble.                                                        \n  - Keep it a separate distribution. `pyramids-lazy` is a pure                                               \n    `py3-none-any` wheel and `pure-wheel-test.yml` enforces that on                                          \n    every merge, so publishing platform wheels under the same name would                                     \n    let pip prefer them for every user, Parquet or not.                                                      \n  - Build a minimal Arrow from source instead of vendoring                                                   \n    conda-forge's closure: 5 shared objects and 39.4 MB stripped against                                     \n    104 objects and 139.8 MB, which no 250 MB install budget survives.                                       \n  - Tag the wheel `py3-none-<platform>` and assert that nothing in it                                        \n    links `libpython`, so one wheel serves every interpreter.                                                \n  - Take the two headers GDAL generates, `gdal_version.h` and                                                \n    `cpl_config.h`, from a digest-pinned dev package, and derive the                                         \n    source header directories from the driver's transitive include                                           \n    graph rather than from its own `#include` lines.                                                         \n  - Verify every downloaded source against a pinned SHA-256, and carry                                       \n    GDAL's and Arrow's licence and NOTICE files, which Apache-2.0                                            \n    requires of any redistribution of its binaries.                                                          \n  - Make the wheel reproducible: fixed member timestamps and explicit                                        \n    modes, so two builds of identical inputs are byte-identical.                                             \n  - Route the runtime check through `osgeo` and                                                              \n    `pyramids.feature._ogr.datasource_to_gdf`. The pyogrio-backed                                            \n    readers vendor their own libgdal (soname `.38`) and cannot load a                                        \n    plugin linked against core's (`.39`), so the plugin is served by an                                      \n    osgeo path in core instead.                                                                              \n  - Keep the shell's decisions testable in `ci/parquet-plugin/lib.sh`,                                       \n    and cover the scripts with 178 tests that drive it through a real                                        \n    bash and synthesise ELF objects rather than committing a binary                                          \n    fixture.\n\n Refs: #4",
+          "timestamp": "2026-11-19T08:39:23Z",
+          "url": "https://github.com/serapeum-org/pyramids-lazy/commit/3f88a77e21eda0d35797f2999af99ac1fd273847"
+        },
+        "date": 1795092496780,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/test_bench_netcdf.py::test_read_array_eager",
+            "value": 6616.730233172912,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000011746072194309818",
+            "extra": "mean: 151.13204932951774 usec\nrounds: 3061"
+          },
+          {
+            "name": "benchmarks/test_bench_netcdf.py::test_read_array_lazy_build",
+            "value": 751.9883700395205,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0002510242533572712",
+            "extra": "mean: 1.3298078000161695 msec\nrounds: 5"
+          },
+          {
+            "name": "benchmarks/test_bench_netcdf.py::test_read_array_lazy_compute",
+            "value": 374.5976466232433,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0001939116414414276",
+            "extra": "mean: 2.6695309194127526 msec\nrounds: 273"
+          },
+          {
+            "name": "benchmarks/test_bench_netcdf.py::test_chunk_lazy_cube",
+            "value": 171.00786188428137,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0003347922230406962",
+            "extra": "mean: 5.847684363638709 msec\nrounds: 110"
+          },
+          {
+            "name": "benchmarks/test_bench_zarr.py::test_write_dataset_to_zarr",
+            "value": 14.376949327877167,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002909840305587999",
+            "extra": "mean: 69.55578525000305 msec\nrounds: 12"
+          },
+          {
+            "name": "benchmarks/test_bench_zarr.py::test_write_dataset_to_zarr_with_overviews",
+            "value": 9.969428371277514,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0025440338883745885",
+            "extra": "mean: 100.30665377776889 msec\nrounds: 9"
+          },
+          {
+            "name": "benchmarks/test_bench_zarr.py::test_read_dataset_from_zarr",
+            "value": 85.71363041793445,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0004125435527622828",
+            "extra": "mean: 11.666755860463041 msec\nrounds: 43"
           }
         ]
       }
