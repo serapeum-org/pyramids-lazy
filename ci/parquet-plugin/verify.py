@@ -111,12 +111,12 @@ def check_link(plugins: Path) -> str:
     installed = sorted(libs.glob("libgdal*.so*")) + sorted(libs.glob("libgdal*.dylib"))
     if not installed:
         raise SystemExit(f"no libgdal in {libs}")
-    installed_soname = soname(str(installed[0])) or installed[0].name
+    installed_soname = soname(str(_require_elf(installed[0]))) or installed[0].name
     drivers = sorted(plugins.glob("ogr_Parquet.*"))
     drivers = [p for p in drivers if p.suffix in {".so", ".dylib"}]
     if not drivers:
         raise SystemExit(f"no ogr_Parquet.so or .dylib in {plugins}")
-    plugin_needs = needed(str(drivers[0]))
+    plugin_needs = needed(str(_require_elf(drivers[0])))
 
     print(f"  installed libgdal   : {installed[0].name}")
     print(f"  its DT_SONAME       : {installed_soname}")
@@ -126,14 +126,44 @@ def check_link(plugins: Path) -> str:
             f"plugin links {plugin_needs!r} but the installed core provides "
             f"{installed_soname!r} -- this wheel was built against a different core build"
         )
-    for obj in sorted(plugins.glob("*.so*")):
-        for dependency in needed(str(obj)):
+    # Both suffixes: globbing only *.so* meant that on a macOS layout this check scanned
+    # nothing and the libpython assertion passed by examining an empty set.
+    staged = sorted(plugins.glob("*.so*")) + sorted(plugins.glob("*.dylib"))
+    for obj in staged:
+        for dependency in needed(str(_require_elf(obj))):
             if "libpython" in dependency:
                 raise SystemExit(
                     f"{obj.name} links {dependency}; py3-none tag is a lie"
                 )
     print("  link check          : OK")
     return installed_soname
+
+
+def _require_elf(path: Path) -> Path:
+    """Reject a non-ELF object before handing it to the ELF-only parser.
+
+    `check_link` globs `.dylib` as well as `.so`, anticipating the macOS phase, but
+    `soname.py` reads ELF and nothing else. Passing a Mach-O object straight to it raised
+    `ValueError: not an ELF file` -- an unhandled traceback from a script whose contract is
+    to exit with a diagnosis. Until a macOS build exists, say so plainly.
+
+    Args:
+        path: The object about to be parsed.
+
+    Returns:
+        pathlib.Path: ``path``, unchanged.
+
+    Raises:
+        SystemExit: If it is not an ELF object.
+    """
+    with open(path, "rb") as handle:
+        magic = handle.read(4)
+    if magic != b"\x7fELF":
+        raise SystemExit(
+            f"{path.name} is not an ELF object (magic {magic!r}); this verifier reads "
+            "ELF only, so the macOS build is not supported yet"
+        )
+    return path
 
 
 def driver_path(plugins: Path, existing: str) -> str:

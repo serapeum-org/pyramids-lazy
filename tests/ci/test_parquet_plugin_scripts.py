@@ -1031,6 +1031,51 @@ class TestVerifyDiscovery:
         assert verify._core_libs() == package / ".libs"
 
 
+class TestVerifyNonElfObjects:
+    """The `.dylib` branches anticipate macOS, but the parser reads ELF only."""
+
+    @staticmethod
+    def _macho(path: Path) -> Path:
+        """Write a file with 64-bit Mach-O magic rather than ELF."""
+        path.write_bytes(bytes.fromhex("cffaedfe0c00000100000000") + b"\x00" * 200)
+        return path
+
+    def test_a_mach_o_core_library_is_refused_with_a_diagnosis(
+        self, tmp_path, monkeypatch
+    ):
+        """A Mach-O libgdal used to reach the ELF parser and raise `ValueError`.
+
+        Test scenario:
+            `check_link` globs `libgdal*.dylib`, so on a macOS core the file was handed
+            straight to `soname()`, which answered `ValueError: not an ELF file` -- an
+            unhandled traceback out of a script whose contract is to exit with a message.
+        """
+        libs = tmp_path / "pyramids_core.libs"
+        libs.mkdir()
+        self._macho(libs / "libgdal.39.3.13.3.dylib")
+        plugins = tmp_path / "gdalplugins"
+        plugins.mkdir()
+        (plugins / "ogr_Parquet.so").write_bytes(_elf(needed=("libgdal-abc.so.39",)))
+        monkeypatch.setattr(verify, "_core_libs", lambda: libs)
+
+        with pytest.raises(SystemExit, match="not an ELF object"):
+            verify.check_link(plugins)
+
+    def test_a_mach_o_plugin_is_refused_with_a_diagnosis(self, tmp_path, monkeypatch):
+        """Same for the driver itself, which is globbed as `.so` or `.dylib`."""
+        libs = tmp_path / "pyramids_core.libs"
+        libs.mkdir()
+        core = "libgdal-abc.so.39"
+        (libs / core).write_bytes(_elf(so_name=core))
+        plugins = tmp_path / "gdalplugins"
+        plugins.mkdir()
+        self._macho(plugins / "ogr_Parquet.dylib")
+        monkeypatch.setattr(verify, "_core_libs", lambda: libs)
+
+        with pytest.raises(SystemExit, match="not an ELF object"):
+            verify.check_link(plugins)
+
+
 class TestVerifyDriverPath:
     """Composing GDAL_DRIVER_PATH without discarding what is already there."""
 
