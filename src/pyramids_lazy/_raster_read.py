@@ -78,7 +78,7 @@ def read_raster_array_lazy(
 
 
 def map_blocks_lazy(
-    func: Any, source: Any, *, dtype: Any, drop_axis: Any, new_axis: Any
+    func: Any, source: Any, *, dtype: Any, drop_axis: Any = None, new_axis: Any = None
 ) -> Any:
     """Apply ``func`` block-wise over a lazy raster array via :func:`dask.array.map_blocks`.
 
