@@ -29,10 +29,46 @@ PYTAG="${PYTAG:-cp312}"
 OUTPUT="${OUTPUT:-/out}"
 WORK="${WORK:-/tmp/pp}"
 ARROW_PREFIX="$WORK/arrow-prefix"
-JOBS="$(nproc)"
+# Bounded: the Arrow build peaks around 2 GB of RSS per compile job, and a 64-core runner
+# with -j64 is an OOM kill rather than a fast build.
+JOBS="${JOBS:-$(nproc)}"
+[ "$JOBS" -gt 8 ] && JOBS=8
+CURL_OPTS=(-fsSL --retry 5 --retry-delay 5 --retry-connrefused --connect-timeout 30)
 
 step() { echo; echo "=== $* ==="; }
 die() { echo "ERROR: $*" >&2; exit 1; }
+
+# Pinned source digests. These binaries are published to PyPI, so the sources they are
+# built from are verified rather than trusted: an unpinned tarball means whatever the
+# mirror served that day ends up inside a wheel users install.
+#
+# The GDAL digest is the same one pyramids-core's own ci/source-build/config.sh pins for
+# 3.13.3, confirmed by downloading the tarball and hashing it. The Arrow digest is the
+# value Apache publishes alongside the release, likewise confirmed against the download.
+#
+# An unknown version fails loudly instead of skipping the check -- a silent skip is how an
+# unverified tarball would reach a published wheel.
+sha256_for() {
+    case "$1" in
+        gdal-3.13.3)
+            echo 5e0c388d83da2d686cc00a40272882432cdb54edff43d4af173e532844a0a0ea ;;
+        arrow-26.0.1)
+            echo 1dd1b6701d9de58a4ed82b107539682f46ef6b9e22747e18e03204125c05a987 ;;
+        *)
+            return 1 ;;
+    esac
+}
+
+verify_sha256() {
+    # $1 = pin key, $2 = downloaded file
+    local expected actual
+    expected="$(sha256_for "$1")" || die \
+        "no pinned sha256 for $1 -- add it to sha256_for() after verifying it upstream"
+    actual="$(sha256sum "$2" | cut -d ' ' -f1)"
+    [ "$actual" = "$expected" ] || die \
+        "sha256 mismatch for $1: expected $expected, got $actual"
+    echo "verified $1 ($actual)"
+}
 
 mkdir -p "$WORK" "$OUTPUT"
 PY="$(command -v python3.12 || command -v python3)"
@@ -87,8 +123,10 @@ elif [ -n "$SONAME_GDAL_VERSION" ] && [ "$GDAL_VERSION" != "$SONAME_GDAL_VERSION
 fi
 
 step "2. GDAL $GDAL_VERSION sources (headers + the driver's own CMake project)"
-curl -fsSL -o gdal.tar.gz "https://download.osgeo.org/gdal/${GDAL_VERSION}/gdal-${GDAL_VERSION}.tar.gz" \
+curl "${CURL_OPTS[@]}" -o gdal.tar.gz \
+    "https://download.osgeo.org/gdal/${GDAL_VERSION}/gdal-${GDAL_VERSION}.tar.gz" \
     || die "GDAL source download failed"
+verify_sha256 "gdal-${GDAL_VERSION}" gdal.tar.gz
 tar -xzf gdal.tar.gz
 GDAL_SRC="$WORK/gdal-${GDAL_VERSION}"
 [ -d "$GDAL_SRC/ogr/ogrsf_frmts/parquet" ] || die "no parquet driver in the GDAL source tree"
@@ -106,11 +144,15 @@ grep -q 'GDAL_RELEASE_NAME' "$GEN_INCLUDE/gdal_version.h"     || die "generated 
 echo "generated $GEN_INCLUDE/gdal_version.h"
 
 step "3. minimal Arrow $ARROW_VERSION (only what the driver links)"
-curl -fsSL -o arrow.tar.gz \
-    "https://github.com/apache/arrow/archive/refs/tags/apache-arrow-${ARROW_VERSION}.tar.gz" \
+# downloads.apache.org, not the GitHub archive tarball: GitHub generates archives on the
+# fly and they are not byte-stable, so they cannot be pinned by digest at all.
+curl "${CURL_OPTS[@]}" -o arrow.tar.gz \
+    "https://downloads.apache.org/arrow/arrow-${ARROW_VERSION}/apache-arrow-${ARROW_VERSION}.tar.gz" \
     || die "Arrow source download failed"
+verify_sha256 "arrow-${ARROW_VERSION}" arrow.tar.gz
 tar -xzf arrow.tar.gz
-ARROW_SRC="$WORK/arrow-apache-arrow-${ARROW_VERSION}/cpp"
+ARROW_SRC="$WORK/apache-arrow-${ARROW_VERSION}/cpp"
+[ -d "$ARROW_SRC" ] || die "unexpected Arrow tarball layout: no $ARROW_SRC"
 mkdir -p "$ARROW_SRC/build" && cd "$ARROW_SRC/build"
 # -D_GNU_SOURCE: glibc 2.28 (the manylinux_2_28 floor) declares reallocarray only under it, and
 # GCC 14 makes an implicit declaration a hard error. Arrow's bundled uriparser calls it, and
@@ -185,21 +227,47 @@ cp "$PLUGIN_SO" "$STAGE/"
 plugin_needs="$(patchelf --print-needed "$STAGE/ogr_Parquet.so")" \
     || die "patchelf --print-needed failed on the built plugin"
 [ -n "$plugin_needs" ] || die "the built plugin declares no DT_NEEDED at all"
-while read -r need; do
-    [ -n "$need" ] || continue
-    case "$need" in
-        libarrow*|libparquet*)
-            src="$(readlink -f "$ARROW_PREFIX/lib/$need")"
-            [ -f "$src" ] || die "missing Arrow dependency $need"
-            cp "$src" "$STAGE/$need"
-            echo "  staged $need" ;;
-    esac
-done <<< "$plugin_needs"
-# $ORIGIN finds the Arrow libs beside the plugin; the second entry reaches core's private lib
-# directory from <site-packages>/pyramids_lazy_parquet/gdalplugins/.
-# shellcheck disable=SC2016  # $ORIGIN is a literal ELF token the loader expands, not the
-# shell; expanding it here would bake this container's build path into the wheel.
-patchelf --set-rpath '$ORIGIN:$ORIGIN/../../pyramids_core.libs' "$STAGE/ogr_Parquet.so"
+# Walk the closure, not just the plugin's direct DT_NEEDED: libparquet needs libarrow,
+# libarrow_dataset needs libarrow_acero, and so on. Staging only the direct level left
+# those second-order libraries out of the wheel, and the omission would not surface until
+# dlopen in a user's environment -- the build and the link check would both pass.
+pending="$plugin_needs"
+staged=""
+while [ -n "$pending" ]; do
+    current="$pending"
+    pending=""
+    while read -r need; do
+        need="${need%$''}"   # tolerate a CRLF-emitting reader; the set check is exact
+        [ -n "$need" ] || continue
+        case "$need" in
+            libarrow*|libparquet*) ;;
+            *) continue ;;
+        esac
+        case " $staged " in
+            *" $need "*) continue ;;
+        esac
+        src="$(readlink -f "$ARROW_PREFIX/lib/$need")"
+        [ -f "$src" ] || die "missing Arrow dependency $need"
+        cp "$src" "$STAGE/$need"
+        staged="$staged $need"
+        echo "  staged $need"
+        deps="$("$PY" "$SCRIPT_DIR/soname.py" --needed "$src")" \
+            || die "could not read DT_NEEDED of $src"
+        pending="$pending$deps"$'\n'
+    done <<< "$current"
+done
+# $ORIGIN finds the Arrow libs beside the plugin; the second entry reaches core's private
+# lib directory from <site-packages>/pyramids_lazy_parquet/gdalplugins/. That directory's
+# name is read off the wheel that was actually extracted rather than hard-coded, so a core
+# that renames it (or reverts to the older pyramids/.libs) is followed instead of silently
+# producing a plugin whose RPATH points nowhere.
+CORE_LIBS_NAME="$(basename "$CORE_LIBS")"
+case "$CORE_LIBS_NAME" in
+    .libs) CORE_RPATH='$ORIGIN:$ORIGIN/../../pyramids/.libs' ;;
+    *)     CORE_RPATH="\$ORIGIN:\$ORIGIN/../../$CORE_LIBS_NAME" ;;
+esac
+echo "core lib dir: $CORE_LIBS_NAME -> RPATH $CORE_RPATH"
+patchelf --set-rpath "$CORE_RPATH" "$STAGE/ogr_Parquet.so"
 for so in "$STAGE"/libarrow*.so* "$STAGE"/libparquet*.so*; do
     # shellcheck disable=SC2016  # literal loader token, as above
     [ -f "$so" ] && patchelf --set-rpath '$ORIGIN' "$so"
