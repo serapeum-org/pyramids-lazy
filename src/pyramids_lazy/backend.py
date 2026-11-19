@@ -202,6 +202,20 @@ class LazyComputeBackend:
 
         return read_parquet_dask(source, **kwargs)
 
+    def delayed(self, func: Any, *args: Any, **kwargs: Any) -> Any:
+        """Back the Dataset/DatasetCollection deferred paths (``compute=False``).
+
+        Wraps an eager pyramids-core body (``to_file`` / reproject / align) in ``dask.delayed``;
+        see :func:`pyramids_lazy._deferred.delayed`. An **additive, duck-typed** capability core
+        reaches via ``getattr`` (``require_backend_method``) — deliberately **not** a
+        ``ComputeBackend`` Protocol member, like :meth:`classify_zarr_store` /
+        :meth:`open_mesh_mfdataset`, so a backend predating it is not rejected by core's structural
+        ``isinstance`` check.
+        """
+        from pyramids_lazy._deferred import delayed
+
+        return delayed(func, *args, **kwargs)
+
 
 #: The singleton core resolves through the entry point. A single object, per the Protocol contract.
 backend = LazyComputeBackend()
