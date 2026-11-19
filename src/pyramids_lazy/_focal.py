@@ -56,4 +56,6 @@ def focal_lazy(
     lazy = lazy.astype(dtype)
     # boundary="none": only interior block edges get a halo, so the kernels apply their own edge
     # policy on the raster border exactly as the eager path does. trim restores the original shape.
-    return lazy.map_overlap(guarded, depth=depth, boundary="none", trim=True, dtype=dtype)
+    return lazy.map_overlap(
+        guarded, depth=depth, boundary="none", trim=True, dtype=dtype
+    )
