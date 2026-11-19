@@ -7,6 +7,8 @@ so these need dask AND xarray — hosted here against released core. The eager i
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
@@ -21,6 +23,8 @@ from tests.netcdf.conftest import make_3d_nc
 pytestmark = pytest.mark.lazy
 
 GEOG_3D_NC = "tests/data/netcdf/cf__5v__1d4-3d1__geog__y-desc.nc"
+CF_PATH = "tests/data/netcdf/cf__5v__1d4-4d1__y-asc.nc"
+GROUPED = "tests/data/netcdf/none__35v__1d35__groups-nc4.nc"
 
 
 def _make_3d_nc(rows=4, cols=6, bands=3, variable_name="temperature"):
@@ -183,3 +187,33 @@ class TestFromXarrayStreaming:
         assert np.array_equal(rec.buf, base), (
             "the block writes must reconstruct the full array"
         )
+
+
+class TestTheFacadeSignatureChunked:
+    """The positional `chunks=` form routes through the backend (relocated from core interop)."""
+
+    def test_chunks_is_still_positional(self):
+        """`to_xarray("auto")` keeps working — the spelled-out signature is compatible."""
+        exported = NetCDF.read_file(CF_PATH).to_xarray("auto")
+        assert exported["temperature"].chunks is not None
+
+
+class TestTheLazyExportResolvesTheSameNames:
+    """`to_xarray()`'s two arms must agree about which names exist (grouped store)."""
+
+    def test_a_chunked_export_of_a_grouped_store_returns_a_dataset(self):
+        """The lazy arm must resolve a sub-group name, not raise on it."""
+        dataset = NetCDF.read_file(str(GROUPED))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            exported = dataset.to_xarray(chunks="auto")
+        assert len(exported.data_vars) > 5
+
+    def test_the_two_arms_export_the_same_variables(self):
+        """One method, one answer -- `chunks=` is a memory strategy, not a filter."""
+        dataset = NetCDF.read_file(str(GROUPED))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            eager = dataset.to_xarray()
+            lazy = dataset.to_xarray(chunks="auto")
+        assert sorted(lazy.data_vars) == sorted(eager.data_vars)
