@@ -101,16 +101,21 @@ cmake "$GDAL_SRC/ogr/ogrsf_frmts/parquet" \
     > "$WORK/plugin-cmake.log" 2>&1 || { tail -50 "$WORK/plugin-cmake.log"; die "plugin configure"; }
 cmake --build . -j"$(sysctl -n hw.ncpu)" > "$WORK/plugin-build.log" 2>&1 \
     || { grep -nE "error:" "$WORK/plugin-build.log" | head; die "plugin build"; }
-PLUGIN_DYLIB="$(find "$PLUGIN_BUILD" -name 'ogr_Parquet.dylib' -print -quit)"
-[ -n "$PLUGIN_DYLIB" ] || die "ogr_Parquet.dylib was not produced"
+# GDAL builds the driver as a MODULE library, which cmake names ogr_Parquet.so even on macOS.
+PLUGIN_DYLIB="$(find "$PLUGIN_BUILD" \( -name 'ogr_Parquet.dylib' -o -name 'ogr_Parquet.so' \) -print -quit)"
+if [ -z "$PLUGIN_DYLIB" ]; then
+    echo "build dir contents:"; find "$PLUGIN_BUILD" -name 'ogr_Parquet*' -o -name '*.so' -o -name '*.dylib'
+    die "ogr_Parquet.{so,dylib} was not produced"
+fi
 
 step "5. stage into the package; delocate (cibuildwheel repair) vendors Arrow, excludes libgdal"
 mkdir -p "$PKG_PLUGINS"
 cp "$PLUGIN_DYLIB" "$PKG_PLUGINS/"
+PLUGIN_NAME="$(basename "$PLUGIN_DYLIB")"
 cp "$GDAL_SRC/LICENSE.TXT" "$PKG_PLUGINS/GDAL-LICENSE.txt"
 cp "$WORK/apache-arrow-${ARROW_VERSION}/LICENSE.txt" "$PKG_PLUGINS/Arrow-LICENSE.txt"
 cp "$WORK/apache-arrow-${ARROW_VERSION}/NOTICE.txt" "$PKG_PLUGINS/Arrow-NOTICE.txt"
 # @rpath so the loader finds the delocated Arrow dylibs beside the plugin, and core's libgdal
 # from the installed pyramids-core (delocate leaves libgdal external via --exclude).
-install_name_tool -add_rpath "@loader_path" "$PKG_PLUGINS/ogr_Parquet.dylib" || true
+install_name_tool -add_rpath "@loader_path" "$PKG_PLUGINS/$PLUGIN_NAME" || true
 echo "staged $(basename "$PLUGIN_DYLIB") into $PKG_PLUGINS"

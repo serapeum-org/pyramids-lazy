@@ -66,6 +66,10 @@ on:
 # this wheel registers through.
 env:
   PINNED_CORE_VERSION: "0.81.0"
+  # The GDAL the pinned core links. Linux/macOS derive it from the downloaded
+  # libgdal; Windows cannot (its gdal-<hash>.dll carries no version), so it is
+  # passed explicitly. Bump together with core and the digest table.
+  PINNED_GDAL_VERSION: "3.13.3"
 
 concurrency:
   # Per-run group (unique run_id) for push / workflow_run so a merge to main or a release is
@@ -191,6 +195,7 @@ jobs:
             PYRAMIDS_LAZY_NATIVE=1 OUTPUT=C:/pp-out
             PLAT=win_amd64
             CORE_VERSION=${{ inputs.core-version || env.PINNED_CORE_VERSION }}
+            GDAL_VERSION=${{ inputs.gdal-version || env.PINNED_GDAL_VERSION }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: wheels-windows-AMD64
@@ -246,7 +251,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ldd --version | head -1
+          ldd --version | head -1 || true
           pip install "$(ls wheelhouse/*.whl)" --only-binary=:all:
           python ci/parquet-plugin/verify.py --via-entry-point
 

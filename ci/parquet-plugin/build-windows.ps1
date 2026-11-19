@@ -39,12 +39,28 @@ $coreGdal = Get-ChildItem -Recurse "$Work/core" -Filter "gdal-*.dll" |
     Where-Object { $_.FullName -notmatch "gdalplugins" } | Select-Object -First 1
 if (-not $coreGdal) { throw "no gdal-*.dll in the core win_amd64 wheel" }
 Write-Host "vendored libgdal : $($coreGdal.Name)"
-# The import library (.lib) the plugin links against; core's wheel ships the DLL, so generate an
-# import lib from it if one is not present (CI-iteration item -- may need dumpbin/lib /def).
-$gdalVersion = if ($env:GDAL_VERSION) { $env:GDAL_VERSION } else {
-    if ($coreGdal.Name -match '(\d+\.\d+\.\d+)') { $Matches[1] }
-    else { throw "cannot derive GDAL version from $($coreGdal.Name)" }
-}
+# GDAL_VERSION is passed in (PINNED_GDAL_VERSION): the Windows DLL name is gdal-<hash>.dll with
+# NO version, so it cannot be derived like the Linux soname.
+$gdalVersion = $env:GDAL_VERSION
+if (-not $gdalVersion) { throw "GDAL_VERSION must be set (the win DLL name carries no version)" }
+
+# Core's wheel ships only the DLL, no import .lib, so generate one from the DLL's exports to link
+# the plugin against. dumpbin + lib come from MSVC; bring the VS dev environment onto PATH.
+$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+$vcTools = "Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
+$vsPath = & $vswhere -latest -products * -requires $vcTools -property installationPath
+Import-Module (Join-Path $vsPath "Common7\Tools\Microsoft.VisualStudio.DevShell.dll")
+Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64"
+$gdalLib = "$Work/gdal.lib"
+$def = "$Work/gdal.def"
+"EXPORTS" | Set-Content $def
+# dumpbin /exports lines look like: "    1    0 0000ABCD  SymbolName" -- take the 4th column.
+& dumpbin /nologo /exports $coreGdal.FullName |
+    Select-String -Pattern '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\S+)' |
+    ForEach-Object { $_.Matches[0].Groups[1].Value } | Add-Content $def
+& lib /nologo "/def:$def" "/out:$gdalLib" /machine:x64
+if ($LASTEXITCODE -ne 0) { throw "could not build an import lib from $($coreGdal.Name)" }
+Write-Host "generated import lib: $gdalLib ($((Get-Content $def).Count - 1) symbols)"
 
 Write-Host "=== 2. GDAL $gdalVersion sources + cpl_config.h from conda win-64 libgdal-core ==="
 curl.exe -fsSL -o gdal.tar.gz "https://download.osgeo.org/gdal/$gdalVersion/gdal-$gdalVersion.tar.gz"
@@ -90,7 +106,7 @@ New-Item -ItemType Directory -Force -Path $pluginBuild | Out-Null
 Push-Location $pluginBuild
 # GDAL_LIBRARY wants an import .lib; generating it from the DLL is the known CI-iteration step.
 cmake "$gdalSrc/ogr/ogrsf_frmts/parquet" -DCMAKE_BUILD_TYPE=Release `
-    "-DCMAKE_PREFIX_PATH=$arrowPrefix" "-DGDAL_INCLUDE_DIR=$genInclude" "-DGDAL_LIBRARY=$($coreGdal.FullName)" `
+    "-DCMAKE_PREFIX_PATH=$arrowPrefix" "-DGDAL_INCLUDE_DIR=$genInclude" "-DGDAL_LIBRARY=$gdalLib" `
     "-DArrow_DIR=$arrowPrefix/lib/cmake/Arrow" "-DParquet_DIR=$arrowPrefix/lib/cmake/Parquet" `
     "-DArrowDataset_DIR=$arrowPrefix/lib/cmake/ArrowDataset" -DGDAL_USE_ARROWDATASET=ON
 if ($LASTEXITCODE -ne 0) { throw "plugin configure" }
