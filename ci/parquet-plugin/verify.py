@@ -280,7 +280,9 @@ def driver_path(plugins: Path, existing: str) -> str:
     return os.pathsep.join(parts)
 
 
-def check_driver(plugins: Path, via_entry_point: bool) -> None:
+def check_driver(  # pragma: no cover - needs a real install + loadable plugin
+    plugins: Path, via_entry_point: bool
+) -> None:
     """Assertions 3 + 4: GDAL registers the driver, and a .parquet round-trips.
 
     Unless ``via_entry_point`` is set this mutates the process environment before importing
@@ -342,7 +344,9 @@ def check_driver(plugins: Path, via_entry_point: bool) -> None:
         _round_trip(driver, Path(scratch) / "points.parquet")
 
 
-def _round_trip(driver, target: Path) -> None:
+def _round_trip(  # pragma: no cover - reached only from check_driver
+    driver, target: Path
+) -> None:
     """Write five points, read them back, and reach a GeoDataFrame.
 
     Args:
@@ -436,5 +440,5 @@ def main(argv: list[str]) -> int:
     return 0
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - process entry point
     raise SystemExit(main(sys.argv))
