@@ -22,8 +22,10 @@ classifiers = [
     "Intended Audience :: Developers",
 ]
 
-# No GDAL here: the plugin inherits pyramids-core's vendored GDAL (constraint C2). Declaring GDAL
-# would risk a second, ABI-mismatched libgdal on the path.
+# No GDAL dependency here, deliberately. The native wheel carries the OGR-Parquet driver + its
+# Arrow runtime in `pyramids_lazy/gdalplugins/` and links pyramids-core's vendored libgdal by
+# soname at load time (via `GDAL_DRIVER_PATH`); it does NOT ship or declare GDAL itself.
+# Declaring GDAL would risk a second, ABI-mismatched libgdal on the path (constraint C2).
 dependencies = [
     # 0.81.0 is the release that routes the dataset lazy ops through the compute-backend seam and
     # re-exports the reduce_axis / _SUPPORTED_OPS / _NAN_TABLE primitives this backend imports
@@ -48,6 +50,14 @@ parquet = ["pyarrow>=10.0.0", "dask-geopandas>=0.5.0"]
 [project.entry-points."pyramids.compute_backend"]
 lazy = "pyramids_lazy.backend:backend"
 
+# core's GDAL bootstrap resolves this group with importlib.metadata (no import of this
+# package), appends `<module>/gdalplugins` to GDAL_DRIVER_PATH, and so finds the bundled
+# ogr_Parquet driver. Present in every wheel; only the native (platform) wheels actually
+# contain gdalplugins/, so on a pure source install the directory is simply absent and GDAL
+# finds no extra driver.
+[project.entry-points."pyramids.gdal_plugin_path"]
+parquet = "pyramids_lazy"
+
 [project.urls]
 Homepage = "https://github.com/serapeum-org/pyramids-lazy"
 Repository = "https://github.com/serapeum-org/pyramids-lazy"
@@ -59,6 +69,14 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# The native wheels carry the compiled driver + Arrow runtime + the vendored-component licence
+# files, staged into src/pyramids_lazy/gdalplugins/ by ci/parquet-plugin/build.sh before the
+# build. Absent on a pure source checkout (the glob simply matches nothing), present in the
+# platform wheels. include-package-data stays off so the sdist does not accidentally try to
+# ship built binaries.
+[tool.setuptools.package-data]
+pyramids_lazy = ["gdalplugins/*"]
 
 [dependency-groups]
 dev = [
