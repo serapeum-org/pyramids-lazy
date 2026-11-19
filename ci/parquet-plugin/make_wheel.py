@@ -252,7 +252,14 @@ def _assert_interpreter_independent(stage: Path) -> list[str]:
 
     objects = sorted(p for p in stage.glob("*.so*") if p.is_file())
     for obj in objects:
-        for dependency in needed(str(obj)):
+        # A staged object that is truncated or not ELF raised ValueError straight out of
+        # this packager, bypassing the libpython assertion it is here to make. Report which
+        # file is unreadable instead.
+        try:
+            dependencies = needed(str(obj))
+        except ValueError as exc:
+            raise SystemExit(f"{obj.name} is not a readable ELF object: {exc}") from exc
+        for dependency in dependencies:
             if "libpython" in dependency:
                 raise SystemExit(
                     f"{obj.name} links {dependency}; a py3-none wheel must not depend on "

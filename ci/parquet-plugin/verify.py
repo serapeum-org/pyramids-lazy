@@ -106,23 +106,20 @@ def check_link(plugins: Path) -> str:
         SystemExit: If the core carries no libgdal, that libgdal or the plugin is not an ELF
             object, the plugin directory holds no ``ogr_Parquet.so`` / ``.dylib``, the sonames
             disagree, or a staged object links ``libpython``.
-        ValueError: If an object carries ELF magic but cannot be parsed -- truncated, 32-bit, or
-            otherwise corrupt. :func:`_require_elf` screens out foreign formats, not damaged
-            ELF, so this escapes undiagnosed.
+            A damaged object -- ELF magic but truncated, 32-bit or corrupt -- is reported the
+            same way, by :func:`_parsed_needed` / :func:`_parsed_soname`, rather than escaping
+            as the parser's ``ValueError``.
     """
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from soname import needed, soname  # noqa: PLC0415 - sibling script
-
     libs = _core_libs()
     installed = sorted(libs.glob("libgdal*.so*")) + sorted(libs.glob("libgdal*.dylib"))
     if not installed:
         raise SystemExit(f"no libgdal in {libs}")
-    installed_soname = soname(str(_require_elf(installed[0]))) or installed[0].name
+    installed_soname = _parsed_soname(installed[0]) or installed[0].name
     drivers = sorted(plugins.glob("ogr_Parquet.*"))
     drivers = [p for p in drivers if p.suffix in {".so", ".dylib"}]
     if not drivers:
         raise SystemExit(f"no ogr_Parquet.so or .dylib in {plugins}")
-    plugin_needs = needed(str(_require_elf(drivers[0])))
+    plugin_needs = _parsed_needed(drivers[0])
 
     print(f"  installed libgdal   : {installed[0].name}")
     print(f"  its DT_SONAME       : {installed_soname}")
@@ -136,7 +133,7 @@ def check_link(plugins: Path) -> str:
     # nothing and the libpython assertion passed by examining an empty set.
     staged = sorted(plugins.glob("*.so*")) + sorted(plugins.glob("*.dylib"))
     for obj in staged:
-        for dependency in needed(str(_require_elf(obj))):
+        for dependency in _parsed_needed(obj):
             if "libpython" in dependency:
                 raise SystemExit(
                     f"{obj.name} links {dependency}; py3-none tag is a lie"
@@ -170,6 +167,55 @@ def _require_elf(path: Path) -> Path:
             "ELF only, so the macOS build is not supported yet"
         )
     return path
+
+
+def _parsed_needed(path: Path) -> list[str]:
+    """Read an object's ``DT_NEEDED``, reporting a damaged file as a diagnosis.
+
+    ``_require_elf`` screens out foreign formats by magic, but an object that carries ELF
+    magic and is then truncated or corrupt still raises ``ValueError`` from the parser --
+    which escaped this script untouched, past the very assertions it exists to make. A
+    verifier must exit saying what is wrong with which file.
+
+    Args:
+        path: The object to read.
+
+    Returns:
+        list[str]: Its ``DT_NEEDED`` entries.
+
+    Raises:
+        SystemExit: If it is not ELF, or is ELF but cannot be parsed.
+    """
+    _require_elf(path)
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from soname import needed
+
+    try:
+        return needed(str(path))
+    except ValueError as exc:
+        raise SystemExit(f"{path.name} is not a readable ELF object: {exc}") from exc
+
+
+def _parsed_soname(path: Path) -> str | None:
+    """Read an object's ``DT_SONAME``, reporting a damaged file as a diagnosis.
+
+    Args:
+        path: The object to read.
+
+    Returns:
+        str | None: Its ``DT_SONAME``, or ``None`` when it declares none.
+
+    Raises:
+        SystemExit: If it is not ELF, or is ELF but cannot be parsed.
+    """
+    _require_elf(path)
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from soname import soname as read_soname
+
+    try:
+        return read_soname(str(path))
+    except ValueError as exc:
+        raise SystemExit(f"{path.name} is not a readable ELF object: {exc}") from exc
 
 
 def driver_path(plugins: Path, existing: str) -> str:

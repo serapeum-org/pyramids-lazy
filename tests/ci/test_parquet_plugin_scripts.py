@@ -1076,6 +1076,71 @@ class TestVerifyNonElfObjects:
             verify.check_link(plugins)
 
 
+class TestDamagedElfObjects:
+    """ELF magic is not enough: a truncated object must still exit with a diagnosis."""
+
+    def test_a_truncated_staged_library_stops_the_link_check(
+        self, tmp_path, monkeypatch
+    ):
+        """It escaped as `ValueError` past the libpython assertion it should have failed.
+
+        Test scenario:
+            `_require_elf` screens foreign formats by magic, so an object that is genuinely
+            ELF but cut short sailed through it and raised out of the parser instead.
+        """
+        libs = tmp_path / "pyramids_core.libs"
+        libs.mkdir()
+        core = "libgdal-abc.so.39"
+        (libs / core).write_bytes(_elf(so_name=core))
+        plugins = tmp_path / "gdalplugins"
+        plugins.mkdir()
+        (plugins / "ogr_Parquet.so").write_bytes(_elf(needed=(core,)))
+        (plugins / "libarrow.so.2600").write_bytes(
+            _elf(so_name="libarrow.so.2600")[:0x30]
+        )
+        monkeypatch.setattr(verify, "_core_libs", lambda: libs)
+
+        with pytest.raises(SystemExit, match="not a readable ELF object"):
+            verify.check_link(plugins)
+
+    def test_a_truncated_core_library_stops_the_link_check(self, tmp_path, monkeypatch):
+        """The core's own libgdal goes through a different reader than the staged objects."""
+        libs = tmp_path / "pyramids_core.libs"
+        libs.mkdir()
+        core = "libgdal-abc.so.39"
+        (libs / core).write_bytes(_elf(so_name=core)[:0x30])
+        plugins = tmp_path / "gdalplugins"
+        plugins.mkdir()
+        (plugins / "ogr_Parquet.so").write_bytes(_elf(needed=(core,)))
+        monkeypatch.setattr(verify, "_core_libs", lambda: libs)
+
+        with pytest.raises(SystemExit, match="not a readable ELF object"):
+            verify.check_link(plugins)
+
+    def test_a_truncated_staged_library_stops_the_packager(self, tmp_path):
+        """The same object must not reach a published wheel unexamined."""
+        import argparse
+
+        root = tmp_path / "out"
+        plugins = root / "gdalplugins"
+        plugins.mkdir(parents=True)
+        (plugins / "ogr_Parquet.so").write_bytes(_elf(needed=("libgdal-abc.so.39",)))
+        (plugins / "libarrow.so.2600").write_bytes(
+            _elf(so_name="libarrow.so.2600")[:0x30]
+        )
+
+        with pytest.raises(SystemExit, match="not a readable ELF object"):
+            make_wheel.build(
+                argparse.Namespace(
+                    stage=str(root),
+                    version="0.1.0",
+                    plat="manylinux_2_28_x86_64",
+                    core_requires="pyramids-core==0.80.0",
+                    outdir=str(tmp_path / "dist"),
+                )
+            )
+
+
 class TestVerifyDriverPath:
     """Composing GDAL_DRIVER_PATH without discarding what is already there."""
 
