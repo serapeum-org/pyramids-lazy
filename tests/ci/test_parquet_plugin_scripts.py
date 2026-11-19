@@ -5,10 +5,16 @@ tested rather than trusted. The riskiest of them is `soname.py`: it parses ELF b
 getting it wrong yields a plugin that fails at `dlopen` time in a user's environment rather than
 in CI.
 
-No large binary fixture is committed. `_elf()` synthesises a minimal, valid ELF64 shared object
-with exactly the dynamic entries a case needs, which makes every assertion deterministic and lets
-the error paths (truncated file, wrong class, no dynamic section) be exercised at all — a real
-`libgdal` could not express them.
+No large binary fixture is committed. `_elf()` synthesises an ELF64 object carrying exactly the
+program headers and dynamic entries a case needs. It is structurally well-formed and parseable,
+but it is deliberately not a *loadable* library: it has no section headers, no code and no real
+segments. That is the point -- it lets the error paths (truncated file, wrong class, wrong
+endianness, two dynamic sections, a string index past the table) be exercised at all, which a
+real `libgdal` cannot express.
+
+Because the fixture is built from the same ELF64 offsets the parser reads, agreement between the
+two proves only self-consistency. `TestAgainstARealLibrary` therefore cross-checks `soname()`
+against the system's own tooling on a real shared object, and is skipped where neither exists.
 
 The scripts live under `ci/`, which is not an importable package (the directory name has a
 hyphen), so they are loaded from their paths.
@@ -17,7 +23,10 @@ hyphen), so they are loaded from their paths.
 from __future__ import annotations
 
 import importlib.util
+import re
+import shutil
 import struct
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -53,7 +62,7 @@ make_wheel = _load("make_wheel.py")
 verify = _load("verify.py")
 
 _PT_LOAD, _PT_DYNAMIC = 1, 2
-_DT_NULL, _DT_NEEDED, _DT_STRTAB, _DT_SONAME = 0, 1, 5, 14
+_DT_NULL, _DT_NEEDED, _DT_STRTAB, _DT_STRSZ, _DT_SONAME = 0, 1, 5, 10, 14
 
 
 def _elf(
@@ -61,10 +70,14 @@ def _elf(
     so_name: str | None = None,
     needed: tuple[str, ...] = (),
     elf_class: int = 2,
+    elf_data: int = 1,
     magic: bytes = b"\x7fELF",
     with_dynamic: bool = True,
     with_strtab: bool = True,
+    with_strsz: bool = True,
     strtab_vaddr: int | None = None,
+    strtab_size: int | None = None,
+    extra_dynamic: bool = False,
 ) -> bytes:
     """Build a minimal ELF64 shared object carrying the given dynamic entries.
 
@@ -75,10 +88,14 @@ def _elf(
         so_name: Value for `DT_SONAME`, or `None` to omit it.
         needed: Values for `DT_NEEDED`, in order.
         elf_class: `2` for ELF64; anything else makes the parser reject the file.
+        elf_data: `EI_DATA`; `1` is little-endian, `2` forges a big-endian object.
         magic: Leading bytes; override to forge a non-ELF file.
         with_dynamic: Emit the `PT_DYNAMIC` segment.
         with_strtab: Emit `DT_STRTAB`.
+        with_strsz: Emit `DT_STRSZ`, which bounds the string table.
         strtab_vaddr: Override the string-table address, to point it outside every `PT_LOAD`.
+        strtab_size: Override `DT_STRSZ`, to shrink the table below an index that is in use.
+        extra_dynamic: Emit a second `PT_DYNAMIC`, which an object may not have.
 
     Returns:
         bytes: The synthetic object.
@@ -94,12 +111,13 @@ def _elf(
     soname_offset = add(so_name) if so_name is not None else None
 
     phoff, phentsize = 64, 56
-    phnum = 2 if with_dynamic else 1
+    phnum = 1 + (1 if with_dynamic else 0) + (1 if extra_dynamic else 0)
     dynoff = phoff + phnum * phentsize
     count = (
         len(needed)
         + (1 if soname_offset is not None else 0)
         + (1 if with_strtab else 0)
+        + (1 if with_strsz else 0)
         + 1
     )
     dynsz = count * 16
@@ -110,6 +128,10 @@ def _elf(
         entries.append(
             (_DT_STRTAB, strtab_off if strtab_vaddr is None else strtab_vaddr)
         )
+    if with_strsz:
+        entries.append(
+            (_DT_STRSZ, len(strings) if strtab_size is None else strtab_size)
+        )
     if soname_offset is not None:
         entries.append((_DT_SONAME, soname_offset))
     entries.extend((_DT_NEEDED, off) for off in needed_offsets)
@@ -119,20 +141,26 @@ def _elf(
     out = bytearray(total)
     out[0:4] = magic
     out[4] = elf_class
-    out[5] = 1
+    out[5] = elf_data
     out[6] = 1
     struct.pack_into("<HHI", out, 16, 3, 0x3E, 1)
     struct.pack_into("<Q", out, 0x20, phoff)
+    struct.pack_into("<H", out, 0x34, 64)
     struct.pack_into("<HH", out, 0x36, phentsize, phnum)
 
     struct.pack_into("<I", out, phoff, _PT_LOAD)
     struct.pack_into("<QQ", out, phoff + 0x08, 0, 0)
-    struct.pack_into("<Q", out, phoff + 0x20, total)
+    struct.pack_into("<QQ", out, phoff + 0x20, total, total)
+    struct.pack_into("<Q", out, phoff + 0x30, 0x1000)
+    dynamic_slots = []
     if with_dynamic:
-        base = phoff + phentsize
+        dynamic_slots.append(phoff + phentsize)
+    if extra_dynamic:
+        dynamic_slots.append(phoff + phentsize * (2 if with_dynamic else 1))
+    for base in dynamic_slots:
         struct.pack_into("<I", out, base, _PT_DYNAMIC)
         struct.pack_into("<QQ", out, base + 0x08, dynoff, dynoff)
-        struct.pack_into("<Q", out, base + 0x20, dynsz)
+        struct.pack_into("<QQ", out, base + 0x20, dynsz, dynsz)
 
     for index, (tag, value) in enumerate(entries):
         struct.pack_into("<Qq", out, dynoff + index * 16, tag, value)
@@ -232,16 +260,139 @@ class TestMalformedInput:
 
     def test_a_missing_string_table_is_rejected(self, elf_file):
         """Without `DT_STRTAB` no name can be resolved."""
+        path = str(elf_file(with_strtab=False))
         with pytest.raises(ValueError, match="no DT_STRTAB"):
-            soname_mod.soname(
-                str(elf_file(with_strtab=True, strtab_vaddr=None, so_name=None))
-            )
-            soname_mod.soname(str(elf_file(with_strtab=False)))
+            soname_mod.soname(path)
+
+    def test_a_well_formed_object_without_a_soname_returns_none(self, elf_file):
+        """A driver plugin declares no `DT_SONAME`; that is an answer, not an error."""
+        assert soname_mod.soname(str(elf_file(so_name=None))) is None
 
     def test_a_string_table_outside_every_load_segment_is_rejected(self, elf_file):
         """A corrupt address must raise rather than silently read the wrong bytes."""
         with pytest.raises(ValueError, match="no PT_LOAD"):
             soname_mod.soname(str(elf_file(so_name="libx.so", strtab_vaddr=1 << 40)))
+
+    @pytest.mark.parametrize("keep", [8, 16, 0x25, 0x37, 64, 96])
+    def test_a_truncated_object_is_rejected_as_a_value_error(self, tmp_path, keep):
+        """A short read must arrive as `ValueError`, not the `struct.error` it used to raise.
+
+        `struct.error` does not subclass `ValueError`, so it bypassed the CLI's own handler and
+        surfaced as a traceback with exit 1 from the interpreter rather than a diagnosis.
+        """
+        path = tmp_path / "cut.so"
+        path.write_bytes(_elf(so_name="libx.so")[:keep])
+        with pytest.raises(ValueError):
+            soname_mod.soname(str(path))
+
+    def test_a_big_endian_object_is_rejected(self, elf_file):
+        """Every offset is unpacked little-endian, so a big-endian object must be refused."""
+        with pytest.raises(ValueError, match="little-endian"):
+            soname_mod.soname(str(elf_file(so_name="libx.so", elf_data=2)))
+
+    def test_a_second_dynamic_section_is_rejected(self, elf_file):
+        """Two `PT_DYNAMIC` segments made the result depend on program-header order."""
+        with pytest.raises(ValueError, match="more than one PT_DYNAMIC"):
+            soname_mod.soname(str(elf_file(so_name="libx.so", extra_dynamic=True)))
+
+    def test_a_string_index_past_the_table_is_rejected(self, elf_file):
+        """Reading past `DT_STRSZ` yielded a plausible but wrong name -- the worst outcome."""
+        with pytest.raises(ValueError, match="outside the"):
+            soname_mod.soname(str(elf_file(so_name="libgdal.so.39", strtab_size=1)))
+
+    def test_a_name_running_past_the_declared_table_is_rejected(self, elf_file):
+        """An index inside `DT_STRSZ` whose string is cut off by it must also be refused."""
+        with pytest.raises(ValueError, match="unterminated"):
+            soname_mod.soname(str(elf_file(so_name="libgdal.so.39", strtab_size=4)))
+
+    def test_an_unterminated_string_is_rejected(self, tmp_path):
+        """A table whose last string has no NUL must raise rather than run off the end."""
+        blob = bytearray(_elf(so_name="libgdal.so.39"))
+        while blob and blob[-1] == 0:
+            del blob[-1]
+        path = tmp_path / "unterminated.so"
+        path.write_bytes(bytes(blob))
+        with pytest.raises(ValueError):
+            soname_mod.soname(str(path))
+
+
+class TestAgainstARealLibrary:
+    """Cross-check the hand-rolled parser against an independent reader.
+
+    `_elf()` is built from the same ELF64 offsets `soname.py` reads, so the two agreeing proves
+    only that they agree. These tests parse a real shared object instead, and compare against the
+    system's own tooling where it exists. Skipped off Linux and where no `.so` or reader is
+    available, which is why the synthetic cases above carry the error-path coverage.
+    """
+
+    @staticmethod
+    def _a_real_shared_object() -> Path | None:
+        """Return some real ELF shared object from the running environment, or None."""
+        found = None
+        for root in sys.path:
+            if not root:
+                continue
+            candidates = (
+                sorted(Path(root).glob("**/*.so"))[:1] if Path(root).is_dir() else []
+            )
+            for candidate in candidates:
+                if candidate.is_file() and candidate.read_bytes()[:4] == b"\x7fELF":
+                    found = candidate
+                    break
+            if found is not None:
+                break
+        return found
+
+    @pytest.mark.skipif(
+        not sys.platform.startswith("linux"), reason="ELF is Linux-only here"
+    )
+    def test_the_parser_reads_a_real_object(self):
+        """A real `.so` must parse, and report dependencies that look like libraries."""
+        target = self._a_real_shared_object()
+        if target is None:
+            pytest.skip("no ELF shared object found on sys.path")
+        entries = soname_mod.needed(str(target))
+        assert all(entry and "\x00" not in entry for entry in entries)
+        declared = soname_mod.soname(str(target))
+        assert declared is None or declared.strip() == declared
+
+    @pytest.mark.skipif(
+        not sys.platform.startswith("linux"), reason="ELF is Linux-only here"
+    )
+    def test_the_parser_agrees_with_readelf(self):
+        """Independent confirmation: `readelf -d` must report the same soname and needs."""
+        target = self._a_real_shared_object()
+        if target is None:
+            pytest.skip("no ELF shared object found on sys.path")
+        if shutil.which("readelf") is None:
+            pytest.skip("readelf is not installed")
+        dump = subprocess.run(
+            ["readelf", "-d", str(target)],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        expected_needed = re.findall(r"\(NEEDED\).*?\[([^\]]+)\]", dump)
+        assert soname_mod.needed(str(target)) == expected_needed
+        expected_soname = re.findall(r"\(SONAME\).*?\[([^\]]+)\]", dump)
+        assert soname_mod.soname(str(target)) == (
+            expected_soname[0] if expected_soname else None
+        )
+
+
+class TestUsageWithoutDocstrings:
+    """`python -OO` strips docstrings, which the scripts must not depend on."""
+
+    @pytest.mark.parametrize("module", ["verify.py", "make_wheel.py"])
+    def test_each_script_describes_itself_without_its_docstring(self, module):
+        """`--help` used to crash under -OO because the summary was sliced out of `__doc__`."""
+        loaded = _load(module)
+        assert isinstance(loaded._SUMMARY, str)
+        assert loaded._SUMMARY.strip()
+
+    def test_the_soname_usage_line_is_a_literal(self):
+        """`soname.py`'s usage text is needed on the exit-2 path, where -OO must not break it."""
+        assert "soname.py" in soname_mod._USAGE
 
 
 class TestSonameCli:

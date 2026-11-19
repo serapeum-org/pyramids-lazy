@@ -27,6 +27,10 @@ import sys
 import zipfile
 from pathlib import Path
 
+# A literal, not `__doc__.splitlines()[0]`: python -OO strips docstrings, and indexing
+# None raised AttributeError instead of printing usage.
+_SUMMARY = "Assemble the pyramids-lazy-parquet wheel from a staged plugin directory."
+
 DISTRIBUTION = "pyramids-lazy-parquet"
 IMPORT_NAME = "pyramids_lazy_parquet"
 #: The entry-point group pyramids-core scans to find companion plugin directories. Core resolves
@@ -238,7 +242,7 @@ def main(argv: list[str]) -> int:
     Returns:
         int: ``0`` on success; failures raise ``SystemExit`` from :func:`build`.
     """
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=_SUMMARY)
     parser.add_argument("--stage", required=True, help="output dir written by build.sh")
     parser.add_argument("--version", required=True, help="distribution version")
     parser.add_argument(

@@ -29,6 +29,10 @@ import sys
 import tempfile
 from pathlib import Path
 
+# A literal, not `__doc__.splitlines()[0]`: python -OO strips docstrings, and indexing
+# None raised AttributeError instead of printing usage.
+_SUMMARY = "Prove a built plugin wheel actually works, not merely that it built."
+
 
 def _plugin_dir() -> Path:
     """Locate the installed plugin directory without importing the package.
@@ -182,7 +186,7 @@ def main(argv: list[str]) -> int:
     Returns:
         int: ``0`` when every assertion passed; failures raise ``SystemExit``.
     """
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=_SUMMARY)
     parser.add_argument(
         "--via-entry-point",
         action="store_true",
