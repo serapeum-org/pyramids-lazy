@@ -145,9 +145,17 @@ GDAL_SRC="$WORK/gdal-${GDAL_VERSION}"
 # which is exactly what an installed GDAL provides, so flattening is what the driver
 # expects. `cp -n` would silently keep the first copy of a colliding basename, so the
 # collision check below is performed rather than asserted in a comment.
+# Derived from the driver's TRANSITIVE include graph, not guessed: `gcore/multidim`,
+# `ogr/ogrsf_frmts/generic` and `frmts/mem` are reached only through other GDAL headers
+# (gdal_priv.h pulls in gdal_multidim_cpp.h, for instance), and leaving each one out cost a
+# 15-minute build to discover. Walking the graph over the 3.13.3 tree gives exactly these
+# nine directories, 326 headers, no colliding basenames, and leaves only the two GENERATED
+# headers unresolved -- which is what the conda package supplies.
+GDAL_HEADER_DIRS="gcore gcore/multidim port ogr ogr/ogrsf_frmts ogr/ogrsf_frmts/generic"
+GDAL_HEADER_DIRS="$GDAL_HEADER_DIRS frmts/mem alg apps"
 GEN_INCLUDE="$WORK/gdal-include"
 rm -rf "$GEN_INCLUDE" && mkdir -p "$GEN_INCLUDE"
-for sub in gcore port ogr ogr/ogrsf_frmts alg apps; do
+for sub in $GDAL_HEADER_DIRS; do
     find "$GDAL_SRC/$sub" -maxdepth 1 -name '*.h' -exec cp -n {} "$GEN_INCLUDE/" \;
 done
 cp "$GDAL_SRC/gcore/gdal_version.h.in" "$GEN_INCLUDE/gdal_version.h"
@@ -173,7 +181,7 @@ verify_sha256 "libgdal-core-${GDAL_VERSION}-${CONDA_SUBDIR}" "$WORK/libgdal-core
     || die "could not install the zstandard decoder"
 "$PY" "$SCRIPT_DIR/extract_cpl_config.py" "$WORK/libgdal-core.conda" "$GEN_INCLUDE" \
     || die "could not extract cpl_config.h"
-collisions="$(for sub in gcore port ogr ogr/ogrsf_frmts alg apps; do
+collisions="$(for sub in $GDAL_HEADER_DIRS; do
         find "$GDAL_SRC/$sub" -maxdepth 1 -name '*.h' -printf '%f\n'
 done | sort | uniq -d)"
 if [ -n "$collisions" ]; then
