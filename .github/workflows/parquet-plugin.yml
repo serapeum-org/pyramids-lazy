@@ -1,0 +1,209 @@
+name: Parquet Plugin - Build & Verify
+
+# Builds GDAL's OGR Parquet driver as a standalone plugin and packages it as the
+# `pyramids-lazy-parquet` platform wheel. The rationale -- why this is a separate distribution
+# (pyramids-lazy's own wheel must stay pure `py3-none-any`), and why the plugin is linked
+# directly against the libgdal inside a published pyramids-core wheel rather than relinked
+# after the fact -- is recorded on serapeum-org/pyramids-lazy#4 and in pyramids-core's
+# planning/bundle/ notes. Both are reachable; the planning file this used to point at is
+# untracked by convention, so it was a dead reference.
+#
+# Not wired into the release flow yet: this runs on demand and on pull requests that touch the
+# build, so the pipeline can be proven before anything is published. Phase 1 is manylinux only;
+# macOS, musllinux and win_amd64 follow (plan §Phases), and win_arm64 is excluded because vcpkg
+# compiles Arrow into libgdal there.
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      core-version:
+        description: "pyramids-core version to build against (blank = the pinned default)"
+        required: false
+        default: ""
+        type: string
+      gdal-version:
+        description: "override the GDAL version derived from the core wheel's soname"
+        required: false
+        default: ""
+        type: string
+      arrow-version:
+        description: "Arrow C++ version to build"
+        required: false
+        default: ""
+        type: string
+      plugin-version:
+        description: "version to stamp on the produced wheel"
+        required: false
+        default: "0.1.0.dev0"
+        type: string
+  pull_request:
+    paths:
+      - "ci/parquet-plugin/**"
+      - ".github/workflows/parquet-plugin.yml"
+      # NOT tests/ci/** -- this workflow never invokes pytest, and tests.yml already runs
+      # those tests on every pull request. Including it spent two ~15-minute docker
+      # builds, Arrow compile included, proving nothing the cheap job had not already.
+
+# The core release pull requests build against. Deliberately pinned rather than "latest on
+# PyPI": the GDAL version is derived from whatever core serves, and only the exact GDAL and
+# Arrow tarballs in build.sh's digest table are accepted. With "latest", the first core
+# release that bumps GDAL would fail this workflow on whatever unrelated PR happened to touch
+# these paths -- a correct refusal landing on the wrong change. Bump this together with the
+# digest table.
+env:
+  PINNED_CORE_VERSION: "0.80.0"
+
+concurrency:
+  group: parquet-plugin-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build (${{ matrix.plat }})
+    runs-on: ${{ matrix.runner }}
+    # The Arrow build is ~8 minutes and the whole job ~15; 45 bounds a hang without
+    # tripping on a slow runner. GitHub's default is 6 hours.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - plat: manylinux_2_28_x86_64
+            image: quay.io/pypa/manylinux_2_28_x86_64
+            runner: ubuntu-latest
+          - plat: manylinux_2_28_aarch64
+            image: quay.io/pypa/manylinux_2_28_aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build the plugin inside ${{ matrix.image }}
+        # The same image pyramids-core's Linux wheels are built in, so the plugin lands at the
+        # same libc floor as the wheel it links against.
+        env:
+          # Passed through the environment rather than interpolated into the script: a
+          # dispatch input lands in `run:` as text the shell would then parse.
+          CORE_VERSION: ${{ inputs.core-version || env.PINNED_CORE_VERSION }}
+          GDAL_VERSION: ${{ inputs.gdal-version }}
+          ARROW_VERSION: ${{ inputs.arrow-version || '26.0.1' }}
+          PLAT: ${{ matrix.plat }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          mkdir -p out dist
+          # /src is mounted read-only: the build reads the scripts and never needs to
+          # write into the checkout, and it runs as root in the container. /out stays
+          # writable.
+          docker run --rm \
+            -v "$PWD:/src:ro" -v "$PWD/out:/out" \
+            -e CORE_VERSION="$CORE_VERSION" \
+            -e GDAL_VERSION="$GDAL_VERSION" \
+            -e ARROW_VERSION="$ARROW_VERSION" \
+            -e PLAT="$PLAT" \
+            -e OUTPUT=/out \
+            "$IMAGE" \
+            bash /src/ci/parquet-plugin/build.sh
+
+      - name: Package the wheel
+        env:
+          PLUGIN_VERSION: ${{ inputs.plugin-version || '0.1.0.dev0' }}
+          PLAT: ${{ matrix.plat }}
+        run: |
+          set -euo pipefail
+          CORE_WHEEL="$(cat out/core-wheel.txt)"
+          # Pin to the exact core release the binaries were linked against: a different
+          # core build may carry a different libgdal soname, and then the plugin cannot
+          # load. `sed` echoes its input unchanged when the pattern misses, which turned an
+          # unexpected filename into the pin `pyramids-core==pyramids_core-0.80.0-...whl`
+          # -- unsatisfiable, and only discoverable by a user at install time. Match
+          # explicitly and stop if it does not.
+          CORE_VER="$(printf '%s' "$CORE_WHEEL" \
+            | sed -nE 's/^pyramids_core-([^-]+)-.*\.whl$/\1/p')"
+          if [ -z "$CORE_VER" ]; then
+            echo "cannot read a version out of core wheel name: $CORE_WHEEL" >&2
+            exit 1
+          fi
+          echo "core version: $CORE_VER"
+          python3 ci/parquet-plugin/make_wheel.py \
+            --stage out \
+            --version "$PLUGIN_VERSION" \
+            --plat "$PLAT" \
+            --core-requires "pyramids-core==${CORE_VER}" \
+            --outdir dist
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          # Must match build.sh's PYTAG (cp312), which selects the core wheel the plugin
+          # is linked against. Verifying on the runner image's default python instead
+          # meant an image bump could install a different core wheel, whose vendored
+          # libgdal may carry a different hashed soname -- `check_link` would then fail
+          # correctly for an infrastructure reason, which is the kind of red that gets
+          # waved through.
+          python-version: "3.12"
+
+      - name: Verify against a clean install
+        # Runs on BOTH arches, each verifying its own wheel: a runner can only install the
+        # core wheel for its own architecture, so cross-checking is impossible and the
+        # matrix is what gives coverage of each.
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          wheels=(dist/*.whl)
+          shopt -u nullglob
+          if [ "${#wheels[@]}" -ne 1 ]; then
+            echo "expected exactly one wheel in dist/, found ${#wheels[@]}" >&2
+            exit 1
+          fi
+          python3 -VV
+          python3 -m venv /tmp/venv
+          /tmp/venv/bin/python -m pip install -q --upgrade pip
+          # Installs pyramids-core too, via the Requires-Dist pin the packaging step set.
+          /tmp/venv/bin/python -m pip install -q "${wheels[0]}"
+          /tmp/venv/bin/python ci/parquet-plugin/verify.py
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: parquet-plugin-${{ matrix.plat }}
+          path: |
+            dist/*.whl
+            out/core-soname.txt
+            out/core-wheel.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  report:
+    name: report
+    needs: build
+    # Not `always()`: with no artifacts to download this job failed too, reporting one
+    # broken build as two red checks and hiding which one actually mattered. Not
+    # `== 'success'` either -- that is the implicit default, and with `fail-fast: false`
+    # it suppressed the summary for the arch that DID build whenever the other failed.
+    if: needs.build.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: artifacts
+        # A failed arch uploads nothing, so with one arch broken there may be no
+        # artifacts at all; that must not fail the summary on top of the build.
+        continue-on-error: true
+      - name: Summarise what was produced
+        run: |
+          {
+            echo "## Parquet plugin wheels"
+            echo
+            echo "| wheel | size | linked libgdal |"
+            echo "|---|---|---|"
+            shopt -s nullglob
+            for d in artifacts/*/; do
+              whl="$(find "$d" -name '*.whl' -print -quit)"
+              [ -n "$whl" ] || continue
+              soname=$(cat "$d/out/core-soname.txt" 2>/dev/null || echo "?")
+              size=$(du -h "$whl" | cut -f1)
+              echo "| \`$(basename "$whl")\` | $size | \`$soname\` |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

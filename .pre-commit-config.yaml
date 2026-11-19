@@ -94,17 +94,21 @@ repos:
         # src-layout path: the package lives at src/pyramids_lazy/.
         files: ^src/pyramids_lazy/
 
-  # beautysh + shell-lint are dormant parity scaffolding: the only shell script in the tree is the
-  # excluded tests/data/netcdf/download.sh, so both are no-ops until a first-party `.sh` lands.
+  # beautysh + shell-lint are LIVE as of ci/parquet-plugin/build.sh, the tree's first
+  # first-party shell script. They were dormant parity scaffolding before that (the only .sh
+  # was the excluded tests/data/netcdf/download.sh), and waking them turned up a beautysh
+  # crash and five shellcheck findings that had never had anything to run against.
   - repo: https://github.com/lovesegfault/beautysh
     rev: v6.2.1
     hooks:
       - id: beautysh
         name: "[bash - format] beautysh"
-        # beautysh 6.2.1 imports `pkg_resources`, which modern setuptools (>=81) and Python 3.12
-        # no longer provide by default — without this it crashes on import. Only our own shell
+        # beautysh 6.2.1 imports `pkg_resources`, which setuptools REMOVED in 81.0. Depending on
+        # a bare `setuptools` therefore stopped helping the moment that release went out: the hook
+        # crashed with ModuleNotFoundError the first time a first-party .sh woke it. The upper
+        # bound is the fix -- pkg_resources still ships below 81. Only our own shell
         # scripts are in scope; the tests/data helper is byte-faithful fixture territory.
-        additional_dependencies: ["setuptools"]
+        additional_dependencies: ["setuptools<81"]
         exclude: ^tests/data/
 
   # pre-commit-shell: checks shell scripts against shellcheck.
@@ -135,7 +139,7 @@ repos:
     hooks:
       - id: pytest-check
         name: pytest-check
-        entry: pytest -v --cov=src/pyramids_lazy --cov-report=term-missing -m "not live"
+        entry: pytest -v --cov=src/pyramids_lazy --cov=ci/parquet-plugin --cov-report=term-missing -m "not live"
         language: system
         pass_filenames: false
         always_run: true

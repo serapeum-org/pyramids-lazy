@@ -149,8 +149,8 @@ docs = { features = ["dev", "docs"], solve-group = "docs" }
 test = { cmd = "pytest -vvv", description = "Run the test suite" }
 # main / test-all: coverage-producing runs (XML for Codecov, term-missing for local reading),
 # mirroring the shared pixi task names across the org's repos.
-main = { cmd = "pytest -vvv --cov=src/pyramids_lazy -m 'not live' --cov-report=xml", description = "Run the main test suite with coverage" }
-test-all = { cmd = "pytest -vvv --cov=src/pyramids_lazy --cov-report=xml --cov-report=term-missing", description = "Run the whole suite with coverage" }
+main = { cmd = "pytest -vvv --cov=src/pyramids_lazy --cov=ci/parquet-plugin -m 'not live' --cov-report=xml", description = "Run the main test suite with coverage" }
+test-all = { cmd = "pytest -vvv --cov=src/pyramids_lazy --cov=ci/parquet-plugin --cov-report=xml --cov-report=term-missing", description = "Run the whole suite with coverage" }
 lint = { cmd = "ruff check . && ruff format --check .", description = "Lint and format check" }
 pydocstyle = { cmd = "pydocstyle --convention=google --add-ignore=D403 src/pyramids_lazy", description = "Docstring style check" }
 precommit = { cmd = "pre-commit run --all-files", description = "Run all pre-commit hooks" }
@@ -197,7 +197,12 @@ match = '(?!test_).*\.py'
 # Branch coverage, measured wherever the suite runs (the pixi tasks and the pre-commit
 # pytest-check hook alike), not just line coverage.
 branch = true
-source = ["src/pyramids_lazy"]
+# ci/parquet-plugin is included deliberately: those three scripts decide what goes into a
+# published wheel, tests/ci exercises them, and leaving them out meant coverage was
+# reported as if they did not exist. NOTE: listing it here is not enough -- a `--cov=` on
+# the command line REPLACES this setting, so every invocation that measures coverage has
+# to name it too (the pixi tasks below and the pre-commit pytest hook all do).
+source = ["src/pyramids_lazy", "ci/parquet-plugin"]
 
 [tool.commitizen]
 name = "cz_conventional_commits"

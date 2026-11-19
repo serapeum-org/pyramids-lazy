@@ -111,6 +111,20 @@ SUITE_REASONS: tuple[tuple[str, bool], ...] = (
         "installed pyramids-core has no open_mfdataset(chunks=) forwarder yet (#1458)",
         False,
     ),
+    # Deliberately NOT a dependency skip: nothing is missing, the platform simply has no ELF.
+    # `tests/ci` cross-checks `soname.py` against a real shared object, which only exists on
+    # Linux; the macOS and Windows legs have nothing to read and no install could change that.
+    ("ELF is Linux-only here", False),
+    # Deliberately NOT a dependency skip: `bash` is a system tool the lib.sh tests drive,
+    # not an optional dependency of this package, so no install could satisfy it.
+    ("bash unavailable on this machine", False),
+    # The zstd decoders the cpl_config.h extractor uses. NOT dependency skips: `compression
+    # .zstd` is a 3.14 stdlib module, and `zstandard` is a build-time tool the manylinux
+    # container pip-installs -- neither is a dependency of pyramids-lazy, and the extractor
+    # is tested through whichever decoder the running interpreter has.
+    ("stdlib zstd needs python 3.14", False),
+    ("zstandard unavailable on this machine", False),
+    ("zstd encoder unavailable on this machine", False),
 )
 
 
