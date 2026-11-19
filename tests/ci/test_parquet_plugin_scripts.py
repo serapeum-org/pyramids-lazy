@@ -22,6 +22,7 @@ hyphen), so they are loaded from their paths.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import os
 import re
@@ -64,6 +65,46 @@ def _load(name: str) -> ModuleType:
 soname_mod = _load("soname.py")
 make_wheel = _load("make_wheel.py")
 verify = _load("verify.py")
+
+
+def _exec_fresh(name: str) -> ModuleType:
+    """Execute one of the build scripts again, without registering it in `sys.modules`.
+
+    The module-level loads above already put `CI_DIR` on `sys.path`, so a script's own
+    bootstrap is a no-op by the time the second one runs. Re-executing a script against a
+    `sys.path` the test controls is the only way to observe that bootstrap at all.
+
+    Args:
+        name: File name, e.g. `"verify.py"`.
+
+    Returns:
+        ModuleType: A freshly executed module object.
+    """
+    path = CI_DIR / name
+    spec = importlib.util.spec_from_file_location(f"_fresh_{path.stem}", path)
+    assert spec is not None and spec.loader is not None, f"cannot load {path}"
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _run_under_oo(script: str, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run one of the scripts in a real `python -OO`, where `__doc__` is None.
+
+    Args:
+        script: File name, e.g. `"verify.py"`.
+        *args: Arguments to pass after the script path.
+
+    Returns:
+        subprocess.CompletedProcess: The finished process, with text streams.
+    """
+    return subprocess.run(
+        [sys.executable, "-OO", str(CI_DIR / script), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
 
 _PT_LOAD, _PT_DYNAMIC, _PT_NOTE = 1, 2, 4
 _DT_NULL, _DT_NEEDED, _DT_STRTAB, _DT_STRSZ, _DT_SONAME, _DT_DEBUG = 0, 1, 5, 10, 14, 21
@@ -212,6 +253,38 @@ def _without_dt_null(blob: bytes) -> bytes:
     return bytes(out)
 
 
+def _set_dynamic_value(blob: bytes, tag: int, value: int) -> bytes:
+    """Overwrite the value of the first dynamic entry carrying `tag`.
+
+    `_elf` computes its string-table indices from the strings it lays out, so a corrupt one
+    cannot be expressed through its keywords; this stamps the value directly.
+
+    Args:
+        blob: An object built by `_elf`.
+        tag: The `DT_*` tag whose value is replaced.
+        value: The signed value to stamp on it.
+
+    Returns:
+        bytes: The object with that entry rewritten.
+    """
+    (phoff,) = struct.unpack_from("<Q", blob, 0x20)
+    phentsize, phnum = struct.unpack_from("<HH", blob, 0x36)
+    out = bytearray(blob)
+    for index in range(phnum):
+        base = phoff + index * phentsize
+        (p_type,) = struct.unpack_from("<I", blob, base)
+        if p_type != _PT_DYNAMIC:
+            continue
+        (offset,) = struct.unpack_from("<Q", blob, base + 0x08)
+        (size,) = struct.unpack_from("<Q", blob, base + 0x20)
+        for pos in range(offset, offset + size, 16):
+            (found,) = struct.unpack_from("<Q", blob, pos)
+            if found == tag:
+                struct.pack_into("<q", out, pos + 8, value)
+                return bytes(out)
+    raise AssertionError(f"the fixture carries no dynamic entry with tag {tag}")
+
+
 @pytest.fixture
 def elf_file(tmp_path: Path):
     """Write a synthetic ELF and return its path.
@@ -295,6 +368,28 @@ class TestSoname:
 
         assert soname_mod.soname(str(path)) == "libgdal-abc.so.39"
 
+    def test_an_object_declaring_no_string_table_size_is_still_read(self, elf_file):
+        """`DT_STRSZ` is optional, so the file's own length has to bound the table instead.
+
+        Test scenario:
+            Without this the `strtab_size is None` arm of `_string` is never taken by any
+            test, and an object that omits `DT_STRSZ` would be rejected or misread unnoticed.
+        """
+        path = elf_file(so_name="libgdal-abc.so.39", with_strsz=False)
+
+        assert soname_mod.soname(str(path)) == "libgdal-abc.so.39"
+
+    def test_dependencies_are_read_without_a_string_table_size(self, elf_file):
+        """`needed` shares the same bound, so it must cope with an absent `DT_STRSZ` too."""
+        path = elf_file(
+            needed=("libgdal-abc.so.39", "libarrow.so.2600"), with_strsz=False
+        )
+
+        assert soname_mod.needed(str(path)) == [
+            "libgdal-abc.so.39",
+            "libarrow.so.2600",
+        ]
+
 
 class TestNeeded:
     """Reading `DT_NEEDED`, used to find the Arrow libraries and to reject `libpython`."""
@@ -357,6 +452,40 @@ class TestMalformedInput:
         path = tmp_path / "cut.so"
         path.write_bytes(_elf(so_name="libx.so")[:keep])
         with pytest.raises(ValueError):
+            soname_mod.soname(str(path))
+
+    @pytest.mark.parametrize("keep, message", [(4, "not ELF64"), (5, "little-endian")])
+    def test_a_file_too_short_to_identify_itself_is_rejected(
+        self, tmp_path, keep, message
+    ):
+        """`data[4]` and `data[5]` are read before any length is known.
+
+        Test scenario:
+            A 4- or 5-byte file carries valid ELF magic and nothing else. Indexing past it
+            raises `IndexError`, which is neither a `ValueError` nor a diagnosis, so the
+            length guards in front of the class and endianness checks are what is pinned
+            here -- the shortest truncation any other test exercises is 8 bytes.
+        """
+        path = tmp_path / "stub.so"
+        path.write_bytes(_elf(so_name="libx.so")[:keep])
+
+        with pytest.raises(ValueError, match=message):
+            soname_mod.soname(str(path))
+
+    def test_a_negative_string_index_is_rejected(self, tmp_path):
+        """A corrupt offset must be refused, not read backwards out of the dynamic section.
+
+        Test scenario:
+            `DT_SONAME`'s value is signed, and `-1` lands on the final byte of the
+            terminating `DT_NULL` -- a zero. Without the `index < 0` guard the reader finds
+            its terminator immediately and reports an empty soname as a successful answer.
+        """
+        path = tmp_path / "negative.so"
+        path.write_bytes(
+            _set_dynamic_value(_elf(so_name="libgdal.so.39"), _DT_SONAME, -1)
+        )
+
+        with pytest.raises(ValueError, match="outside the"):
             soname_mod.soname(str(path))
 
     def test_a_big_endian_object_is_rejected(self, elf_file):
@@ -514,11 +643,18 @@ class TestAgainstARealLibrary:
 
 
 class TestUsageWithoutDocstrings:
-    """`python -OO` strips docstrings, which the scripts must not depend on."""
+    """`python -OO` strips docstrings, which the scripts must not depend on.
+
+    The literal-attribute checks below cannot see the bug they describe: under an ordinary
+    interpreter `_SUMMARY = __doc__.splitlines()[0]` is a perfectly good non-empty string, so
+    reverting the fix leaves them green while `python -OO <script> --help` raises
+    `AttributeError: 'NoneType' object has no attribute 'splitlines'`. The subprocess tests
+    are the ones that prove it; the attribute checks only pin that the name still exists.
+    """
 
     @pytest.mark.parametrize("module", ["verify.py", "make_wheel.py"])
     def test_each_script_describes_itself_without_its_docstring(self, module):
-        """`--help` used to crash under -OO because the summary was sliced out of `__doc__`."""
+        """The summary is a module attribute, which the -OO tests below then exercise."""
         loaded = _load(module)
         assert isinstance(loaded._SUMMARY, str)
         assert loaded._SUMMARY.strip()
@@ -526,6 +662,108 @@ class TestUsageWithoutDocstrings:
     def test_the_soname_usage_line_is_a_literal(self):
         """`soname.py`'s usage text is needed on the exit-2 path, where -OO must not break it."""
         assert "soname.py" in soname_mod._USAGE
+
+    @pytest.mark.parametrize(
+        "script, summary",
+        [
+            ("verify.py", verify._SUMMARY),
+            ("make_wheel.py", make_wheel._SUMMARY),
+        ],
+    )
+    def test_each_script_prints_its_summary_under_oo(self, script, summary):
+        """Run for real under -OO: `--help` must reach argparse and name the script's job.
+
+        Test scenario:
+            With `__doc__` stripped to None, deriving the summary from it raises at import --
+            before argparse exists -- so the script dies on `--help` instead of describing
+            itself. A green exit plus the summary in stdout is the only proof the literal
+            survived optimisation.
+        """
+        result = _run_under_oo(script, "--help")
+
+        assert result.returncode == 0, f"-OO --help failed: {result.stderr}"
+        assert summary in result.stdout, (
+            f"the summary is missing from -OO --help output: {result.stdout!r}"
+        )
+
+    def test_the_soname_usage_line_survives_oo(self):
+        """`soname.py` has no argparse, so its exit-2 path prints `_USAGE` itself."""
+        result = _run_under_oo("soname.py")
+
+        assert result.returncode == 2, f"expected the usage exit code: {result.stderr}"
+        assert soname_mod._USAGE in result.stderr, (
+            f"the usage line is missing from -OO stderr: {result.stderr!r}"
+        )
+
+
+class TestScriptSysPathBootstrap:
+    """Each packaging script puts its own directory on `sys.path` to reach `soname.py`.
+
+    `verify.py` and `make_wheel.py` both do `from soname import needed` -- a bare name, with no
+    package to qualify it, because they run as loose scripts in a container where nothing is
+    installed. That import resolves only because each script inserts its own directory at
+    import time, and it must insert it exactly once: doing it per call grew `sys.path` without
+    bound and registered repeated modules under that generic name.
+    """
+
+    def test_verify_adds_its_own_directory(self, monkeypatch):
+        """Observable only against a `sys.path` the test has pruned first.
+
+        Test scenario:
+            The module-level loads at the top of this file already added `CI_DIR`, so the
+            insertion in whichever script loads second is a no-op in an ordinary run.
+        """
+        monkeypatch.setattr(sys, "path", [p for p in sys.path if p != str(CI_DIR)])
+
+        _exec_fresh("verify.py")
+
+        assert sys.path.count(str(CI_DIR)) == 1, (
+            f"CI_DIR was not inserted exactly once: {sys.path[:3]}"
+        )
+
+    def test_make_wheel_adds_its_own_directory(self, monkeypatch):
+        """The packager needs the same bootstrap, and states the same reason for it."""
+        monkeypatch.setattr(sys, "path", [p for p in sys.path if p != str(CI_DIR)])
+
+        _exec_fresh("make_wheel.py")
+
+        assert sys.path.count(str(CI_DIR)) == 1, (
+            f"CI_DIR was not inserted exactly once: {sys.path[:3]}"
+        )
+
+    def test_a_second_execution_does_not_duplicate_the_entry(self, monkeypatch):
+        """The `not in sys.path` guard is what keeps a re-import from stacking duplicates."""
+        monkeypatch.setattr(sys, "path", [p for p in sys.path if p != str(CI_DIR)])
+
+        _exec_fresh("verify.py")
+        _exec_fresh("verify.py")
+
+        assert sys.path.count(str(CI_DIR)) == 1, (
+            f"the entry was inserted twice: {sys.path[:3]}"
+        )
+
+    def test_the_inserted_directory_is_what_makes_the_bare_import_resolve(
+        self, monkeypatch, elf_file
+    ):
+        """Proves the bootstrap is load-bearing rather than cosmetic.
+
+        Test scenario:
+            `soname` is dropped from `sys.modules` first, so a cached copy left behind by an
+            earlier test cannot satisfy the import and make this pass for the wrong reason.
+            `_parsed_needed` then has to find `soname.py` through the entry the script added.
+        """
+        monkeypatch.setattr(sys, "path", [p for p in sys.path if p != str(CI_DIR)])
+        stale = sys.modules.pop("soname", None)
+        try:
+            fresh = _exec_fresh("verify.py")
+            needs = fresh._parsed_needed(elf_file(needed=("libgdal-abc.so.39",)))
+        finally:
+            if stale is not None:
+                sys.modules["soname"] = stale
+
+        assert needs == ["libgdal-abc.so.39"], (
+            f"the bare import did not resolve: {needs}"
+        )
 
 
 class TestSonameCli:
@@ -743,6 +981,55 @@ class TestWheelAssembly:
             names = set(zf.namelist())
         assert "pyramids_lazy_parquet/gdalplugins/ogr_Parquet.so" in names
         assert not [name for name in names if ".debug" in name]
+
+    def test_the_import_package_is_present_and_carries_no_api(
+        self, stage, tmp_path: Path
+    ):
+        """The entry point names a module, so `find_spec` needs a real package to find.
+
+        Test scenario:
+            Core resolves `parquet = pyramids_lazy_parquet` with `find_spec` and appends
+            `<module>/gdalplugins`. Without an importable `__init__.py` that returns None and
+            the driver silently never loads -- the plugin installs and does nothing. The body
+            must also stay API-free, since core deliberately never imports it: a docstring and
+            the `__all__` annotation, and nothing else that could fail at import.
+        """
+        wheel = self._build(stage, tmp_path / "dist")
+
+        with zipfile.ZipFile(wheel) as zf:
+            source = zf.read("pyramids_lazy_parquet/__init__.py").decode()
+        tree = ast.parse(source)
+        statements = [node for node in tree.body if not isinstance(node, ast.Expr)]
+        assert ast.get_docstring(tree), "the package must explain what it carries"
+        assert len(statements) == 1, (
+            f"the package must declare no API, found {len(statements)} statements"
+        )
+        assert isinstance(statements[0], ast.AnnAssign), (
+            f"expected only the __all__ annotation, got {ast.dump(statements[0])}"
+        )
+
+    def test_the_metadata_version_is_the_one_that_defines_license_file(
+        self, stage, tmp_path: Path
+    ):
+        """`License-File` was standardised by PEP 639 in Metadata 2.4, and is emitted here.
+
+        Test scenario:
+            Declaring 2.1 while emitting `License-File` works only because setuptools has
+            done it for years; it is a latent upload rejection. The two must agree, so both
+            the version and the field are pinned in one place.
+        """
+        wheel = self._build(stage, tmp_path / "dist")
+
+        with zipfile.ZipFile(wheel) as zf:
+            text = zf.read(
+                next(n for n in zf.namelist() if n.endswith("/METADATA"))
+            ).decode()
+        assert text.startswith("Metadata-Version: 2.4\n"), (
+            f"unexpected metadata version: {text.splitlines()[0]!r}"
+        )
+        assert "License-File: licenses/" in text, (
+            "License-File is the field that requires Metadata 2.4"
+        )
 
     def test_the_entry_point_core_scans_for_is_registered(self, stage, tmp_path: Path):
         """Without this, pyramids-core never learns the directory exists."""
@@ -1356,6 +1643,23 @@ class TestVerifyDriverPath:
         composed = verify.driver_path(Path("/a"), os.pathsep.join(["/a", "/b"]))
 
         assert composed.split(os.pathsep) == [str(Path("/a")), "/b"]
+
+    def test_a_directory_differing_only_by_a_trailing_separator_appears_once(self):
+        """The de-duplication normalises paths, so `/a/` and `/a` are one directory.
+
+        Test scenario:
+            The test above is satisfied on Linux by plain string equality, because
+            `str(Path("/a"))` is `/a` there -- so it cannot tell `os.path.normpath` from a
+            `part in parts` check. A trailing separator distinguishes them on both platforms,
+            and a duplicated directory makes GDAL scan it twice on every re-run.
+        """
+        existing = os.pathsep.join([f"/a{os.sep}", "/b"])
+
+        composed = verify.driver_path(Path("/a"), existing)
+
+        assert composed.split(os.pathsep) == [str(Path("/a")), "/b"], (
+            f"a trailing separator was treated as a second directory: {composed!r}"
+        )
 
 
 class TestVerifyLinkCheck:

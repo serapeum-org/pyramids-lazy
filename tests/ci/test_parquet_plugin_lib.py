@@ -130,6 +130,7 @@ class TestGdalVersionDerivation:
             "libgdal-58beb45a.so.39.3.13",
             "",
             "libarrow.so.2600",
+            "libgdal-58beb45a.so.39.3.13.3.1",
         ],
     )
     def test_a_name_with_no_version_fails_closed(self, soname):
@@ -206,6 +207,27 @@ class TestNeedsMembership:
 
         assert result.stdout.strip() == "ABSENT"
 
+    def test_an_empty_name_is_not_accepted(self):
+        """An empty soname means the reader failed, and must not satisfy the assertion.
+
+        Test scenario:
+            `soname.py` prints nothing when it cannot read the library, so an unguarded
+            caller can reach this with an empty `$2`. Reporting it as present would pass a
+            build whose plugin links nothing identifiable.
+        """
+        needs = "libgdal-58beb45a.so.39.3.13.3\\nlibarrow.so.2600"
+        result = _run(f'needs_contains "$(printf \'{needs}\')" "" || echo ABSENT')
+
+        assert result.stdout.strip() == "ABSENT"
+
+    def test_nothing_is_found_in_an_empty_list(self):
+        """A plugin whose DT_NEEDED could not be read must fail the assertion, not pass it."""
+        result = _run(
+            'needs_contains "" "libgdal-58beb45a.so.39.3.13.3" || echo ABSENT'
+        )
+
+        assert result.stdout.strip() == "ABSENT"
+
     def test_an_entry_in_the_middle_is_found(self):
         """Delimiting on newlines must work for interior entries, not just the first."""
         needs = "libarrow.so.2600\\nlibgdal-abc.so.39\\nlibstdc++.so.6"
@@ -247,6 +269,22 @@ class TestVendorableDeps:
     )
     def test_everything_else_is_left_alone(self, name):
         """libgdal comes from core; the rest come from the manylinux floor."""
+        result = _run(f'is_vendorable_dep "{name}" || echo SKIP')
+
+        assert result.stdout.strip() == "SKIP"
+
+    @pytest.mark.parametrize(
+        "name",
+        ["mylibarrow.so.2600", "gdal-libparquet.so.2600", "arrow.so.2600"],
+    )
+    def test_a_name_merely_containing_arrow_is_not_vendored(self, name):
+        """The patterns anchor at the start, so an unrelated library is not dragged in.
+
+        Test scenario:
+            Everything this returns true for is copied into the wheel and has its RPATH
+            rewritten. A substring match would vendor a library that belongs to core or to
+            the manylinux floor, and the wheel would then ship a second copy of it.
+        """
         result = _run(f'is_vendorable_dep "{name}" || echo SKIP')
 
         assert result.stdout.strip() == "SKIP"
