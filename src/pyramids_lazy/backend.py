@@ -277,6 +277,34 @@ class LazyComputeBackend:
 
         return from_array_lazy(array, chunks=chunks)
 
+    def resolve_dask_op(self, op_name: Any, *, skipna: Any) -> Any:
+        """Back ``DatasetCollection`` associative time reductions (duck-typed).
+
+        Returns the ``dask.array`` reduction callable; see
+        :func:`pyramids_lazy._reduce.resolve_dask_op`.
+        """
+        from pyramids_lazy._reduce import resolve_dask_op
+
+        return resolve_dask_op(op_name, skipna=skipna)
+
+    def build_group_reduction(self, group: Any, op: Any, **kwargs: Any) -> Any:
+        """Back ``DatasetCollection.reduce_time`` per-window reductions (duck-typed).
+
+        See :func:`pyramids_lazy._reduce.build_group_reduction`.
+        """
+        from pyramids_lazy._reduce import build_group_reduction
+
+        return build_group_reduction(group, op, **kwargs)
+
+    def compute(self, *arrays: Any) -> Any:
+        """Back the single-pass ``dask.compute`` batching of collection reductions (duck-typed).
+
+        See :func:`pyramids_lazy._reduce.compute`.
+        """
+        from pyramids_lazy._reduce import compute
+
+        return compute(*arrays)
+
 
 #: The singleton core resolves through the entry point. A single object, per the Protocol contract.
 backend = LazyComputeBackend()
