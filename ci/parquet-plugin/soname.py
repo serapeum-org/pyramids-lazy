@@ -91,7 +91,8 @@ def _dynamic_entries(data: bytes) -> tuple[list[tuple[int, int]], int, int | Non
 
     Raises:
         ValueError: If the file is not a little-endian ELF64 object, is truncated, carries no
-            dynamic section, or carries more than one.
+            dynamic section, carries more than one, declares no ``DT_STRTAB``, or places the
+            string table at a virtual address that no ``PT_LOAD`` segment covers.
     """
     if data[:4] != b"\x7fELF":
         raise ValueError("not an ELF file")
@@ -205,8 +206,8 @@ def soname(path: str) -> str | None:
         str | None: The declared soname, or ``None``.
 
     Raises:
-        ValueError: If ``path`` is not a readable little-endian ELF64 object with a dynamic
-            section.
+        ValueError: If ``path`` is not a little-endian ELF64 object with a parseable dynamic
+            section and string table.
         OSError: If ``path`` cannot be read.
     """
     data = _read(path)
@@ -225,8 +226,8 @@ def needed(path: str) -> list[str]:
         list[str]: The dependency names, empty when the object declares none.
 
     Raises:
-        ValueError: If ``path`` is not a readable little-endian ELF64 object with a dynamic
-            section.
+        ValueError: If ``path`` is not a little-endian ELF64 object with a parseable dynamic
+            section and string table.
         OSError: If ``path`` cannot be read.
     """
     data = _read(path)
@@ -245,8 +246,9 @@ def main(argv: list[str]) -> int:
         argv: Process argv. ``--needed`` switches to listing dependencies.
 
     Returns:
-        int: ``0`` on success, ``1`` when the value is absent or the file unreadable, ``2`` for
-            a usage error. ``build.sh`` runs under ``set -e``, so the code is the signal.
+        int: ``0`` on success, ``1`` when the file is unreadable, is not a parseable ELF64
+            object, or declares no ``DT_SONAME``, and ``2`` for a usage error. ``build.sh`` runs
+            under ``set -euo pipefail`` and captures stdout, so the code is the signal.
     """
     args = argv[1:]
     want_needed = False

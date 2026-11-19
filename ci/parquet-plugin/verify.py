@@ -98,11 +98,17 @@ def check_link(plugins: Path) -> str:
         plugins: The installed ``gdalplugins`` directory.
 
     Returns:
-        str: The soname of the libgdal actually installed.
+        str: The ``DT_SONAME`` of the libgdal actually installed, falling back to its file name
+            when it declares none. ``main`` prints it, so the run records which core build the
+            plugin was proved against.
 
     Raises:
-        SystemExit: If no libgdal is present, the sonames disagree, or an object links
-            ``libpython``.
+        SystemExit: If the core carries no libgdal, that libgdal or the plugin is not an ELF
+            object, the plugin directory holds no ``ogr_Parquet.so`` / ``.dylib``, the sonames
+            disagree, or a staged object links ``libpython``.
+        ValueError: If an object carries ELF magic but cannot be parsed -- truncated, 32-bit, or
+            otherwise corrupt. :func:`_require_elf` screens out foreign formats, not damaged
+            ELF, so this escapes undiagnosed.
     """
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from soname import needed, soname  # noqa: PLC0415 - sibling script
@@ -202,8 +208,9 @@ def check_driver(plugins: Path, via_entry_point: bool) -> None:
             default is the explicit route, which works against any released core.
 
     Raises:
-        SystemExit: If the driver does not register, or the round-trip does not return the
-            features that were written.
+        SystemExit: If the driver does not register, or :func:`_round_trip` cannot reopen what
+            it wrote, reads back a different feature count, or reaches a ``GeoDataFrame`` whose
+            rows have no geometry.
     """
     if not via_entry_point:
         # A released core forces GDAL_DRIVER_PATH to its own bundled dir unless this is
@@ -284,7 +291,11 @@ def main(argv: list[str]) -> int:
         argv: Process argv.
 
     Returns:
-        int: ``0`` when every assertion passed; failures raise ``SystemExit``.
+        int: ``0`` when every assertion passed. There is no non-zero return.
+
+    Raises:
+        SystemExit: The diagnosis raised by whichever assertion failed first -- discovery,
+            :func:`check_link`, then :func:`check_driver`.
     """
     parser = argparse.ArgumentParser(description=_SUMMARY)
     parser.add_argument(

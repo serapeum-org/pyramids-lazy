@@ -12,7 +12,7 @@ would infer.
 
 Usage:
     python3 make_wheel.py --stage /out --version 0.1.0 --plat manylinux_2_28_x86_64 \
-        --core-requires "pyramids-core>=0.81.0" --outdir dist
+        --core-requires "pyramids-core==0.81.0" --outdir dist
 """
 
 from __future__ import annotations
@@ -236,10 +236,14 @@ def _assert_interpreter_independent(stage: Path) -> list[str]:
         stage: The staged ``gdalplugins`` directory whose objects are inspected.
 
     Returns:
-        list[str]: The staged shared objects, for logging.
+        list[str]: Base names of the staged ``*.so*`` files, sorted. :func:`build` gates on
+            this -- it is where ``ogr_Parquet.so`` is confirmed present, and the list is
+            quoted back in that failure message -- so it is not merely a log line.
 
     Raises:
         SystemExit: If a staged object links ``libpython``.
+        ValueError: If a staged ``*.so*`` file is not a parseable ELF64 object. Nothing
+            filters the glob, so a stray non-ELF file with that suffix reaches the parser.
     """
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     # Deliberately local: this file runs as a script beside soname.py in a container with
@@ -269,8 +273,13 @@ def build(args: argparse.Namespace) -> Path:
         pathlib.Path: The wheel that was written.
 
     Raises:
-        SystemExit: If the staging directory is missing, the driver is absent from it, or any
-            staged object links ``libpython``.
+        SystemExit: If the staged ``gdalplugins`` directory is missing, any staged object links
+            ``libpython``, ``ogr_Parquet.so`` is absent from it, no licence files were staged,
+            or ``core-soname.txt`` / ``core-wheel.txt`` is missing or empty. They are checked in
+            that order, so a stage missing both its licences and its provenance reports the
+            licences.
+        ValueError: If a staged ``*.so*`` file is not a parseable ELF64 object, which
+            :func:`_assert_interpreter_independent` surfaces rather than diagnosing.
     """
     stage = Path(args.stage)
     plugins = stage / "gdalplugins"
@@ -377,7 +386,11 @@ def main(argv: list[str]) -> int:
         argv: Process argv.
 
     Returns:
-        int: ``0`` on success; failures raise ``SystemExit`` from :func:`build`.
+        int: ``0`` on success. There is no non-zero return: every failure raises.
+
+    Raises:
+        SystemExit: ``2`` from ``argparse`` when ``--core-requires`` is absent or ``--plat`` /
+            ``--version`` is malformed, or the diagnosis :func:`build` raises.
     """
     parser = argparse.ArgumentParser(description=_SUMMARY)
     parser.add_argument("--stage", required=True, help="output dir written by build.sh")
