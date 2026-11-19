@@ -90,9 +90,12 @@ def _dynamic_entries(data: bytes) -> tuple[list[tuple[int, int]], int, int | Non
             ``DT_STRSZ``.
 
     Raises:
-        ValueError: If the file is not a little-endian ELF64 object, is truncated, carries no
-            dynamic section, carries more than one, declares no ``DT_STRTAB``, or places the
-            string table at a virtual address that no ``PT_LOAD`` segment covers.
+        ValueError: If the file is not a little-endian ELF64 object, is truncated, declares no
+            program headers or an ``e_phentsize`` below the 56 bytes an ELF64 header occupies,
+            counts them with ``PN_XNUM`` (the real count then lives in the section headers,
+            which this parser does not read), carries no dynamic section, carries more than
+            one, declares no ``DT_STRTAB``, or places the string table at a virtual address
+            that no ``PT_LOAD`` segment covers.
     """
     if data[:4] != b"\x7fELF":
         raise ValueError("not an ELF file")
@@ -253,12 +256,16 @@ def main(argv: list[str]) -> int:
     """Print the soname, or with ``--needed`` the dependency list.
 
     Args:
-        argv: Process argv. ``--needed`` switches to listing dependencies.
+        argv: Process argv. ``--needed`` switches to listing dependencies, and may appear
+            before or after the path, or more than once.
 
     Returns:
-        int: ``0`` on success, ``1`` when the file is unreadable, is not a parseable ELF64
-            object, or declares no ``DT_SONAME``, and ``2`` for a usage error. ``build.sh`` runs
-            under ``set -euo pipefail`` and captures stdout, so the code is the signal.
+        int: ``0`` on success, ``1`` when the file is unreadable or is not a parseable ELF64
+            object -- and, without ``--needed``, when it declares no ``DT_SONAME`` -- and ``2``
+            for a usage error, meaning no path or more than one. An object that declares no
+            ``DT_NEEDED`` is not a failure: ``--needed`` prints nothing and returns ``0``.
+            ``build.sh`` runs under ``set -euo pipefail`` and captures stdout, so the code is
+            the signal.
     """
     # The flag is accepted in any position: `soname.py <file> --needed` used to treat
     # `--needed` as a second path and report a usage error about the wrong thing.

@@ -186,6 +186,9 @@ def _require_elf(path: Path) -> Path:
 
     Raises:
         SystemExit: If it is not an ELF object.
+        OSError: If ``path`` cannot be opened. Every caller takes its argument from a glob of
+            an existing directory, so this is a race or a permission problem rather than a
+            packaging fault, and is left to surface as itself.
     """
     with open(path, "rb") as handle:
         magic = handle.read(4)
@@ -209,10 +212,11 @@ def _parsed_needed(path: Path) -> list[str]:
         path: The object to read.
 
     Returns:
-        list[str]: Its ``DT_NEEDED`` entries.
+        list[str]: Its ``DT_NEEDED`` entries, empty when the object declares none.
 
     Raises:
         SystemExit: If it is not ELF, or is ELF but cannot be parsed.
+        OSError: If ``path`` cannot be read, which :func:`_require_elf` raises first.
     """
     _require_elf(path)
     from soname import needed
@@ -230,10 +234,12 @@ def _parsed_soname(path: Path) -> str | None:
         path: The object to read.
 
     Returns:
-        str | None: Its ``DT_SONAME``, or ``None`` when it declares none.
+        str | None: Its ``DT_SONAME``, or ``None`` when it declares none. A GDAL driver plugin
+            declares none, so ``None`` is a normal answer.
 
     Raises:
         SystemExit: If it is not ELF, or is ELF but cannot be parsed.
+        OSError: If ``path`` cannot be read, which :func:`_require_elf` raises first.
     """
     _require_elf(path)
     from soname import soname as read_soname
@@ -253,10 +259,14 @@ def driver_path(plugins: Path, existing: str) -> str:
 
     Args:
         plugins: The installed ``gdalplugins`` directory to put first.
-        existing: The current value, possibly empty.
+        existing: The current value, possibly empty, as ``os.pathsep``-separated entries.
 
     Returns:
-        str: The composed value, de-duplicated and with empty segments dropped.
+        str: The composed value: ``plugins`` first, then the entries of ``existing`` in order,
+            with empty segments dropped and duplicates removed. Two entries count as the same
+            when ``os.path.normcase(os.path.normpath(...))`` agrees, so a repeat that differs
+            only in case, in ``/`` versus ``\\``, or by a trailing separator or ``.`` component
+            is dropped. The surviving entries are emitted as given, not normalised.
     """
     parts = [str(plugins)]
     seen = {os.path.normcase(os.path.normpath(parts[0]))}
@@ -273,6 +283,11 @@ def driver_path(plugins: Path, existing: str) -> str:
 def check_driver(plugins: Path, via_entry_point: bool) -> None:
     """Assertions 3 + 4: GDAL registers the driver, and a .parquet round-trips.
 
+    Unless ``via_entry_point`` is set this mutates the process environment before importing
+    ``pyramids``: ``GDAL_DRIVER_PATH`` is rewritten by :func:`driver_path` and
+    ``PYRAMIDS_KEEP_GDAL_ENV`` is set to ``"1"``. Neither is restored, because core reads them
+    during its one-shot GDAL bootstrap at import and the script exits straight afterwards.
+
     Args:
         plugins: The installed ``gdalplugins`` directory.
         via_entry_point: Rely on core's ``pyramids.gdal_plugin_path`` seam instead of setting
@@ -280,9 +295,14 @@ def check_driver(plugins: Path, via_entry_point: bool) -> None:
             default is the explicit route, which works against any released core.
 
     Raises:
-        SystemExit: If the driver does not register, or :func:`_round_trip` cannot reopen what
-            it wrote, reads back a different feature count, or reaches a ``GeoDataFrame`` whose
-            rows have no geometry.
+        SystemExit: If the driver does not register -- ``ogr.GetDriverByName`` still answers
+            ``None`` rather than raising, even under ``gdal.UseExceptions()`` -- or if
+            :func:`_round_trip` cannot reopen what it wrote, reads back a different feature
+            count, or reaches a ``GeoDataFrame`` with the wrong number of rows or rows without
+            geometry.
+        RuntimeError: If :func:`_round_trip` cannot *write* the file. ``gdal.UseExceptions()``
+            makes that failure arrive from ``CopyDataSource``, which is not wrapped, so it
+            surfaces as GDAL's own error.
     """
     if not via_entry_point:
         # A released core forces GDAL_DRIVER_PATH to its own bundled dir unless this is
@@ -330,8 +350,13 @@ def _round_trip(driver, target: Path) -> None:
         target: Path to write the ``.parquet`` to.
 
     Raises:
-        SystemExit: If the file cannot be reopened, the feature count differs, or the
+        SystemExit: If the file cannot be reopened, the layer reports a feature count other
+            than five, ``datasource_to_gdf`` produces a different number of rows, or those
             rows reach pyramids without geometry.
+        RuntimeError: If ``driver.CopyDataSource`` cannot write ``target``. Under
+            ``gdal.UseExceptions()`` the write raises, and it is deliberately not wrapped: a
+            driver that registered but cannot write is a GDAL-level fault whose own message
+            says more than a rephrasing would.
     """
     from osgeo import ogr  # noqa: PLC0415
 
@@ -376,14 +401,16 @@ def main(argv: list[str]) -> int:
     """Run every assertion, printing what was checked.
 
     Args:
-        argv: Process argv.
+        argv: Process argv. ``--via-entry-point`` is the only option.
 
     Returns:
         int: ``0`` when every assertion passed. There is no non-zero return.
 
     Raises:
-        SystemExit: The diagnosis raised by whichever assertion failed first -- discovery,
-            :func:`check_link`, then :func:`check_driver`.
+        SystemExit: ``2`` from ``argparse`` for an unrecognised option, or ``0`` for ``--help``
+            -- both before any assertion runs. Otherwise the diagnosis raised by whichever
+            assertion failed first: discovery, then :func:`check_link`, then
+            :func:`check_driver`.
     """
     parser = argparse.ArgumentParser(description=_SUMMARY)
     parser.add_argument(

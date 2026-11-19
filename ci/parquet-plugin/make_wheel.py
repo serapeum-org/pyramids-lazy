@@ -102,7 +102,9 @@ def _licenses(stage: Path) -> list[tuple[str, bytes]]:
         list[tuple[str, bytes]]: ``(filename, contents)`` sorted by name.
 
     Raises:
-        SystemExit: If no licence files were staged.
+        SystemExit: If no licence files were staged, or any staged file is empty or holds
+            nothing but whitespace -- a truncated copy satisfies an existence check while
+            satisfying nothing Apache-2.0 asks for.
     """
     directory = stage / "licenses"
     found = sorted(directory.glob("*")) if directory.is_dir() else []
@@ -300,13 +302,14 @@ def build(args: argparse.Namespace) -> Path:
         pathlib.Path: The wheel that was written.
 
     Raises:
-        SystemExit: If the staged ``gdalplugins`` directory is missing, any staged object links
-            ``libpython``, ``ogr_Parquet.so`` is absent from it, no licence files were staged,
-            or ``core-soname.txt`` / ``core-wheel.txt`` is missing or empty. They are checked in
+        SystemExit: If the staged ``gdalplugins`` directory is missing, a staged ``*.so*`` file
+            is unreadable as an ELF64 object or links ``libpython``, ``ogr_Parquet.so`` is
+            absent from it, no licence files were staged or one of them is empty, or
+            ``core-soname.txt`` / ``core-wheel.txt`` is missing or empty. They are checked in
             that order, so a stage missing both its licences and its provenance reports the
-            licences.
-        ValueError: If a staged ``*.so*`` file is not a parseable ELF64 object, which
-            :func:`_assert_interpreter_independent` surfaces rather than diagnosing.
+            licences. Every one of these arrives as ``SystemExit``:
+            :func:`_assert_interpreter_independent` converts the ELF parser's ``ValueError``
+            into a diagnosis naming the file, so nothing reaches the caller as ``ValueError``.
     """
     stage = Path(args.stage)
     plugins = stage / "gdalplugins"
@@ -416,8 +419,10 @@ def main(argv: list[str]) -> int:
         int: ``0`` on success. There is no non-zero return: every failure raises.
 
     Raises:
-        SystemExit: ``2`` from ``argparse`` when ``--core-requires`` is absent or ``--plat`` /
-            ``--version`` is malformed, or the diagnosis :func:`build` raises.
+        SystemExit: ``2`` from ``argparse`` when any of ``--stage``, ``--version``, ``--plat``
+            or ``--core-requires`` is absent, or ``--plat`` / ``--version`` is malformed. That
+            happens before :func:`build` is reached, so a run with a bad stage *and* a bad
+            option reports the option. Otherwise, the diagnosis :func:`build` raises.
     """
     parser = argparse.ArgumentParser(description=_SUMMARY)
     parser.add_argument("--stage", required=True, help="output dir written by build.sh")

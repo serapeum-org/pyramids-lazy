@@ -72,10 +72,13 @@ def _package_payload(archive: pathlib.Path) -> bytes:
         archive: Path to the downloaded `.conda` file.
 
     Returns:
-        bytes: The compressed member.
+        bytes: The compressed member -- the first one whose name starts with `pkg-`, since a
+            `.conda` package carries exactly one.
 
     Raises:
         SystemExit: If the archive carries no `pkg-*` member.
+        zipfile.BadZipFile: If `archive` is not a zip, which a `.conda` package always is. Not
+            converted: "File is not a zip file" is already the diagnosis.
     """
     with zipfile.ZipFile(archive) as zf:
         members = [name for name in zf.namelist() if name.startswith("pkg-")]
@@ -127,8 +130,15 @@ def extract(archive: pathlib.Path, outdir: pathlib.Path) -> pathlib.Path:
         pathlib.Path: The written header.
 
     Raises:
-        SystemExit: If the package has no `include/cpl_config.h`, or the header is missing any
-            macro the plugin shares with libgdal.
+        SystemExit: If the archive carries no `pkg-*` member, no zstd decoder is available, the
+            package has no `include/cpl_config.h`, that entry is not a regular file, or the
+            header is missing any of the macros the plugin shares with libgdal -- they are
+            reported together, in `_REQUIRED_MACROS` order. The first two come from
+            :func:`_package_payload` and :func:`_decompress`, which run before the tar is
+            opened.
+        zipfile.BadZipFile: If `archive` is not a zip at all, so it cannot be a `.conda`
+            package. Left unwrapped: the message already says so, and the caller is a shell
+            script reading stderr.
     """
     stream = io.BytesIO(_decompress(_package_payload(archive)))
     with tarfile.open(fileobj=stream, mode="r:") as tf:
@@ -158,7 +168,15 @@ def main(argv: list[str]) -> int:
         argv: Process argv: the `.conda` package and the output directory.
 
     Returns:
-        int: ``0`` on success; failures raise ``SystemExit``.
+        int: ``0`` on success, or ``2`` when the argument count is not exactly two, after
+            printing the usage line to stderr. There is no other non-zero return -- every
+            other failure is raised.
+
+    Raises:
+        SystemExit: The diagnosis :func:`extract` raises when the package or the header it
+            carries is not what the build needs.
+        zipfile.BadZipFile: If the named package is not a zip, which :func:`extract` leaves
+            unwrapped.
     """
     if len(argv) != 3:
         print(
