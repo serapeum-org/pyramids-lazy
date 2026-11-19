@@ -14,7 +14,7 @@
 #
 # Environment contract:
 #   CORE_VERSION    pyramids-core release to target        (default: latest on PyPI)
-#   GDAL_VERSION    must match the wheel's libgdal         (default: 3.13.3)
+#   GDAL_VERSION    override the version derived from the wheel (default: derive it)
 #   ARROW_VERSION   Arrow C++ to build                     (default: 26.0.1)
 #   PLAT            wheel platform tag of the core wheel   (default: manylinux_2_28_x86_64)
 #   PYTAG           interpreter tag of the core wheel to download (default: cp312)
@@ -22,7 +22,7 @@
 set -euo pipefail
 
 CORE_VERSION="${CORE_VERSION:-}"
-GDAL_VERSION="${GDAL_VERSION:-3.13.3}"
+GDAL_VERSION="${GDAL_VERSION:-}"   # resolved from the core wheel's soname in step 1
 ARROW_VERSION="${ARROW_VERSION:-26.0.1}"
 PLAT="${PLAT:-manylinux_2_28_x86_64}"
 PYTAG="${PYTAG:-cp312}"
@@ -36,9 +36,12 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 
 mkdir -p "$WORK" "$OUTPUT"
 PY="$(command -v python3.12 || command -v python3)"
+# Resolved before any `cd`: every later use of soname.py runs from $WORK, where a
+# relative $0 would no longer point at this script.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 step "0. toolchain"
 echo "python=$PY  cmake=$(cmake --version | head -1)  gcc=$(gcc -dumpversion)  jobs=$JOBS"
-echo "target: pyramids-core ${CORE_VERSION:-<latest>} / $PLAT / GDAL $GDAL_VERSION / Arrow $ARROW_VERSION"
+echo "target: pyramids-core ${CORE_VERSION:-<latest>} / $PLAT / Arrow $ARROW_VERSION"
 
 step "1. download the pyramids-core wheel this plugin will be loaded by"
 cd "$WORK"
@@ -46,20 +49,42 @@ SPEC="pyramids-core${CORE_VERSION:+==$CORE_VERSION}"
 "$PY" -m pip download --no-deps --only-binary=:all: \
     --platform "$PLAT" --python-version "${PYTAG#cp}" --implementation cp --abi "$PYTAG" \
     -d "$WORK/corewheel" "$SPEC" >/dev/null || die "could not download $SPEC for $PLAT"
-CORE_WHL="$(ls "$WORK"/corewheel/pyramids_core-*.whl | head -1)"
-[ -n "$CORE_WHL" ] || die "no core wheel downloaded"
+# A glob, not `ls | head -1`: under `pipefail` head closes the pipe early, so the command
+# substitution can die with 141 and an empty value, which then reads as "nothing downloaded".
+shopt -s nullglob
+core_wheels=("$WORK"/corewheel/pyramids_core-*.whl)
+shopt -u nullglob
+[ "${#core_wheels[@]}" -gt 0 ] || die "no core wheel downloaded"
+CORE_WHL="${core_wheels[0]}"
 echo "wheel: $(basename "$CORE_WHL")"
 rm -rf "$WORK/core" && mkdir -p "$WORK/core"
 "$PY" -c "import sys,zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$CORE_WHL" "$WORK/core"
 
-CORE_LIBS="$(dirname "$(find "$WORK/core" -name 'libgdal-*.so.*' -o -name 'libgdal.so.*' | head -1)")"
-[ -d "$CORE_LIBS" ] || die "no libgdal found in the core wheel"
-CORE_GDAL="$(ls "$CORE_LIBS"/libgdal*.so.* | head -1)"
-CORE_SONAME="$("$PY" "$(dirname "$0")/soname.py" "$CORE_GDAL")"
+# Guard the find BEFORE dirname: `dirname ""` is `.`, so testing the derived directory could
+# never fail on a missing library -- the real failure then surfaced much later as an
+# unexplained cmake error. `-print -quit` also avoids the SIGPIPE that `| head -1` risks.
+CORE_GDAL="$(find "$WORK/core" \( -name 'libgdal-*.so.*' -o -name 'libgdal.so.*' \) -print -quit)"
+[ -n "$CORE_GDAL" ] || die "no libgdal found in the core wheel"
+CORE_LIBS="$(dirname "$CORE_GDAL")"
+CORE_SONAME="$("$PY" "$SCRIPT_DIR/soname.py" "$CORE_GDAL")"
 echo "vendored libgdal : $(basename "$CORE_GDAL")"
 echo "its DT_SONAME    : $CORE_SONAME"
 echo "$CORE_SONAME" > "$OUTPUT/core-soname.txt"
 basename "$CORE_WHL" > "$OUTPUT/core-wheel.txt"
+
+# The soname encodes the GDAL version it was built from -- libgdal-<hash>.so.39.3.13.3 -- so
+# DERIVE the version to build the driver from rather than pinning it here. A pinned default
+# silently went stale the moment core bumped GDAL, while CORE_VERSION defaults to "latest":
+# the driver would then be compiled from one version's sources and linked against another,
+# which GDAL's standalone build rejects only because it happens to check (STRICT_VERSION_CHECK).
+SONAME_GDAL_VERSION="$(printf '%s' "$CORE_SONAME" | sed -nE 's/.*[.]so[.][0-9]+[.]([0-9]+[.][0-9]+[.][0-9]+)$/\1/p')"
+if [ -z "$GDAL_VERSION" ]; then
+    [ -n "$SONAME_GDAL_VERSION" ]         || die "cannot derive a GDAL version from soname '$CORE_SONAME'; pass GDAL_VERSION"
+    GDAL_VERSION="$SONAME_GDAL_VERSION"
+    echo "derived GDAL version: $GDAL_VERSION (from the soname)"
+elif [ -n "$SONAME_GDAL_VERSION" ] && [ "$GDAL_VERSION" != "$SONAME_GDAL_VERSION" ]; then
+    die "GDAL_VERSION=$GDAL_VERSION but the wheel's libgdal is $SONAME_GDAL_VERSION"
+fi
 
 step "2. GDAL $GDAL_VERSION sources (headers + the driver's own CMake project)"
 curl -fsSL -o gdal.tar.gz "https://download.osgeo.org/gdal/${GDAL_VERSION}/gdal-${GDAL_VERSION}.tar.gz" \
@@ -67,6 +92,18 @@ curl -fsSL -o gdal.tar.gz "https://download.osgeo.org/gdal/${GDAL_VERSION}/gdal-
 tar -xzf gdal.tar.gz
 GDAL_SRC="$WORK/gdal-${GDAL_VERSION}"
 [ -d "$GDAL_SRC/ogr/ogrsf_frmts/parquet" ] || die "no parquet driver in the GDAL source tree"
+
+# `gdal_version.h` is GENERATED by a GDAL build, so a release tarball ships only
+# `gdal_version.h.in` -- and cmake's FindGDAL reads the version out of `gdal_version.h`.
+# Without it find_package reports GDAL_VERSION-NOTFOUND and the driver's
+# SetupStandalonePlugin.cmake aborts with "expects strict version matching".
+# The `.in` file already carries the literal numbers (no @...@ placeholders), so copying it
+# under the real name is a valid header rather than a template substitution.
+GEN_INCLUDE="$WORK/gdal-include"
+mkdir -p "$GEN_INCLUDE"
+cp "$GDAL_SRC/gcore/gdal_version.h.in" "$GEN_INCLUDE/gdal_version.h"
+grep -q 'GDAL_RELEASE_NAME' "$GEN_INCLUDE/gdal_version.h"     || die "generated gdal_version.h carries no GDAL_RELEASE_NAME for FindGDAL to read"
+echo "generated $GEN_INCLUDE/gdal_version.h"
 
 step "3. minimal Arrow $ARROW_VERSION (only what the driver links)"
 curl -fsSL -o arrow.tar.gz \
@@ -104,13 +141,15 @@ cmake --build . -j "$JOBS" > "$WORK/arrow-build.log" 2>&1 || {
     die "Arrow build"; }
 cmake --install . > /dev/null
 echo "Arrow built in $(( ($(date +%s) - ARROW_START) / 60 ))m"
-ls "$ARROW_PREFIX/lib/" | grep -E "^lib(arrow|parquet)" | sed 's/^/  /'
+for lib in "$ARROW_PREFIX"/lib/libarrow*.so* "$ARROW_PREFIX"/lib/libparquet*.so*; do
+    [ -e "$lib" ] && echo "  $(basename "$lib")"
+done
 
 step "4. ogr_Parquet as a standalone plugin, against the wheel's libgdal"
 PLUGIN_BUILD="$WORK/plugin-build"
 mkdir -p "$PLUGIN_BUILD" && cd "$PLUGIN_BUILD"
 # The driver includes headers from several GDAL subtrees; cmake takes them as one ;-list.
-GDAL_INCLUDE_DIRS="$GDAL_SRC/gcore;$GDAL_SRC/port;$GDAL_SRC/ogr"
+GDAL_INCLUDE_DIRS="$GEN_INCLUDE;$GDAL_SRC/gcore;$GDAL_SRC/port;$GDAL_SRC/ogr"
 GDAL_INCLUDE_DIRS="$GDAL_INCLUDE_DIRS;$GDAL_SRC/ogr/ogrsf_frmts;$GDAL_SRC/alg;$GDAL_SRC/apps"
 # GDAL's driver CMakeLists sets up a standalone project when PROJECT_SOURCE_DIR is undefined
 # (see ogr/ogrsf_frmts/parquet/CMakeLists.txt: standalone_driver_finalize). It needs to find a
@@ -140,7 +179,14 @@ step "5. stage the plugin + the Arrow libraries it links"
 STAGE="$OUTPUT/gdalplugins"
 rm -rf "$STAGE" && mkdir -p "$STAGE"
 cp "$PLUGIN_SO" "$STAGE/"
-for need in $(patchelf --print-needed "$STAGE/ogr_Parquet.so"); do
+# Capture first and check the exit status: `for need in $(patchelf ...)` iterates an empty
+# list when patchelf fails, so the staging loop would stage nothing and the build would
+# carry on and produce a wheel missing every Arrow library it needs.
+plugin_needs="$(patchelf --print-needed "$STAGE/ogr_Parquet.so")" \
+    || die "patchelf --print-needed failed on the built plugin"
+[ -n "$plugin_needs" ] || die "the built plugin declares no DT_NEEDED at all"
+while read -r need; do
+    [ -n "$need" ] || continue
     case "$need" in
         libarrow*|libparquet*)
             src="$(readlink -f "$ARROW_PREFIX/lib/$need")"
@@ -148,11 +194,14 @@ for need in $(patchelf --print-needed "$STAGE/ogr_Parquet.so"); do
             cp "$src" "$STAGE/$need"
             echo "  staged $need" ;;
     esac
-done
+done <<< "$plugin_needs"
 # $ORIGIN finds the Arrow libs beside the plugin; the second entry reaches core's private lib
 # directory from <site-packages>/pyramids_lazy_parquet/gdalplugins/.
+# shellcheck disable=SC2016  # $ORIGIN is a literal ELF token the loader expands, not the
+# shell; expanding it here would bake this container's build path into the wheel.
 patchelf --set-rpath '$ORIGIN:$ORIGIN/../../pyramids_core.libs' "$STAGE/ogr_Parquet.so"
 for so in "$STAGE"/libarrow*.so* "$STAGE"/libparquet*.so*; do
+    # shellcheck disable=SC2016  # literal loader token, as above
     [ -f "$so" ] && patchelf --set-rpath '$ORIGIN' "$so"
 done
 strip --strip-unneeded "$STAGE"/*.so* 2>/dev/null || true
