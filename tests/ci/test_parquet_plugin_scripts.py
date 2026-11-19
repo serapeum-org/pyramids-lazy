@@ -457,7 +457,7 @@ class TestAgainstARealLibrary:
         if target is None:
             pytest.skip("no ELF shared object found on sys.path")
         if shutil.which("readelf") is None:
-            pytest.skip("readelf is not installed")
+            pytest.skip("readelf unavailable on this machine")
         dump = subprocess.run(
             ["readelf", "-d", str(target)],
             capture_output=True,

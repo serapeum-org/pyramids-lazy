@@ -72,6 +72,13 @@ verify_sha256() {
 
 mkdir -p "$WORK" "$OUTPUT"
 PY="$(command -v python3.12 || command -v python3)"
+# Assert the version. The fallback can land on the image's system `python3`, which on
+# manylinux_2_28 is 3.6 -- old enough that soname.py's `from __future__ import
+# annotations` + `X | None` annotations and make_wheel.py's f-strings would fail in ways
+# that read as script bugs rather than a wrong interpreter.
+if ! "$PY" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)'; then
+    die "need python >= 3.9, found $("$PY" -V 2>&1) at $PY"
+fi
 # Resolved before any `cd`: every later use of soname.py runs from $WORK, where a
 # relative $0 would no longer point at this script.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -150,17 +157,25 @@ GDAL_SRC="$WORK/gdal-${GDAL_VERSION}"
 #         single dir -> GDAL_VERSION=3.13.3
 #         ;-list     -> GDAL_VERSION=GDAL_VERSION-NOTFOUND
 #
-# The driver's sources include GDAL headers unqualified (`#include "ogrsf_frmts.h"`), which
-# is exactly what an installed GDAL provides, so flattening is what the driver expects. The
-# six subtrees have no colliding basenames, checked below.
+# The driver's sources include GDAL headers unqualified (`#include "ogrsf_frmts.h"`),
+# which is exactly what an installed GDAL provides, so flattening is what the driver
+# expects. `cp -n` would silently keep the first copy of a colliding basename, so the
+# collision check below is performed rather than asserted in a comment.
 GEN_INCLUDE="$WORK/gdal-include"
 rm -rf "$GEN_INCLUDE" && mkdir -p "$GEN_INCLUDE"
 for sub in gcore port ogr ogr/ogrsf_frmts alg apps; do
     find "$GDAL_SRC/$sub" -maxdepth 1 -name '*.h' -exec cp -n {} "$GEN_INCLUDE/" \;
 done
 cp "$GDAL_SRC/gcore/gdal_version.h.in" "$GEN_INCLUDE/gdal_version.h"
+collisions="$(for sub in gcore port ogr ogr/ogrsf_frmts alg apps; do
+        find "$GDAL_SRC/$sub" -maxdepth 1 -name '*.h' -printf '%f\n'
+done | sort | uniq -d)"
+if [ -n "$collisions" ]; then
+    printf '%s\n' "$collisions" | sed 's/^/  /'
+    die "colliding GDAL header basenames; flattening would shadow one with another"
+fi
 header_count="$(find "$GEN_INCLUDE" -name '*.h' | wc -l)"
-echo "flattened $header_count GDAL headers into $GEN_INCLUDE"
+echo "flattened $header_count GDAL headers into $GEN_INCLUDE (no basename collisions)"
 for required in gdal.h gdal_priv.h ogrsf_frmts.h ogr_api.h cpl_port.h cpl_conv.h; do
     if [ ! -f "$GEN_INCLUDE/$required" ]; then
         die "$required missing from the flattened include dir"
@@ -315,15 +330,31 @@ patchelf --set-rpath "$CORE_RPATH" "$STAGE/ogr_Parquet.so"
 for so in "$STAGE"/libarrow*.so* "$STAGE"/libparquet*.so*; do
     [ -f "$so" ] && patchelf --set-rpath "\$ORIGIN" "$so"
 done
-strip --strip-unneeded "$STAGE"/*.so* 2>/dev/null || true
+# Not `|| true`: stripping takes the staged payload from ~52 MB to ~39 MB, so a silent
+# failure ships a wheel a third larger against a 120 MB budget and nothing says why.
+for so in "$STAGE"/*.so*; do
+    [ -f "$so" ] || continue
+    strip --strip-unneeded "$so" || die "strip failed on $(basename "$so")"
+done
 
 step "6. report"
+# Read DT_NEEDED once and grep the value, rather than piping patchelf into grep three
+# times. `cmd | grep -q X` exits as soon as grep matches, which SIGPIPEs the writer, and
+# under `pipefail` the pipeline then reports failure -- so a match can read as no match:
+#     if seq 1 200000 | grep -qx 1; then ...   -> takes the else branch
+# patchelf's output is small enough to fit the pipe buffer today, so this was correct by
+# accident rather than by construction. One capture also means one patchelf call.
+final_needs="$(patchelf --print-needed "$STAGE/ogr_Parquet.so" | tr -d '\r')" \
+    || die "patchelf --print-needed failed on the staged plugin"
 echo "DT_NEEDED of the plugin:"
-patchelf --print-needed "$STAGE/ogr_Parquet.so" | sed 's/^/  /'
-patchelf --print-needed "$STAGE/ogr_Parquet.so" | grep -qx "$CORE_SONAME" \
-    || die "plugin does not link the wheel's libgdal soname ($CORE_SONAME)"
-patchelf --print-needed "$STAGE/ogr_Parquet.so" | grep -q "libpython" \
-    && die "plugin links libpython; it must stay interpreter-independent"
+printf '%s\n' "$final_needs" | sed 's/^/  /'
+case $'\n'"$final_needs"$'\n' in
+    *$'\n'"$CORE_SONAME"$'\n'*) ;;
+    *) die "plugin does not link the wheel's libgdal soname ($CORE_SONAME)" ;;
+esac
+case "$final_needs" in
+    *libpython*) die "plugin links libpython; it must stay interpreter-independent" ;;
+esac
 echo
 du -ch "$STAGE"/*.so* | tail -1 | sed 's/^/staged total: /'
 echo "OK -- staged in $STAGE"
