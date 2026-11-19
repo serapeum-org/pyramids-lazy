@@ -8,7 +8,21 @@ Four assertions, run against an environment where ``pyramids-core`` and the fres
    artefact alone;
 2. nothing in the wheel links ``libpython``, which the ``py3-none`` tag promises;
 3. GDAL registers the Parquet driver once the plugin directory is on ``GDAL_DRIVER_PATH``;
-4. a real ``.parquet`` round-trips through it.
+4. a real ``.parquet`` round-trips through core's own GDAL and reaches a ``GeoDataFrame``.
+
+Assertion 4 goes through ``osgeo.ogr`` and ``pyramids.feature._ogr.datasource_to_gdf``, NOT
+through ``FeatureCollection.iter_features`` / ``read_file``. That is not a shortcut -- those
+paths cannot see this plugin at all. They are served by geopandas' pyogrio engine, and pyogrio's
+PyPI wheel vendors a GDAL of its own:
+
+    pyramids_core.libs/libgdal-58beb45a.so.39.3.13.3    <- soname .39, GDAL 3.13.3
+    pyogrio.libs/libgdal-253d08a6.so.38.3.12.4          <- soname .38, GDAL 3.12.4
+
+Two different major sonames, so a plugin linked against core's libgdal can never be loaded by
+pyogrio's. The decision taken for this work is to keep the plugin on core's GDAL and route
+plugin-provided drivers through ``osgeo`` inside pyramids-core; that core-side routing is
+separate work, and ``datasource_to_gdf`` is the seam it will use. This script therefore asserts
+the route that is actually being built, instead of one that is structurally incapable of passing.
 
 Assertion 3 deliberately sets ``GDAL_DRIVER_PATH`` by hand rather than relying on the
 ``pyramids.gdal_plugin_path`` entry point. That seam shipped in pyramids-core #1586 and is
@@ -168,13 +182,18 @@ def check_driver(plugins: Path, via_entry_point: bool) -> None:
         raise SystemExit(f"expected 5 features, read {count}")
     print(f"  read back           : {count} features")
 
-    # The capability this whole exercise exists for.
-    from pyramids.feature import FeatureCollection  # noqa: PLC0415
+    # The capability this whole exercise exists for -- reached the way it will actually be
+    # reached. See the module docstring: the pyogrio-backed readers run on their own vendored
+    # libgdal (soname .38) and cannot load a plugin linked against core's (.39), so asserting
+    # iter_features here would assert something no build of this plugin can satisfy.
+    from pyramids.feature._ogr import datasource_to_gdf  # noqa: PLC0415
 
-    streamed = list(FeatureCollection.iter_features(target))
-    if len(streamed) != 5:
-        raise SystemExit(f"iter_features yielded {len(streamed)}, expected 5")
-    print(f"  iter_features       : {len(streamed)} features")
+    frame = datasource_to_gdf(opened)
+    if len(frame) != 5:
+        raise SystemExit(f"datasource_to_gdf produced {len(frame)} rows, expected 5")
+    if frame.geometry.isna().any():
+        raise SystemExit("datasource_to_gdf produced rows with no geometry")
+    print(f"  as a GeoDataFrame   : {len(frame)} rows, crs={frame.crs}")
 
 
 def main(argv: list[str]) -> int:
