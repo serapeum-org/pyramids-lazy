@@ -93,6 +93,12 @@ dev = [
 # not folded into `dev` — and mapped to the same-named `interop` pixi feature, mirroring
 # pyramids-core's `interop` group. The feature is added to every test env below.
 interop = ["xarray>=2023.1.0"]
+# pyramids-core's `viz` extra (cleopatra -> matplotlib) for the two example notebooks relocated from
+# pyramids-core (`lazy-and-dask-explained`, `08-y-axis-orientation`): they exercise the lazy backend
+# AND plot via pyramids' `.plot()` (which routes through cleopatra). Kept in its OWN group so the
+# backend itself never declares a plotting stack; mapped to the same-named `viz` pixi feature and
+# added only to the envs that execute the `notebooks` task below.
+viz = ["pyramids-core[viz]>=0.81.0"]
 # The MkDocs + mike documentation stack. Resolved by the `docs` pixi environment and the
 # github-pages-mkdocs workflow; mirrors pyramids-mesh. The site lives at `mkdocs.yml` + `docs/`.
 docs = [
@@ -145,12 +151,12 @@ pyramids-lazy = { path = ".", editable = true }
 # env hid (it shares py311's solve-group as the parquet-less subset). `dev` is the local
 # newest-float convenience env; `docs` adds the MkDocs stack in its own solve-group so the docs
 # libraries never perturb the test locks.
-dev = { features = ["dev", "parquet", "interop"], solve-group = "default" }
-base = { features = ["dev", "py311", "interop"], solve-group = "py311" }
-py311 = { features = ["dev", "parquet", "py311", "interop"], solve-group = "py311" }
-py312 = { features = ["dev", "parquet", "py312", "interop"], solve-group = "py312" }
-py313 = { features = ["dev", "parquet", "py313", "interop"], solve-group = "py313" }
-py314 = { features = ["dev", "parquet", "py314", "interop"], solve-group = "py314" }
+dev = { features = ["dev", "parquet", "interop", "viz"], solve-group = "default" }
+base = { features = ["dev", "py311", "interop", "viz"], solve-group = "py311" }
+py311 = { features = ["dev", "parquet", "py311", "interop", "viz"], solve-group = "py311" }
+py312 = { features = ["dev", "parquet", "py312", "interop", "viz"], solve-group = "py312" }
+py313 = { features = ["dev", "parquet", "py313", "interop", "viz"], solve-group = "py313" }
+py314 = { features = ["dev", "parquet", "py314", "interop", "viz"], solve-group = "py314" }
 docs = { features = ["dev", "docs"], solve-group = "docs" }
 
 [tool.pixi.feature.dev.tasks]
