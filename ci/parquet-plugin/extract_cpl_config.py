@@ -134,7 +134,8 @@ def extract(archive: pathlib.Path, outdir: pathlib.Path) -> pathlib.Path:
 
     Raises:
         SystemExit: If the archive carries no `pkg-*` member, no zstd decoder is available, the
-            package has no `include/cpl_config.h` (or `Library/include/` on win), that entry is not a regular file, or the
+            package has no `include/cpl_config.h` (or `Library/include/` on win), that entry
+            is not a regular file, or the
             header is missing any of the macros the plugin shares with libgdal -- they are
             reported together, in `_REQUIRED_MACROS` order. The first two come from
             :func:`_package_payload` and :func:`_decompress`, which run before the tar is
