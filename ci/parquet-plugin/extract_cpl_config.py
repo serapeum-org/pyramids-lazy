@@ -33,7 +33,8 @@ _SUMMARY = (
     "Extract GDAL's generated cpl_config.h from a conda-forge libgdal-core package."
 )
 
-_WANTED = "include/cpl_config.h"
+# conda puts headers under include/ on linux and osx, but Library/include/ on win-64.
+_WANTED_CANDIDATES = ("include/cpl_config.h", "Library/include/cpl_config.h")
 
 # Macros the plugin shares with libgdal. Asserted rather than trusted: a header from the wrong
 # architecture would compile and then disagree about struct layouts at runtime.
@@ -133,7 +134,7 @@ def extract(archive: pathlib.Path, outdir: pathlib.Path) -> pathlib.Path:
 
     Raises:
         SystemExit: If the archive carries no `pkg-*` member, no zstd decoder is available, the
-            package has no `include/cpl_config.h`, that entry is not a regular file, or the
+            package has no `include/cpl_config.h` (or `Library/include/` on win), that entry is not a regular file, or the
             header is missing any of the macros the plugin shares with libgdal -- they are
             reported together, in `_REQUIRED_MACROS` order. The first two come from
             :func:`_package_payload` and :func:`_decompress`, which run before the tar is
@@ -144,18 +145,24 @@ def extract(archive: pathlib.Path, outdir: pathlib.Path) -> pathlib.Path:
     """
     stream = io.BytesIO(_decompress(_package_payload(archive)))
     with tarfile.open(fileobj=stream, mode="r:") as tf:
-        try:
-            member = tf.getmember(_WANTED)
-        except KeyError as exc:
-            raise SystemExit(f"{archive.name} has no {_WANTED}") from exc
+        member = None
+        for candidate in _WANTED_CANDIDATES:
+            try:
+                member = tf.getmember(candidate)
+                break
+            except KeyError:
+                continue
+        if member is None:
+            tried = " or ".join(_WANTED_CANDIDATES)
+            raise SystemExit(f"{archive.name} has no {tried}")
         handle = tf.extractfile(member)
         if handle is None:
-            raise SystemExit(f"{_WANTED} in {archive.name} is not a regular file")
+            raise SystemExit(f"{member.name} in {archive.name} is not a regular file")
         text = handle.read().decode()
 
     missing = [name for name in _REQUIRED_MACROS if not _defines(text, name)]
     if missing:
-        raise SystemExit(f"{_WANTED} declares no {', '.join(missing)}")
+        raise SystemExit(f"{member.name} declares no {', '.join(missing)}")
 
     outdir.mkdir(parents=True, exist_ok=True)
     target = outdir / "cpl_config.h"

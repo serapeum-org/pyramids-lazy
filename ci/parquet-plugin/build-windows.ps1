@@ -82,6 +82,14 @@ Copy-Item "$gdalSrc/gcore/gdal_version.h.in" "$genInclude/gdal_version.h"
 if ($LASTEXITCODE -ne 0) { throw "could not obtain cpl_config.h for win-64" }
 
 Write-Host "=== 3. minimal Arrow $ArrowVersion (MSVC) ==="
+# Arrow 26 bundles boost, whose locale/CMakeLists.txt calls source_group(TREE) with a file
+# (locale.hpp) beside the tree, not under it. CMake >= 3.28 (the runner's) makes that a hard
+# error; 3.27.x tolerates it. Pin it and put it first on PATH for the Arrow + plugin builds.
+& $py -m pip install --quiet "cmake==3.27.9"
+if ($LASTEXITCODE -ne 0) { throw "could not pin cmake 3.27.9" }
+$cmakeBin = & $py -c "import cmake, os; print(os.path.join(os.path.dirname(cmake.__file__), 'data', 'bin'))"
+$env:PATH = "$cmakeBin;$env:PATH"
+Write-Host "using cmake: $(& cmake --version | Select-Object -First 1)"
 $arrowUrl = "https://downloads.apache.org/arrow/arrow-$ArrowVersion/apache-arrow-$ArrowVersion.tar.gz"
 curl.exe -fsSL -o arrow.tar.gz $arrowUrl
 tar -xzf arrow.tar.gz

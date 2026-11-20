@@ -29,6 +29,16 @@ PY="$(command -v python3.12 || command -v python3)"
 "$PY" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' \
     || die "need python >= 3.9, found $("$PY" -V 2>&1)"
 
+# Arrow 26 bundles boost, whose locale/CMakeLists.txt calls source_group(TREE) with a file
+# (locale.hpp) that sits beside the tree, not under it. CMake >= 3.28 (the Xcode runner's
+# cmake) makes "is not a prefix of file" a hard error; 3.27.x still tolerates it. Pin it and
+# put it first on PATH for both the Arrow and the plugin build.
+"$PY" -m pip install --quiet "cmake==3.27.9" || die "could not pin cmake 3.27.9"
+CMAKE_BIN="$("$PY" -c 'import cmake, os; print(os.path.join(os.path.dirname(cmake.__file__), "data", "bin"))')"
+export PATH="$CMAKE_BIN:$PATH"
+hash -r
+echo "using cmake: $(command -v cmake) ($(cmake --version | head -1))"
+
 step "1. download the pyramids-core macOS wheel this plugin will load beside"
 cd "$WORK"
 SPEC="pyramids-core${CORE_VERSION:+==$CORE_VERSION}"
