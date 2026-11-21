@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -81,10 +82,90 @@ def _core_libs() -> Path:
     if spec is None or not spec.submodule_search_locations:
         raise SystemExit("pyramids-core is not installed")
     package = Path(next(iter(spec.submodule_search_locations)))
-    for candidate in (package.parent / "pyramids_core.libs", package / ".libs"):
+    # pyramids_core.libs is auditwheel's (Linux), .dylibs is delocate's (macOS), .libs is the
+    # older layout. macOS core ships libgdal in <package>/.dylibs, so that case must be listed
+    # or check_link reports "no vendored library directory" before it can read anything.
+    for candidate in (package.parent / "pyramids_core.libs", package / ".dylibs", package / ".libs"):
         if candidate.is_dir():
             return candidate
     raise SystemExit(f"no vendored library directory beside {package}")
+
+
+def _macho_deps(path: Path) -> list[str]:
+    """Read a Mach-O object's ``LC_LOAD_DYLIB`` paths via ``otool -L``.
+
+    The macOS analogue of :func:`_parsed_needed`. ``otool -L`` prints the object's own name on
+    the first line, then one indented ``<path> (compatibility ...)`` line per load command; this
+    keeps the leading path token of each. ``otool`` ships with the Command Line Tools and is
+    present on every GitHub macOS runner.
+
+    Args:
+        path: The Mach-O object to read.
+
+    Returns:
+        list[str]: Its load-command paths, in order, possibly empty.
+
+    Raises:
+        SystemExit: If ``otool`` is absent or fails on ``path`` -- reported as a diagnosis, the
+            way every other packaging fault in this script is.
+    """
+    try:
+        proc = subprocess.run(
+            ["otool", "-L", str(path)], check=True, capture_output=True, text=True
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise SystemExit(f"could not read the load commands of {path.name}: {exc}") from exc
+    deps = []
+    for line in proc.stdout.splitlines()[1:]:
+        token = line.strip().split(" ", 1)[0]
+        if token:
+            deps.append(token)
+    return deps
+
+
+def _check_link_macho(plugins: Path, libs: Path) -> str:
+    """macOS counterpart of :func:`check_link`, read from Mach-O load commands.
+
+    Same two assertions as the ELF path, translated to Mach-O: the plugin must load core's
+    libgdal (the ELF soname match becomes a file-name match, since an install_name carries no
+    soname), and nothing staged in the wheel may load a Python library.
+
+    Args:
+        plugins: The installed ``gdalplugins`` directory.
+        libs: The core wheel's vendored library directory (``pyramids/.dylibs``).
+
+    Returns:
+        str: The file name of the installed libgdal the plugin was proved against.
+
+    Raises:
+        SystemExit: If the core carries no libgdal, the plugin directory holds no
+            ``ogr_Parquet.{so,dylib}``, the plugin loads a libgdal the installed core does not
+            provide, or a staged object loads ``libpython`` / the Python framework.
+    """
+    installed = sorted(libs.glob("libgdal*.dylib"))
+    if not installed:
+        raise SystemExit(f"no libgdal in {libs}")
+    installed_names = {lib.name for lib in installed}
+    drivers = [p for p in sorted(plugins.glob("ogr_Parquet.*")) if p.suffix in {".so", ".dylib"}]
+    if not drivers:
+        raise SystemExit(f"no ogr_Parquet.so or .dylib in {plugins}")
+    plugin_deps = _macho_deps(drivers[0])
+    gdal_refs = [dep for dep in plugin_deps if "libgdal" in Path(dep).name]
+
+    print(f"  installed libgdal   : {', '.join(sorted(installed_names))}")
+    print(f"  plugin libgdal load : {', '.join(gdal_refs) or '(none)'}")
+    if not any(Path(ref).name in installed_names for ref in gdal_refs):
+        raise SystemExit(
+            f"plugin loads {gdal_refs!r} but the installed core provides "
+            f"{sorted(installed_names)!r} -- this wheel was built against a different core build"
+        )
+    staged = sorted(plugins.glob("*.dylib")) + sorted(plugins.glob("*.so"))
+    for obj in staged:
+        for dep in _macho_deps(obj):
+            if "libpython" in dep or "Python.framework" in dep:
+                raise SystemExit(f"{obj.name} loads {dep}; py3-none tag is a lie")
+    print("  link check          : OK")
+    return sorted(installed_names)[0]
 
 
 def check_link(plugins: Path) -> str:
@@ -111,6 +192,10 @@ def check_link(plugins: Path) -> str:
             as the parser's ``ValueError``.
     """
     libs = _core_libs()
+    if sys.platform == "darwin":
+        # macOS carries no DT_SONAME; the ELF parser rejects Mach-O outright. Assert the same
+        # two things (links the installed libgdal, links no interpreter) from otool instead.
+        return _check_link_macho(plugins, libs)
     installed = sorted(libs.glob("libgdal*.so*")) + sorted(libs.glob("libgdal*.dylib"))
     if not installed:
         raise SystemExit(f"no libgdal in {libs}")
