@@ -118,17 +118,38 @@ if [ -z "$PLUGIN_DYLIB" ]; then
     die "ogr_Parquet.{so,dylib} was not produced"
 fi
 
-step "5. stage into the package; delocate (cibuildwheel repair) vendors Arrow, excludes libgdal"
+step "5. stage the plugin + self-vendor its Arrow dylibs (the Mach-O analogue of build.sh)"
 mkdir -p "$PKG_PLUGINS"
 cp "$PLUGIN_DYLIB" "$PKG_PLUGINS/"
 PLUGIN_NAME="$(basename "$PLUGIN_DYLIB")"
 cp "$GDAL_SRC/LICENSE.TXT" "$PKG_PLUGINS/GDAL-LICENSE.txt"
 cp "$WORK/apache-arrow-${ARROW_VERSION}/LICENSE.txt" "$PKG_PLUGINS/Arrow-LICENSE.txt"
 cp "$WORK/apache-arrow-${ARROW_VERSION}/NOTICE.txt" "$PKG_PLUGINS/Arrow-NOTICE.txt"
-# delocate (the cibuildwheel repair) vendors the Arrow dylibs into the wheel. It needs to be
-# able to LOCATE them: the plugin links them as @rpath/libarrow*.dylib, so point an rpath at the
-# Arrow build prefix (still on disk in this job) for delocate to resolve and copy them from.
-install_name_tool -add_rpath "$ARROW_PREFIX/lib" "$PKG_PLUGINS/$PLUGIN_NAME"
+# Self-vendor the Arrow dylibs beside the plugin, exactly as build.sh does on Linux with $ORIGIN.
+# The reason we do NOT leave this to delocate: the forced py3-none build stages the plugin into
+# the wheel under pyramids_lazy-*.data/purelib/pyramids_lazy/gdalplugins/, which is a DEEPER path
+# than the installed site-packages/pyramids_lazy/gdalplugins/. delocate vendors Arrow into
+# <wheel>/pyramids_lazy.dylibs and burns a load path computed from that deeper wheel-archive
+# position (@loader_path/../../../../pyramids_lazy.dylibs/...), so at runtime it resolves one
+# level too high and dlopen fails with "Library not loaded". Copying the libs beside the plugin
+# and resolving @rpath through an @loader_path rpath is immune to where the wheel unpacks --
+# the same property $ORIGIN gives the Linux build.
+shopt -s nullglob
+arrow_libs=("$ARROW_PREFIX"/lib/libarrow*.dylib "$ARROW_PREFIX"/lib/libparquet*.dylib)
+shopt -u nullglob
+[ "${#arrow_libs[@]}" -gt 0 ] || die "no Arrow dylibs in $ARROW_PREFIX/lib to vendor"
+# -a preserves Arrow's versioned-file + symlink layout, so both @rpath/libX.NN.dylib (the
+# install_name) and @rpath/libX.NN.N.N.dylib (what the plugin linked) resolve with no duplication.
+cp -a "${arrow_libs[@]}" "$PKG_PLUGINS/"
+# Arrow's dylibs declare their install_name as @rpath/libXXX and link each other the same way;
+# an @loader_path rpath on every real Mach-O object makes @rpath resolve to this directory.
+# install_name_tool must act on a real file, never a symlink.
+for obj in "$PKG_PLUGINS/$PLUGIN_NAME" "$PKG_PLUGINS"/libarrow*.dylib "$PKG_PLUGINS"/libparquet*.dylib; do
+    { [ -f "$obj" ] && [ ! -L "$obj" ]; } || continue
+    install_name_tool -add_rpath "@loader_path" "$obj" 2>/dev/null \
+        || echo "  (@loader_path rpath already present on $(basename "$obj"))"
+done
+echo "  vendored ${#arrow_libs[@]} Arrow dylib entries beside the plugin; @rpath -> @loader_path"
 # Core's libgdal stays EXTERNAL -- loaded at runtime from the installed pyramids-core, not
 # bundled. The plugin linked it by core's own install_name (an absolute path that will not
 # exist on the user's machine); rewrite that to a path relative to the plugin so it resolves:
@@ -140,3 +161,12 @@ CORE_REL_DIR="$(dirname "${CORE_GDAL#"$WORK"/core/}")"
 LIBGDAL_REF="@loader_path/../../$CORE_REL_DIR/$CORE_GDAL_BASENAME"
 install_name_tool -change "$CORE_INSTALL_NAME" "$LIBGDAL_REF" "$PKG_PLUGINS/$PLUGIN_NAME"
 echo "staged $PLUGIN_NAME; libgdal -> $LIBGDAL_REF"
+# install_name_tool invalidates the ad-hoc code signature, and the arm64 loader (dyld) refuses an
+# unsigned/invalidly-signed dylib with "code signature ... not valid". delocate re-signs objects
+# it rewrites, but it leaves these already-in-wheel libs alone, so re-sign them here. Ad-hoc
+# ("-" identity) is enough for a loadable, non-distributed CI artefact.
+for obj in "$PKG_PLUGINS/$PLUGIN_NAME" "$PKG_PLUGINS"/libarrow*.dylib "$PKG_PLUGINS"/libparquet*.dylib; do
+    { [ -f "$obj" ] && [ ! -L "$obj" ]; } || continue
+    codesign --force --sign - "$obj" 2>/dev/null || die "codesign (ad-hoc) failed on $(basename "$obj")"
+done
+echo "  re-signed the plugin + vendored dylibs (ad-hoc)"

@@ -149,9 +149,12 @@ repair-wheel-command = [
 
 
 [tool.cibuildwheel.macos]
-# NEW and CI-iterated: build-macos.sh compiles ogr_Parquet.dylib + Arrow against the libgdal in
-# core's macOS wheel. delocate vendors the Arrow dylibs but EXCLUDES core's libgdal (it is
-# resolved at load time from the installed pyramids-core, exactly like Linux).
+# build-macos.sh compiles ogr_Parquet.so + a minimal Arrow against the libgdal in core's macOS
+# wheel and SELF-VENDORS the Arrow dylibs beside the plugin (@loader_path rpath), the Mach-O
+# analogue of build.sh's $ORIGIN staging; core's libgdal stays external (loaded from the installed
+# pyramids-core). So repair does NOT run delocate -- like the Linux retag, it just places the
+# wheel: delocate would re-vendor the already-staged Arrow dylibs with a wheel-archive-relative
+# path that misses once installed, and setup.py already forces the macosx_11_0_<arch> tag.
 before-all = ["bash ci/parquet-plugin/build-macos.sh"]
 repair-wheel-command = [
     "bash ci/parquet-plugin/cibw-repair-macos.sh {wheel} {dest_dir} {delocate_archs}",
