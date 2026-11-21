@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -64,6 +65,7 @@ def _load(name: str) -> ModuleType:
 
 soname_mod = _load("soname.py")
 verify = _load("verify.py")
+fetch_cpl = _load("fetch_cpl_config.py")
 
 
 def _exec_fresh(name: str) -> ModuleType:
@@ -1552,6 +1554,124 @@ class TestMachoDepsErrors:
     def test_an_unreadable_path_is_a_diagnosis(self, tmp_path):
         with pytest.raises(SystemExit, match="could not read the load commands"):
             verify._macho_deps(tmp_path / "does-not-exist.dylib")
+
+
+class _FakeResponse:
+    """A urlopen stand-in: readable like a response and usable as a context manager."""
+
+    def __init__(self, data: bytes):
+        self._data = data
+
+    def read(self) -> bytes:
+        return self._data
+
+    def __enter__(self) -> _FakeResponse:
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+
+class TestFetchCplConfig:
+    """`fetch_cpl_config.py` resolves, downloads and extracts the header, all mocked.
+
+    The script is pure stdlib over the network (conda-forge repodata + a package download); every
+    test replaces ``urllib.request.urlopen`` so nothing leaves the machine.
+    """
+
+    _REPODATA = {
+        "packages": {
+            "libgdal-core-3.13.3-h0_0.tar.bz2": {
+                "name": "libgdal-core",
+                "version": "3.13.3",
+                "build_number": 0,
+            },
+            "libgdal-core-3.13.3-h2_2.tar.bz2": {
+                "name": "libgdal-core",
+                "version": "3.13.3",
+                "build_number": 2,
+            },
+            "gdal-3.13.3-h0_0.tar.bz2": {
+                "name": "gdal",
+                "version": "3.13.3",
+                "build_number": 9,
+            },
+        },
+        "packages.conda": {
+            "libgdal-core-3.13.3-h1_1.conda": {
+                "name": "libgdal-core",
+                "version": "3.13.3",
+                "build_number": 1,
+            },
+            "libgdal-core-3.12.0-h0_5.conda": {
+                "name": "libgdal-core",
+                "version": "3.12.0",
+                "build_number": 5,
+            },
+        },
+    }
+
+    def _patch_urlopen(self, monkeypatch, payload=b"fake .conda payload"):
+        """Route repodata reads to the fixture and any other URL to a package payload."""
+
+        def _fake(url):
+            if url.endswith("repodata.json"):
+                return _FakeResponse(json.dumps(self._REPODATA).encode())
+            return _FakeResponse(payload)
+
+        monkeypatch.setattr(fetch_cpl.urllib.request, "urlopen", _fake)
+
+    def test_resolve_picks_the_newest_matching_build(self, monkeypatch):
+        """The highest build_number wins, across both packages and packages.conda, by version."""
+        self._patch_urlopen(monkeypatch)
+
+        url = fetch_cpl.resolve("3.13.3", "osx-arm64")
+
+        assert url.endswith("osx-arm64/libgdal-core-3.13.3-h2_2.tar.bz2")
+
+    def test_resolve_raises_when_no_build_matches(self, monkeypatch):
+        """A version absent from the subdir is a diagnosis, not an empty pick."""
+        self._patch_urlopen(monkeypatch)
+
+        with pytest.raises(
+            SystemExit, match="no libgdal-core 9.9.9 on conda-forge/win-64"
+        ):
+            fetch_cpl.resolve("9.9.9", "win-64")
+
+    def test_load_extractor_exposes_extract(self):
+        """The sibling module loads without a package context and offers `extract`."""
+        assert hasattr(fetch_cpl._load_extractor(), "extract")
+
+    def test_main_rejects_a_wrong_argument_count(self, capsys):
+        """Too few arguments prints usage and exits 2 rather than tracing back."""
+        assert fetch_cpl.main(["fetch_cpl_config.py"]) == 2
+        assert "usage:" in capsys.readouterr().err
+
+    def test_main_downloads_resolves_and_extracts(self, monkeypatch, tmp_path, capsys):
+        """The happy path: resolve, download to a temp file, extract, then clean it up."""
+        self._patch_urlopen(monkeypatch)
+        seen = {}
+
+        def _fake_extract(work, out):
+            seen["work"] = Path(work)
+            seen["out"] = Path(out)
+            return Path(out) / "cpl_config.h"
+
+        monkeypatch.setattr(
+            fetch_cpl, "_load_extractor", lambda: SimpleNamespace(extract=_fake_extract)
+        )
+
+        code = fetch_cpl.main(
+            ["fetch_cpl_config.py", "3.13.3", "osx-arm64", str(tmp_path)]
+        )
+
+        assert code == 0
+        assert seen["work"] == tmp_path / "_libgdal_core.conda"
+        assert seen["out"] == tmp_path
+        assert not seen["work"].exists(), "the downloaded archive must be cleaned up"
+        out = capsys.readouterr().out
+        assert "resolved osx-arm64 libgdal-core" in out
+        assert "extracted" in out
 
 
 class TestVerifyCli:
