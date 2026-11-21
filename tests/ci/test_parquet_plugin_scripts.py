@@ -1400,6 +1400,160 @@ class TestPeImportsAgainstARealDll:
         assert all(name for name in imports)
 
 
+#: Where _pe() lays its single section: RVAs 0x1000.. map to file offsets 0x400.., 0x400 long.
+_PE_SECT_VADDR = 0x1000
+_PE_SECT_RAW = 0x400
+_PE_SECT_SIZE = 0x400
+
+
+def _pe(
+    *,
+    dos: bytes = b"MZ",
+    pe_sig: bytes = b"PE\x00\x00",
+    opt_magic: int = 0x20B,
+    import_rva: int = 0x1000,
+    descriptors: tuple[int, ...] = (0x1200,),
+    names: dict[int, bytes] | None = None,
+) -> bytes:
+    """Build a minimal PE whose import table `_pe_imports` can walk.
+
+    Enough of DOS header → PE header → optional header → data directory 1 → one section to drive
+    every branch of the parser from bytes, the way `_elf()` does for the ELF reader. The keyword
+    switches forge the malformed cases (foreign magic, no signature, an out-of-section RVA).
+
+    Args:
+        dos: Leading two bytes; override to forge a non-PE file.
+        pe_sig: The four-byte PE signature; override to break it.
+        opt_magic: ``0x20B`` (PE32+) or ``0x10B`` (PE32); anything else is the "unknown magic"
+            case the parser rejects.
+        import_rva: The import-directory RVA. ``0`` means "no imports"; a value outside the one
+            section forces the no-section branch.
+        descriptors: One name RVA per import descriptor; a null terminator is appended.
+        names: Maps a name RVA to the DLL-name bytes written there.
+
+    Returns:
+        bytes: The synthetic PE image.
+    """
+    names = names if names is not None else {0x1200: b"gdal.dll"}
+    fixed = 112 if opt_magic == 0x20B else 96
+    opt_size = (
+        fixed + 16 * 8
+    )  # the 16 data directories follow the fixed optional header
+    e_lfanew = 0x40
+    coff = e_lfanew + 4
+    opt_off = coff + 20
+    sec_off = opt_off + opt_size
+    blob = bytearray(_PE_SECT_RAW + _PE_SECT_SIZE)
+    blob[0:2] = dos
+    struct.pack_into("<I", blob, 0x3C, e_lfanew)
+    blob[e_lfanew : e_lfanew + 4] = pe_sig
+    struct.pack_into("<H", blob, coff + 0, 0x8664)  # machine
+    struct.pack_into("<H", blob, coff + 2, 1)  # one section
+    struct.pack_into("<H", blob, coff + 16, opt_size)  # size of the optional header
+    struct.pack_into("<H", blob, opt_off, opt_magic)
+    struct.pack_into(
+        "<I", blob, opt_off + fixed + 8, import_rva
+    )  # data dir 1 (imports) RVA
+    struct.pack_into("<I", blob, opt_off + fixed + 12, 0x28)  # its size
+    struct.pack_into("<I", blob, sec_off + 8, _PE_SECT_SIZE)  # virtual size
+    struct.pack_into("<I", blob, sec_off + 12, _PE_SECT_VADDR)  # virtual address
+    struct.pack_into("<I", blob, sec_off + 16, _PE_SECT_SIZE)  # raw size
+    struct.pack_into("<I", blob, sec_off + 20, _PE_SECT_RAW)  # raw pointer
+
+    def _in_section(rva: int) -> bool:
+        return _PE_SECT_VADDR <= rva < _PE_SECT_VADDR + _PE_SECT_SIZE
+
+    if _in_section(import_rva):
+        off = _PE_SECT_RAW + (import_rva - _PE_SECT_VADDR)
+        for name_rva in (*descriptors, 0):
+            struct.pack_into("<I", blob, off + 12, name_rva)
+            off += 20
+        for rva, raw in names.items():
+            if _in_section(rva):
+                start = _PE_SECT_RAW + (rva - _PE_SECT_VADDR)
+                blob[start : start + len(raw)] = raw
+    return bytes(blob)
+
+
+class TestPeImportParser:
+    """`_pe_imports` parsed from synthetic bytes, so every branch runs on every host."""
+
+    def _write(self, tmp_path: Path, blob: bytes) -> Path:
+        path = tmp_path / "x.dll"
+        path.write_bytes(blob)
+        return path
+
+    def test_a_single_import_is_read(self, tmp_path):
+        """The happy path: one descriptor naming one DLL."""
+        assert verify._pe_imports(self._write(tmp_path, _pe())) == ["gdal.dll"]
+
+    def test_several_imports_come_back_in_order(self, tmp_path):
+        """The descriptor array is walked to its null terminator."""
+        blob = _pe(
+            descriptors=(0x1200, 0x1210),
+            names={0x1200: b"a.dll", 0x1210: b"b.dll"},
+        )
+
+        assert verify._pe_imports(self._write(tmp_path, blob)) == ["a.dll", "b.dll"]
+
+    def test_a_pe32_object_with_no_imports_is_empty(self, tmp_path):
+        """PE32 (0x10B) shifts the data directories, and a zero import RVA means no imports."""
+        blob = _pe(opt_magic=0x10B, import_rva=0)
+
+        assert verify._pe_imports(self._write(tmp_path, blob)) == []
+
+    def test_a_null_name_descriptor_ends_the_walk(self, tmp_path):
+        """A descriptor that is not all-zero but names nothing (name RVA 0) still terminates.
+
+        Test scenario:
+            The common terminator is an all-zero descriptor, caught by the first guard. A
+            descriptor carrying a stray non-zero field but a zero Name RVA must end the walk too,
+            via the name-RVA check rather than the all-zero one.
+        """
+        blob = bytearray(
+            _pe()
+        )  # descriptor 0 names gdal.dll; descriptor 1 is the terminator
+        term = _PE_SECT_RAW + 20
+        struct.pack_into(
+            "<I", blob, term + 0, 0x1234
+        )  # a non-zero field, so not all-zero
+        struct.pack_into("<I", blob, term + 12, 0)  # but a zero Name RVA -> terminator
+
+        assert verify._pe_imports(self._write(tmp_path, bytes(blob))) == ["gdal.dll"]
+
+    def test_a_non_pe_file_is_refused(self, tmp_path):
+        """A file without the MZ magic is a diagnosis, not a traceback."""
+        with pytest.raises(SystemExit, match="not a readable PE object"):
+            verify._pe_imports(self._write(tmp_path, b"not a PE at all"))
+
+    def test_a_missing_pe_signature_is_refused(self, tmp_path):
+        """MZ alone is not enough; the PE signature must be present."""
+        with pytest.raises(SystemExit, match="no PE signature"):
+            verify._pe_imports(self._write(tmp_path, _pe(pe_sig=b"NOPE")))
+
+    def test_an_unknown_optional_header_magic_is_refused(self, tmp_path):
+        """Neither PE32 nor PE32+ -- the parser cannot place the data directories."""
+        with pytest.raises(SystemExit, match="unknown optional header magic"):
+            verify._pe_imports(self._write(tmp_path, _pe(opt_magic=0x9999)))
+
+    def test_an_import_rva_outside_every_section_is_refused(self, tmp_path):
+        """A directory RVA the section table cannot map is reported, not silently skipped."""
+        with pytest.raises(SystemExit, match="not a readable PE object"):
+            verify._pe_imports(self._write(tmp_path, _pe(import_rva=0x9999)))
+
+
+class TestMachoDepsErrors:
+    """`_macho_deps` must turn an otool failure into a diagnosis on any host.
+
+    On macOS otool rejects a bogus path; off macOS otool is absent and the subprocess raises
+    ``OSError``. Both land in the same guard, so this exercises it everywhere.
+    """
+
+    def test_an_unreadable_path_is_a_diagnosis(self, tmp_path):
+        with pytest.raises(SystemExit, match="could not read the load commands"):
+            verify._macho_deps(tmp_path / "does-not-exist.dylib")
+
+
 class TestVerifyCli:
     """The verifier's own flow, with the runtime half stubbed.
 
