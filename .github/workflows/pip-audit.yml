@@ -1,11 +1,20 @@
 name: pip-audit
 
+# Dependency-vulnerability scan. Replaces the old `safety` pre-commit hook, which
+# was unmaintainable (safety v3 deprecated `safety check` and now requires an API
+# key) and mis-placed: dependencies rarely change per commit, and CVEs are disclosed
+# over time against packages we already ship. A CI job on every PR catches a newly
+# introduced vulnerable dependency, and the weekly schedule re-audits the unchanged
+# tree so a freshly disclosed CVE is caught without needing a code change. Mirrors
+# pyramids-core.
+
 permissions:
   contents: read
 
 on:
   pull_request:
   schedule:
+    # Weekly, Monday 06:00 UTC.
     - cron: "0 6 * * 1"
   workflow_dispatch:
 
@@ -17,29 +26,52 @@ jobs:
   pip-audit:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Audit the resolved tree on every supported Python. Each pixi env pins its own
+    # Python (py311..py315) and can resolve a slightly different dependency set, so the
+    # matrix catches a version-specific vulnerable dependency. fail-fast off so one
+    # version's result never hides another's. The set mirrors the tests.yml matrix.
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [py311, py312, py313, py314, py315]
     steps:
+      # No fetch-depth: the job only runs `pip freeze` + `pip-audit` and reads no git
+      # history, so the default shallow checkout is right. It also avoids `fetch-depth: 0`,
+      # which would fetch every branch incl. the large gh-pages docs branch.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
 
       - name: Set up Python
-        uses: serapeum-org/github-actions/actions/python-setup/pixi@38c111084f99d5ff5f4a1e63bedce48fe33a10c0 # pixi/v1.2.1
+        uses: serapeum-org/github-actions/actions/python-setup/pixi@6c0a569b67c149c4648c75495544732cba2d0eca # pixi/v1.2.2
         with:
-          environments: py311
-          activate-environment: py311
+          environments: ${{ matrix.environment }}
+          activate-environment: ${{ matrix.environment }}
           cache: true
-          # pixi.lock is lock-file format v7; match tests.yml / lint.yml.
           version: v0.84.2
 
-      # py311 is the project's Python floor (`requires-python`); the job audits the LOCKED dependency
-      # set resolved for that env — pixi installs the lock's versions, not the oldest resolvable ones,
-      # so this is the py311 lock's packages (not an oldest-compatible resolution). `--exclude-editable`
-      # drops this package itself (no release to audit); the grep keeps only `name==version` lines,
-      # since pip-audit rejects a requirements file holding direct URLs or local paths (pyramids-core
-      # is a git pin here, so it is excluded from the audit until core releases).
       - name: Audit dependencies with pip-audit
+        # pip-audit checks installed packages against the PyPI/OSV advisory DB. Conda
+        # and PyPI packages both carry site-packages metadata, so a `pip freeze` of the
+        # resolved env captures the whole tree; we audit that pinned list. pip-audit is
+        # run via pipx so it is never added to the project's own dependency graph.
+        # No --strict: a conda-only package with no PyPI advisory record is skipped
+        # rather than failing the run — the job fails only when a real vulnerability is
+        # reported (pip-audit exits non-zero). The `== ` grep also drops any direct-URL
+        # or git pin (e.g. an unreleased pyramids-core), which pip-audit cannot resolve.
         run: |
-          pixi run -e py311 python -m pip freeze --exclude-editable \
+          # Pin pip-audit to the SAME interpreter as the matrix env so it never tries to
+          # resolve a package the freeze pinned for a different Python (e.g. a cp314/cp315
+          # -only wheel) against pipx's default interpreter. The capture is failure-safe: a
+          # command substitution inside an assignment is masked under `set -e`, so a broken
+          # probe would otherwise leave PYBIN empty and surface as a confusing pipx error.
+          # The `[ -x "$PYBIN" ]` check is the real guard (it also catches that masked
+          # failure); `| tail -n1` additionally drops a leading banner line should a future
+          # pixi print one to stdout.
+          PYBIN="$(pixi run -e ${{ matrix.environment }} python -c 'import sys; print(sys.executable)' | tail -n1)"
+          if [ ! -x "$PYBIN" ]; then
+            echo "::error::could not locate the ${{ matrix.environment }} interpreter (got '$PYBIN')"
+            exit 1
+          fi
+          pixi run -e ${{ matrix.environment }} python -m pip freeze --exclude-editable \
             | grep -E '^[A-Za-z0-9_.-]+==' > "${RUNNER_TEMP}/pip-audit-reqs.txt"
-          echo "Auditing $(wc -l < "${RUNNER_TEMP}/pip-audit-reqs.txt") pinned packages against the advisory DB"
-          pipx run pip-audit --requirement "${RUNNER_TEMP}/pip-audit-reqs.txt" --desc
+          echo "Auditing $(wc -l < "${RUNNER_TEMP}/pip-audit-reqs.txt") pinned packages on ${{ matrix.environment }}"
+          pipx run --python "$PYBIN" pip-audit --requirement "${RUNNER_TEMP}/pip-audit-reqs.txt" --desc

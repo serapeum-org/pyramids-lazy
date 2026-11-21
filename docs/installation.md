@@ -18,6 +18,58 @@ pip install pyramids-lazy[parquet]  # + the OGR-Parquet vector-lazy subset
 Nothing further is needed. Once installed, `pyramids-core` discovers the backend through its entry
 point and routes every lazy operation to it — there is no import to add and no setting to flip.
 
+## Supported platforms
+
+`pyramids-lazy` publishes one `py3-none-<platform>` wheel per supported platform. Each wheel bundles
+the compiled **OGR-Parquet GDAL driver** and its minimal Apache Arrow runtime under
+`pyramids_lazy/gdalplugins/`, which `pyramids-core`'s GDAL loads at runtime through the
+`pyramids.gdal_plugin_path` entry point. The wheel is interpreter-independent — the driver loads via
+`GDAL_DRIVER_PATH`, not as a C extension linking `libpython` — so a single wheel serves every
+supported Python. That is unlike `pyramids-core`, which vendors the `osgeo` C extensions and so ships
+a per-interpreter (`cp311` … `cp315`) wheel for each platform.
+
+| Platform (wheel tag) | `pyramids-lazy` | `pyramids-core` |
+|---|:---:|:---:|
+| `manylinux_2_28_x86_64` — glibc Linux x86-64 | ✅ | ✅ |
+| `manylinux_2_28_aarch64` — glibc Linux arm64 | ✅ | ✅ |
+| `macosx_11_0_arm64` — macOS Apple Silicon | ✅ | ✅ |
+| `macosx_11_0_x86_64` — macOS Intel | ✅ | ✅ |
+| `win_amd64` — Windows x86-64 | ✅ | ✅ |
+| `musllinux_1_2_x86_64` — musl Linux x86-64 (e.g. Alpine) | ❌ | ✅ |
+| `musllinux_1_2_aarch64` — musl Linux arm64 | ❌ | ✅ |
+| `win_arm64` — Windows arm64 | ❌ | ✅ |
+
+### What ❌ means
+
+A ❌ marks a platform where `pyramids-lazy` does **not** ship a native wheel carrying the bundled
+OGR-Parquet driver (the `gdalplugins/` plugin — distinct from the pure-Python `[parquet]` extra
+below). It does **not** mean the package is unavailable there. On such a platform:
+
+- `pip install pyramids-lazy` still succeeds. There is no matching platform wheel and no
+  `py3-none-any` wheel, so pip falls back to the **source distribution**, which builds as an ordinary
+  pure-Python package — no compiler needed, because the native driver is only ever staged inside the
+  platform wheels, never compiled from the sdist.
+- `pyramids-core` installs normally: it publishes wheels for all three of these targets, so the
+  `pyramids` import and its vendored GDAL are present as usual.
+- The full lazy/dask backend works — lazy raster/variable/cube reads, `to_dask_dataframe`, kerchunk
+  manifests, multi-file reads and Zarr — because all of that is pure Python.
+- The one thing absent is GDAL/OGR-level `.parquet` access **through the bundled driver**: with no
+  `gdalplugins/` directory, `pyramids-core`'s GDAL registers no Parquet driver from `pyramids-lazy`,
+  and code reaching for it gets a branded "not available" hint rather than a raw GDAL error.
+
+In short: ❌ means "no bundled GeoParquet GDAL driver on this platform", not "cannot install".
+
+### Why these three, and whether they can change
+
+- **musllinux (x86-64 / arm64).** conda-forge publishes no musl `libgdal-core`, so the build has no
+  matching `cpl_config.h` to compile the driver against — and musl's ABI feature macros differ from
+  glibc, so the glibc header cannot be reused. There is no route today.
+- **win_arm64.** This gap closes on the `pyramids-core` side: the plan is to compile Arrow + Parquet
+  directly into core's own `libgdal` (through core's vcpkg build), after which Windows-arm64 users
+  get the Parquet driver from `pyramids-core` itself, with no `pyramids-lazy` plugin involved.
+
+Both gaps therefore need a `pyramids-core` change, not a `pyramids-lazy` one.
+
 ## Dependencies
 
 ### Runtime

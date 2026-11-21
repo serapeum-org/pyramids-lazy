@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -63,8 +64,8 @@ def _load(name: str) -> ModuleType:
 
 
 soname_mod = _load("soname.py")
-make_wheel = _load("make_wheel.py")
 verify = _load("verify.py")
+fetch_cpl = _load("fetch_cpl_config.py")
 
 
 def _exec_fresh(name: str) -> ModuleType:
@@ -652,7 +653,7 @@ class TestUsageWithoutDocstrings:
     are the ones that prove it; the attribute checks only pin that the name still exists.
     """
 
-    @pytest.mark.parametrize("module", ["verify.py", "make_wheel.py"])
+    @pytest.mark.parametrize("module", ["verify.py"])
     def test_each_script_describes_itself_without_its_docstring(self, module):
         """The summary is a module attribute, which the -OO tests below then exercise."""
         loaded = _load(module)
@@ -667,7 +668,6 @@ class TestUsageWithoutDocstrings:
         "script, summary",
         [
             ("verify.py", verify._SUMMARY),
-            ("make_wheel.py", make_wheel._SUMMARY),
         ],
     )
     def test_each_script_prints_its_summary_under_oo(self, script, summary):
@@ -699,7 +699,7 @@ class TestUsageWithoutDocstrings:
 class TestScriptSysPathBootstrap:
     """Each packaging script puts its own directory on `sys.path` to reach `soname.py`.
 
-    `verify.py` and `make_wheel.py` both do `from soname import needed` -- a bare name, with no
+    `verify.py` does `from soname import needed` -- a bare name, with no
     package to qualify it, because they run as loose scripts in a container where nothing is
     installed. That import resolves only because each script inserts its own directory at
     import time, and it must insert it exactly once: doing it per call grew `sys.path` without
@@ -716,16 +716,6 @@ class TestScriptSysPathBootstrap:
         monkeypatch.setattr(sys, "path", [p for p in sys.path if p != str(CI_DIR)])
 
         _exec_fresh("verify.py")
-
-        assert sys.path.count(str(CI_DIR)) == 1, (
-            f"CI_DIR was not inserted exactly once: {sys.path[:3]}"
-        )
-
-    def test_make_wheel_adds_its_own_directory(self, monkeypatch):
-        """The packager needs the same bootstrap, and states the same reason for it."""
-        monkeypatch.setattr(sys, "path", [p for p in sys.path if p != str(CI_DIR)])
-
-        _exec_fresh("make_wheel.py")
 
         assert sys.path.count(str(CI_DIR)) == 1, (
             f"CI_DIR was not inserted exactly once: {sys.path[:3]}"
@@ -819,573 +809,6 @@ class TestSonameCli:
         assert soname_mod.main(["soname.py"]) == 2
 
 
-class TestInterpreterIndependence:
-    """The `py3-none-<platform>` tag is a promise, so it is checked, not assumed."""
-
-    def test_an_object_linking_libpython_is_refused(self, tmp_path: Path):
-        """One wheel per platform only works if nothing binds a specific CPython.
-
-        Test scenario:
-            A plugin accidentally linked against `libpython3.12.so.1.0` would install happily and
-            then fail on every other interpreter. The packaging step must refuse to build it.
-        """
-        plugins = tmp_path / "gdalplugins"
-        plugins.mkdir()
-        (plugins / "ogr_Parquet.so").write_bytes(
-            _elf(needed=("libgdal-abc.so.39", "libpython3.12.so.1.0"))
-        )
-
-        with pytest.raises(SystemExit, match="libpython"):
-            make_wheel._assert_interpreter_independent(plugins)
-
-    def test_the_expected_dependency_set_is_accepted(self, tmp_path: Path):
-        """libgdal + Arrow + the C/C++ runtimes is exactly what a good plugin links."""
-        plugins = tmp_path / "gdalplugins"
-        plugins.mkdir()
-        (plugins / "ogr_Parquet.so").write_bytes(
-            _elf(
-                needed=(
-                    "libgdal-abc.so.39",
-                    "libarrow.so.2600",
-                    "libstdc++.so.6",
-                    "libc.so.6",
-                )
-            )
-        )
-
-        assert make_wheel._assert_interpreter_independent(plugins) == ["ogr_Parquet.so"]
-
-
-class TestWheelAssembly:
-    """What ends up in the published artefact."""
-
-    @pytest.fixture
-    def stage(self, tmp_path: Path) -> Path:
-        """A staging directory shaped like the one `build.sh` produces."""
-        root = tmp_path / "out"
-        plugins = root / "gdalplugins"
-        plugins.mkdir(parents=True)
-        (plugins / "ogr_Parquet.so").write_bytes(
-            _elf(needed=("libgdal-58beb45a.so.39.3.13.3", "libarrow.so.2600"))
-        )
-        (plugins / "libarrow.so.2600").write_bytes(_elf(so_name="libarrow.so.2600"))
-        (root / "core-soname.txt").write_text("libgdal-58beb45a.so.39.3.13.3\n")
-        (root / "core-wheel.txt").write_text(
-            "pyramids_core-0.80.0-cp312-cp312-manylinux_2_28_x86_64.whl\n"
-        )
-        licenses = root / "licenses"
-        licenses.mkdir()
-        (licenses / "GDAL-LICENSE.txt").write_text("GDAL license text\n")
-        (licenses / "Arrow-NOTICE.txt").write_text("Apache Arrow NOTICE\n")
-        return root
-
-    def _build(self, stage: Path, outdir: Path) -> Path:
-        """Run the builder with realistic arguments."""
-        import argparse
-
-        return make_wheel.build(
-            argparse.Namespace(
-                stage=str(stage),
-                version="0.1.0",
-                plat="manylinux_2_28_x86_64",
-                core_requires="pyramids-core==0.80.0",
-                outdir=str(outdir),
-            )
-        )
-
-    def test_the_wheel_is_named_for_the_targeted_platform(self, stage, tmp_path: Path):
-        """The tag must be the *core wheel's* platform, not the build host's.
-
-        Test scenario:
-            An aarch64 plugin built on an x86_64 host would otherwise be tagged wrongly and
-            installed on machines it cannot load on.
-        """
-        wheel = self._build(stage, tmp_path / "dist")
-
-        assert (
-            wheel.name
-            == "pyramids_lazy_parquet-0.1.0-py3-none-manylinux_2_28_x86_64.whl"
-        )
-
-    def test_every_record_entry_verifies(self, stage, tmp_path: Path):
-        """A wrong hash or size makes pip refuse the wheel at install time."""
-        import base64
-        import csv
-        import hashlib
-        import io
-
-        wheel = self._build(stage, tmp_path / "dist")
-        with zipfile.ZipFile(wheel) as zf:
-            record = next(n for n in zf.namelist() if n.endswith("/RECORD"))
-            rows = list(csv.reader(io.StringIO(zf.read(record).decode())))
-            checked = 0
-            for name, digest, size in rows:
-                if not digest:
-                    continue
-                data = zf.read(name)
-                want = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(
-                    b"="
-                )
-                assert digest == "sha256=" + want.decode(), f"bad hash for {name}"
-                assert int(size) == len(data), f"bad size for {name}"
-                checked += 1
-        assert checked >= 4, f"expected several hashed entries, checked {checked}"
-
-    def test_record_lists_every_member_of_the_wheel(self, stage, tmp_path: Path):
-        """A member absent from RECORD is a wheel pip may install incompletely.
-
-        Test scenario:
-            The hashes were checked, but nothing checked that RECORD *covers* the archive,
-            so a file added to the wheel without going through `write()` would ship
-            unrecorded and unnoticed.
-        """
-        import csv
-        import io
-
-        wheel = self._build(stage, tmp_path / "dist")
-        with zipfile.ZipFile(wheel) as zf:
-            record = next(n for n in zf.namelist() if n.endswith("/RECORD"))
-            listed = {
-                row[0]
-                for row in csv.reader(io.StringIO(zf.read(record).decode()))
-                if row
-            }
-            present = set(zf.namelist())
-        assert present - listed == set(), f"unrecorded members: {present - listed}"
-        assert listed - present == set(), (
-            f"RECORD names absent files: {listed - present}"
-        )
-
-    def test_the_plugin_directory_is_carried_verbatim(self, stage, tmp_path: Path):
-        """Both the driver and the Arrow library it links must ship."""
-        wheel = self._build(stage, tmp_path / "dist")
-
-        with zipfile.ZipFile(wheel) as zf:
-            names = set(zf.namelist())
-        assert "pyramids_lazy_parquet/gdalplugins/ogr_Parquet.so" in names
-        assert "pyramids_lazy_parquet/gdalplugins/libarrow.so.2600" in names
-
-    def test_a_subdirectory_beside_the_objects_is_skipped(self, stage, tmp_path: Path):
-        """Only files are zipped, so a staged directory must never reach `read_bytes`.
-
-        Test scenario:
-            A split-debug step leaves a `.debug` directory beside the objects. Treating it as a
-            member raises `IsADirectoryError` mid-build, and recording it would describe a
-            member the wheel does not contain.
-        """
-        (stage / "gdalplugins" / ".debug").mkdir()
-
-        wheel = self._build(stage, tmp_path / "dist")
-
-        with zipfile.ZipFile(wheel) as zf:
-            names = set(zf.namelist())
-        assert "pyramids_lazy_parquet/gdalplugins/ogr_Parquet.so" in names
-        assert not [name for name in names if ".debug" in name]
-
-    def test_the_import_package_is_present_and_carries_no_api(
-        self, stage, tmp_path: Path
-    ):
-        """The entry point names a module, so `find_spec` needs a real package to find.
-
-        Test scenario:
-            Core resolves `parquet = pyramids_lazy_parquet` with `find_spec` and appends
-            `<module>/gdalplugins`. Without an importable `__init__.py` that returns None and
-            the driver silently never loads -- the plugin installs and does nothing. The body
-            must also stay API-free, since core deliberately never imports it: a docstring and
-            the `__all__` annotation, and nothing else that could fail at import.
-        """
-        wheel = self._build(stage, tmp_path / "dist")
-
-        with zipfile.ZipFile(wheel) as zf:
-            source = zf.read("pyramids_lazy_parquet/__init__.py").decode()
-        tree = ast.parse(source)
-        statements = [node for node in tree.body if not isinstance(node, ast.Expr)]
-        assert ast.get_docstring(tree), "the package must explain what it carries"
-        assert len(statements) == 1, (
-            f"the package must declare no API, found {len(statements)} statements"
-        )
-        assert isinstance(statements[0], ast.AnnAssign), (
-            f"expected only the __all__ annotation, got {ast.dump(statements[0])}"
-        )
-
-    def test_the_metadata_version_is_the_one_that_defines_license_file(
-        self, stage, tmp_path: Path
-    ):
-        """`License-File` was standardised by PEP 639 in Metadata 2.4, and is emitted here.
-
-        Test scenario:
-            Declaring 2.1 while emitting `License-File` works only because setuptools has
-            done it for years; it is a latent upload rejection. The two must agree, so both
-            the version and the field are pinned in one place.
-        """
-        wheel = self._build(stage, tmp_path / "dist")
-
-        with zipfile.ZipFile(wheel) as zf:
-            text = zf.read(
-                next(n for n in zf.namelist() if n.endswith("/METADATA"))
-            ).decode()
-        assert text.startswith("Metadata-Version: 2.4\n"), (
-            f"unexpected metadata version: {text.splitlines()[0]!r}"
-        )
-        assert "License-File: licenses/" in text, (
-            "License-File is the field that requires Metadata 2.4"
-        )
-
-    def test_the_entry_point_core_scans_for_is_registered(self, stage, tmp_path: Path):
-        """Without this, pyramids-core never learns the directory exists."""
-        wheel = self._build(stage, tmp_path / "dist")
-
-        with zipfile.ZipFile(wheel) as zf:
-            entry = next(n for n in zf.namelist() if n.endswith("entry_points.txt"))
-            text = zf.read(entry).decode()
-        assert "[pyramids.gdal_plugin_path]" in text
-        assert "parquet = pyramids_lazy_parquet" in text
-
-    def test_the_wheel_is_not_marked_purelib(self, stage, tmp_path: Path):
-        """It carries native objects, so `Root-Is-Purelib` must be false."""
-        wheel = self._build(stage, tmp_path / "dist")
-
-        with zipfile.ZipFile(wheel) as zf:
-            text = zf.read(
-                next(n for n in zf.namelist() if n.endswith("/WHEEL"))
-            ).decode()
-        assert "Root-Is-Purelib: false" in text
-        assert "Tag: py3-none-manylinux_2_28_x86_64" in text
-
-    def test_the_metadata_records_which_core_build_it_targets(
-        self, stage, tmp_path: Path
-    ):
-        """A user debugging a load failure needs the wheel and soname it was built against."""
-        wheel = self._build(stage, tmp_path / "dist")
-
-        with zipfile.ZipFile(wheel) as zf:
-            text = zf.read(
-                next(n for n in zf.namelist() if n.endswith("/METADATA"))
-            ).decode()
-        assert "Requires-Dist: pyramids-core==0.80.0" in text
-        assert "pyramids_core-0.80.0-cp312-cp312-manylinux_2_28_x86_64.whl" in text
-        assert "libgdal-58beb45a.so.39.3.13.3" in text
-
-    def test_a_stage_without_a_plugin_directory_is_refused(self, tmp_path: Path):
-        """Better to fail than to publish an empty wheel."""
-        with pytest.raises(SystemExit, match="no staged plugin directory"):
-            self._build(tmp_path / "empty", tmp_path / "dist")
-
-    def test_a_stage_missing_the_driver_is_refused(self, tmp_path: Path):
-        """Arrow without the driver is useless, and would install silently."""
-        root = tmp_path / "out"
-        plugins = root / "gdalplugins"
-        plugins.mkdir(parents=True)
-        (plugins / "libarrow.so.2600").write_bytes(_elf(so_name="libarrow.so.2600"))
-
-        with pytest.raises(SystemExit, match="ogr_Parquet.so missing"):
-            self._build(root, tmp_path / "dist")
-
-    @pytest.mark.parametrize("missing", ["core-soname.txt", "core-wheel.txt"])
-    def test_absent_provenance_stops_the_build(self, stage, tmp_path: Path, missing):
-        """Which core build the binaries can load is the one fact that must not be lost.
-
-        Test scenario:
-            These two files are the only record of the targeted core wheel and its
-            libgdal soname. Defaulting them to "unknown" produced a publishable wheel
-            that nobody could diagnose a load failure against, so an incomplete build
-            must now fail instead.
-        """
-        (stage / missing).unlink()
-
-        with pytest.raises(SystemExit, match=missing):
-            self._build(stage, tmp_path / "dist")
-
-    @pytest.mark.parametrize("empty", ["core-soname.txt", "core-wheel.txt"])
-    def test_empty_provenance_stops_the_build(self, stage, tmp_path: Path, empty):
-        """A present-but-empty file means build.sh died midway; treat it as missing."""
-        (stage / empty).write_text("   \n")
-
-        with pytest.raises(SystemExit, match=empty):
-            self._build(stage, tmp_path / "dist")
-
-    def test_the_vendored_licences_are_carried_and_declared(
-        self, stage, tmp_path: Path
-    ):
-        """Apache-2.0 requires Arrow's NOTICE to travel with its redistributed binaries."""
-        wheel = self._build(stage, tmp_path / "dist")
-
-        with zipfile.ZipFile(wheel) as zf:
-            names = zf.namelist()
-            metadata = zf.read(
-                next(n for n in names if n.endswith("/METADATA"))
-            ).decode()
-        assert any(n.endswith("/licenses/Arrow-NOTICE.txt") for n in names)
-        assert any(n.endswith("/licenses/GDAL-LICENSE.txt") for n in names)
-        assert "License-File: licenses/Arrow-NOTICE.txt" in metadata
-        assert "License-File: licenses/GDAL-LICENSE.txt" in metadata
-
-    def test_a_stage_without_licences_is_refused(self, stage, tmp_path: Path):
-        """Shipping the binaries without their terms is a packaging error, not a nicety."""
-        for item in (stage / "licenses").iterdir():
-            item.unlink()
-
-        with pytest.raises(SystemExit, match="licence"):
-            self._build(stage, tmp_path / "dist")
-
-    def test_the_wheel_is_byte_identical_across_builds(self, stage, tmp_path: Path):
-        """Two builds of identical inputs must agree, so a rebuild is verifiable.
-
-        Test scenario:
-            zipfile stamps members with the build clock by default, which made every
-            rebuild differ and left no way to confirm a published wheel came from the
-            inputs it claims.
-        """
-        first = self._build(stage, tmp_path / "a")
-        second = self._build(stage, tmp_path / "b")
-
-        assert first.read_bytes() == second.read_bytes()
-
-    def test_the_staged_objects_are_world_readable(self, stage, tmp_path: Path):
-        """A 0o600 shared object is unreadable to other users of a shared prefix."""
-        wheel = self._build(stage, tmp_path / "dist")
-
-        with zipfile.ZipFile(wheel) as zf:
-            modes = {
-                info.filename: (info.external_attr >> 16) & 0o777
-                for info in zf.infolist()
-            }
-        driver = next(n for n in modes if n.endswith("ogr_Parquet.so"))
-        metadata = next(n for n in modes if n.endswith("/METADATA"))
-        assert modes[driver] == 0o755
-        assert modes[metadata] == 0o644
-
-    def test_the_dist_info_is_named_for_the_distribution(self, stage, tmp_path: Path):
-        """dist-info takes the normalised *distribution* name, not the import name."""
-        wheel = self._build(stage, tmp_path / "dist")
-
-        with zipfile.ZipFile(wheel) as zf:
-            dist_infos = {n.split("/")[0] for n in zf.namelist() if ".dist-info/" in n}
-        expected = make_wheel.DISTRIBUTION.replace("-", "_") + "-0.1.0.dist-info"
-        assert dist_infos == {expected}
-
-
-class TestMakeWheelCli:
-    """The entry point the workflow calls."""
-
-    def test_it_reports_what_it_wrote(self, tmp_path: Path, capsys):
-        """The step summary is how a reviewer sees the wheel's size."""
-        root = tmp_path / "out"
-        plugins = root / "gdalplugins"
-        plugins.mkdir(parents=True)
-        (plugins / "ogr_Parquet.so").write_bytes(_elf(needed=("libgdal-abc.so.39",)))
-        (root / "core-soname.txt").write_text("libgdal-abc.so.39\n")
-        (root / "core-wheel.txt").write_text("pyramids_core-0.80.0-x.whl\n")
-        (root / "licenses").mkdir()
-        (root / "licenses" / "GDAL-LICENSE.txt").write_text("text\n")
-
-        code = make_wheel.main(
-            [
-                "make_wheel.py",
-                "--stage",
-                str(root),
-                "--version",
-                "0.2.0",
-                "--plat",
-                "manylinux_2_28_aarch64",
-                "--core-requires",
-                "pyramids-core==0.80.0",
-                "--outdir",
-                str(tmp_path / "dist"),
-            ]
-        )
-
-        out = capsys.readouterr().out
-        assert code == 0
-        assert "py3-none-manylinux_2_28_aarch64.whl" in out
-        assert "ogr_Parquet.so" in out
-
-    def test_an_empty_licence_file_is_refused(self, tmp_path: Path):
-        """An empty NOTICE passes an existence check while meeting none of Apache-2.0's terms."""
-        root = tmp_path / "out"
-        plugins = root / "gdalplugins"
-        plugins.mkdir(parents=True)
-        (plugins / "ogr_Parquet.so").write_bytes(_elf(needed=("libgdal-abc.so.39",)))
-        (root / "core-soname.txt").write_text("libgdal-abc.so.39")
-        (root / "core-wheel.txt").write_text("pyramids_core-0.80.0-x.whl")
-        (root / "licenses").mkdir()
-        (root / "licenses" / "Arrow-NOTICE.txt").write_text("   ")
-
-        with pytest.raises(SystemExit, match="empty licence file"):
-            make_wheel.main(
-                [
-                    "make_wheel.py",
-                    "--stage",
-                    str(root),
-                    "--version",
-                    "0.1.0",
-                    "--plat",
-                    "manylinux_2_28_x86_64",
-                    "--core-requires",
-                    "pyramids-core==0.80.0",
-                    "--outdir",
-                    str(tmp_path / "dist"),
-                ]
-            )
-
-    def test_an_empty_member_ships_but_is_left_out_of_the_size_report(
-        self, tmp_path: Path, capsys
-    ):
-        """A zero-byte member still has to be in the wheel; printing `0.0 MB` for it is noise.
-
-        Test scenario:
-            GDAL reads an optional `drivers.ini` from its plugin directory and an empty one
-            is legitimate, so a zero-byte member has to ship: RECORD covers every member and
-            omitting it would make pip reject the wheel. It simply has no size worth
-            printing. This used to stage an empty licence file, which `_licenses` now
-            refuses -- an empty NOTICE passes an existence check while satisfying none of
-            Apache-2.0's terms.
-        """
-        root = tmp_path / "out"
-        plugins = root / "gdalplugins"
-        plugins.mkdir(parents=True)
-        (plugins / "ogr_Parquet.so").write_bytes(_elf(needed=("libgdal-abc.so.39",)))
-        (plugins / "drivers.ini").write_bytes(b"")
-        (root / "core-soname.txt").write_text("libgdal-abc.so.39\n")
-        (root / "core-wheel.txt").write_text("pyramids_core-0.80.0-x.whl\n")
-        (root / "licenses").mkdir()
-        (root / "licenses" / "GDAL-LICENSE.txt").write_text("text\n")
-
-        code = make_wheel.main(
-            [
-                "make_wheel.py",
-                "--stage",
-                str(root),
-                "--version",
-                "0.3.0",
-                "--plat",
-                "manylinux_2_28_x86_64",
-                "--core-requires",
-                "pyramids-core==0.80.0",
-                "--outdir",
-                str(tmp_path / "dist"),
-            ]
-        )
-
-        out = capsys.readouterr().out
-        assert code == 0
-        assert "drivers.ini" not in out, "an empty member has no size to report"
-        wheel = next((tmp_path / "dist").glob("*.whl"))
-        with zipfile.ZipFile(wheel) as zf:
-            names = zf.namelist()
-        assert [n for n in names if n.endswith("/gdalplugins/drivers.ini")]
-
-    @pytest.fixture
-    def complete_stage(self, tmp_path: Path) -> Path:
-        """A staging directory that would build successfully, so only argparse can object.
-
-        Pointing these tests at an empty directory made them vacuous: `build` raised
-        `SystemExit("no staged plugin directory")` before argparse's verdict mattered, so
-        they passed whether or not the validation existed.
-        """
-        root = tmp_path / "out"
-        plugins = root / "gdalplugins"
-        plugins.mkdir(parents=True)
-        (plugins / "ogr_Parquet.so").write_bytes(_elf(needed=("libgdal-abc.so.39",)))
-        (root / "core-soname.txt").write_text("libgdal-abc.so.39\n")
-        (root / "core-wheel.txt").write_text("pyramids_core-0.80.0-x.whl\n")
-        (root / "licenses").mkdir()
-        (root / "licenses" / "GDAL-LICENSE.txt").write_text("text\n")
-        return root
-
-    def test_the_complete_stage_builds(self, complete_stage, tmp_path: Path, capsys):
-        """Guards the three tests below: they only mean something if this one passes."""
-        code = make_wheel.main(
-            [
-                "make_wheel.py",
-                "--stage",
-                str(complete_stage),
-                "--version",
-                "0.1.0",
-                "--plat",
-                "manylinux_2_28_x86_64",
-                "--core-requires",
-                "pyramids-core==0.80.0",
-                "--outdir",
-                str(tmp_path / "dist"),
-            ]
-        )
-        capsys.readouterr()
-
-        assert code == 0
-
-    @pytest.mark.parametrize("plat", ["manylinux 2 28", "MANYLINUX_2_28_X86_64", ""])
-    def test_a_malformed_platform_tag_is_refused(self, complete_stage, tmp_path, plat):
-        """A bad tag yields a filename pip silently will not match -- so reject it here."""
-        with pytest.raises(SystemExit) as excinfo:
-            make_wheel.main(
-                [
-                    "make_wheel.py",
-                    "--stage",
-                    str(complete_stage),
-                    "--version",
-                    "0.1.0",
-                    "--plat",
-                    plat,
-                    "--core-requires",
-                    "pyramids-core==0.80.0",
-                    "--outdir",
-                    str(tmp_path / "dist"),
-                ]
-            )
-
-        assert excinfo.value.code == 2, (
-            "expected argparse's usage error, not a build failure"
-        )
-
-    @pytest.mark.parametrize("version", ["0.1.0-dev", "v0.1.0", "not-a-version"])
-    def test_a_malformed_version_is_refused(self, complete_stage, tmp_path, version):
-        """A dash in the version splits the wheel filename into the wrong fields."""
-        with pytest.raises(SystemExit) as excinfo:
-            make_wheel.main(
-                [
-                    "make_wheel.py",
-                    "--stage",
-                    str(complete_stage),
-                    "--version",
-                    version,
-                    "--plat",
-                    "manylinux_2_28_x86_64",
-                    "--core-requires",
-                    "pyramids-core==0.80.0",
-                    "--outdir",
-                    str(tmp_path / "dist"),
-                ]
-            )
-
-        assert excinfo.value.code == 2, (
-            "expected argparse's usage error, not a build failure"
-        )
-
-    def test_an_unpinned_core_requirement_is_refused(self, complete_stage, tmp_path):
-        """--core-requires is mandatory: an unpinned wheel installs beside a core it
-        cannot load.
-        """
-        with pytest.raises(SystemExit) as excinfo:
-            make_wheel.main(
-                [
-                    "make_wheel.py",
-                    "--stage",
-                    str(complete_stage),
-                    "--version",
-                    "0.1.0",
-                    "--plat",
-                    "manylinux_2_28_x86_64",
-                    "--outdir",
-                    str(tmp_path / "dist"),
-                ]
-            )
-
-        assert excinfo.value.code == 2, (
-            "expected argparse's usage error, not a build failure"
-        )
-
-
 class TestVerifyDiscovery:
     """`verify.py`'s locators, which must mirror how pyramids-core finds things."""
 
@@ -1393,7 +816,7 @@ class TestVerifyDiscovery:
         """Running the verifier before installing the wheel should say so plainly."""
         monkeypatch.setattr(verify.importlib.util, "find_spec", lambda name: None)
 
-        with pytest.raises(SystemExit, match="pyramids_lazy_parquet is not installed"):
+        with pytest.raises(SystemExit, match="pyramids_lazy is not installed"):
             verify._plugin_dir()
 
     def test_a_missing_core_is_reported(self, monkeypatch):
@@ -1412,7 +835,7 @@ class TestVerifyDiscovery:
             Importing the companion during discovery would drag its dependency tree into
             `import pyramids`, so the verifier must not do it either.
         """
-        package = tmp_path / "pyramids_lazy_parquet"
+        package = tmp_path / "pyramids_lazy"
         (package / "gdalplugins").mkdir(parents=True)
 
         class _Spec:
@@ -1458,7 +881,12 @@ class TestVerifyDiscovery:
 
 
 class TestVerifyNonElfObjects:
-    """The `.dylib` branches anticipate macOS, but the parser reads ELF only."""
+    """The ELF path rejects a non-ELF object; pinned to Linux so that branch is exercised."""
+
+    @pytest.fixture(autouse=True)
+    def _force_elf_path(self, monkeypatch):
+        """check_link dispatches on sys.platform; these fixtures are ELF, so pin that branch."""
+        monkeypatch.setattr(verify.sys, "platform", "linux")
 
     @staticmethod
     def _macho(path: Path) -> Path:
@@ -1505,6 +933,11 @@ class TestVerifyNonElfObjects:
 class TestDamagedElfObjects:
     """ELF magic is not enough: a truncated object must still exit with a diagnosis."""
 
+    @pytest.fixture(autouse=True)
+    def _force_elf_path(self, monkeypatch):
+        """check_link dispatches on sys.platform; pin the ELF branch for these ELF fixtures."""
+        monkeypatch.setattr(verify.sys, "platform", "linux")
+
     def test_a_truncated_staged_library_stops_the_link_check(
         self, tmp_path, monkeypatch
     ):
@@ -1542,29 +975,6 @@ class TestDamagedElfObjects:
 
         with pytest.raises(SystemExit, match="not a readable ELF object"):
             verify.check_link(plugins)
-
-    def test_a_truncated_staged_library_stops_the_packager(self, tmp_path):
-        """The same object must not reach a published wheel unexamined."""
-        import argparse
-
-        root = tmp_path / "out"
-        plugins = root / "gdalplugins"
-        plugins.mkdir(parents=True)
-        (plugins / "ogr_Parquet.so").write_bytes(_elf(needed=("libgdal-abc.so.39",)))
-        (plugins / "libarrow.so.2600").write_bytes(
-            _elf(so_name="libarrow.so.2600")[:0x30]
-        )
-
-        with pytest.raises(SystemExit, match="not a readable ELF object"):
-            make_wheel.build(
-                argparse.Namespace(
-                    stage=str(root),
-                    version="0.1.0",
-                    plat="manylinux_2_28_x86_64",
-                    core_requires="pyramids-core==0.80.0",
-                    outdir=str(tmp_path / "dist"),
-                )
-            )
 
 
 class TestCorePluginDirectory:
@@ -1671,6 +1081,11 @@ class TestVerifyLinkCheck:
     real Linux install to exercise.
     """
 
+    @pytest.fixture(autouse=True)
+    def _force_elf_path(self, monkeypatch):
+        """check_link dispatches on sys.platform; these fixtures are ELF, so pin that branch."""
+        monkeypatch.setattr(verify.sys, "platform", "linux")
+
     @pytest.fixture
     def installed(self, monkeypatch, tmp_path: Path):
         """Fake an installed core + plugin pair with chosen sonames.
@@ -1776,6 +1191,487 @@ class TestVerifyLinkCheck:
         monkeypatch.setattr(verify, "_core_libs", lambda: libs)
 
         assert verify.check_link(plugins) == "libgdal.so.39"
+
+
+class TestVerifyLinkCheckMacho:
+    """check_link's macOS branch, read from otool load commands (``_macho_deps`` mocked).
+
+    Mach-O carries no DT_SONAME, so the ELF soname match becomes a file-name match. The decision
+    logic is what matters here; the load-command reader is mocked so the test runs on any host,
+    and a real otool read is covered separately where a dylib exists.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _force_macos(self, monkeypatch):
+        """Pin the darwin branch regardless of the host the suite runs on."""
+        monkeypatch.setattr(verify.sys, "platform", "darwin")
+
+    @pytest.fixture
+    def installed(self, monkeypatch, tmp_path: Path):
+        """Fake a core libgdal dylib + plugin, with the plugin's load commands supplied.
+
+        Returns:
+            Callable[[str, list[str]], Path]: Takes the installed dylib name and the load
+                commands otool would report for the plugin, and returns the plugin directory.
+        """
+
+        def _make(core_name: str, plugin_loads: list[str]) -> Path:
+            libs = tmp_path / "pyramids_core.libs"
+            libs.mkdir(exist_ok=True)
+            (libs / core_name).write_bytes(b"\xcf\xfa\xed\xfe")
+            plugins = tmp_path / "gdalplugins"
+            plugins.mkdir(exist_ok=True)
+            (plugins / "ogr_Parquet.so").write_bytes(b"\xcf\xfa\xed\xfe")
+            monkeypatch.setattr(verify, "_core_libs", lambda: libs)
+            monkeypatch.setattr(verify, "_macho_deps", lambda path: list(plugin_loads))
+            return plugins
+
+        return _make
+
+    def test_a_matching_pair_passes(self, installed, capsys):
+        """The plugin loads core's libgdal by an @loader_path path of the same file name."""
+        plugins = installed(
+            "libgdal.39.3.13.3.dylib",
+            [
+                "@loader_path/../../pyramids/.dylibs/libgdal.39.3.13.3.dylib",
+                "@rpath/libarrow.2600.dylib",
+            ],
+        )
+
+        assert verify.check_link(plugins) == "libgdal.39.3.13.3.dylib"
+        assert "link check          : OK" in capsys.readouterr().out
+
+    def test_a_mismatched_pair_is_refused(self, installed):
+        """A plugin built against a different core build names a libgdal core does not ship."""
+        plugins = installed(
+            "libgdal.39.3.13.3.dylib",
+            ["@loader_path/../../pyramids/.dylibs/libgdal.38.3.12.4.dylib"],
+        )
+
+        with pytest.raises(SystemExit, match="different core build"):
+            verify.check_link(plugins)
+
+    def test_a_python_dependency_is_refused(self, installed):
+        """No staged object may load libpython; the py3-none tag promises it."""
+        plugins = installed(
+            "libgdal.39.3.13.3.dylib",
+            [
+                "@loader_path/../../pyramids/.dylibs/libgdal.39.3.13.3.dylib",
+                "@rpath/libpython3.12.dylib",
+            ],
+        )
+
+        with pytest.raises(SystemExit, match="py3-none tag is a lie"):
+            verify.check_link(plugins)
+
+    def test_a_core_without_libgdal_is_refused(self, monkeypatch, tmp_path: Path):
+        """An empty vendored directory must not silently pass."""
+        libs = tmp_path / "pyramids_core.libs"
+        libs.mkdir()
+        plugins = tmp_path / "gdalplugins"
+        plugins.mkdir()
+        (plugins / "ogr_Parquet.so").write_bytes(b"\xcf\xfa\xed\xfe")
+        monkeypatch.setattr(verify, "_core_libs", lambda: libs)
+
+        with pytest.raises(SystemExit, match="no libgdal in"):
+            verify.check_link(plugins)
+
+    def test_a_directory_holding_no_loadable_driver_is_refused(self, installed):
+        """Only ``.so``/``.dylib`` count as the driver; a debug sidecar is not one."""
+        plugins = installed("libgdal.39.3.13.3.dylib", [])
+        (plugins / "ogr_Parquet.so").rename(plugins / "ogr_Parquet.so.debug")
+
+        with pytest.raises(SystemExit, match="no ogr_Parquet"):
+            verify.check_link(plugins)
+
+
+class TestVerifyLinkCheckPE:
+    """check_link's Windows branch, read from the PE import table (``_pe_imports`` mocked).
+
+    The soname match becomes a case-insensitive file-name match against core's hashed
+    ``gdal-<hash>.dll``. The reader is mocked so the logic runs on any host; a real PE parse is
+    covered separately on Windows.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _force_windows(self, monkeypatch):
+        """Pin the win32 branch regardless of the host the suite runs on."""
+        monkeypatch.setattr(verify.sys, "platform", "win32")
+
+    @pytest.fixture
+    def installed(self, monkeypatch, tmp_path: Path):
+        """Fake a core gdal DLL + plugin, with the plugin's import table supplied.
+
+        Returns:
+            Callable[[str, list[str]], Path]: Takes the installed DLL name and the plugin's
+                imported DLL names, and returns the plugin directory.
+        """
+
+        def _make(core_name: str, plugin_imports: list[str]) -> Path:
+            libs = tmp_path / "pyramids_core.libs"
+            libs.mkdir(exist_ok=True)
+            (libs / core_name).write_bytes(b"MZ")
+            plugins = tmp_path / "gdalplugins"
+            plugins.mkdir(exist_ok=True)
+            (plugins / "ogr_Parquet.dll").write_bytes(b"MZ")
+            monkeypatch.setattr(verify, "_core_libs", lambda: libs)
+            monkeypatch.setattr(
+                verify, "_pe_imports", lambda path: list(plugin_imports)
+            )
+            return plugins
+
+        return _make
+
+    def test_a_matching_pair_passes(self, installed, capsys):
+        """The plugin imports exactly the hashed gdal DLL core ships."""
+        plugins = installed(
+            "gdal-2c0038e2.dll", ["gdal-2c0038e2.dll", "arrow.dll", "KERNEL32.dll"]
+        )
+
+        assert verify.check_link(plugins) == "gdal-2c0038e2.dll"
+        assert "link check          : OK" in capsys.readouterr().out
+
+    def test_the_unmangled_gdal_dll_is_refused(self, installed):
+        """The exact hazard the LIBRARY fix prevents: importing the bare gdal.dll."""
+        plugins = installed("gdal-2c0038e2.dll", ["gdal.dll", "arrow.dll"])
+
+        with pytest.raises(SystemExit, match="different core build"):
+            verify.check_link(plugins)
+
+    def test_a_python_dependency_is_refused(self, installed):
+        """No staged object may import a python3*.dll."""
+        plugins = installed("gdal-2c0038e2.dll", ["gdal-2c0038e2.dll", "python312.dll"])
+
+        with pytest.raises(SystemExit, match="py3-none tag is a lie"):
+            verify.check_link(plugins)
+
+    def test_a_core_without_a_gdal_dll_is_refused(self, monkeypatch, tmp_path: Path):
+        """An empty vendored directory must not silently pass."""
+        libs = tmp_path / "pyramids_core.libs"
+        libs.mkdir()
+        plugins = tmp_path / "gdalplugins"
+        plugins.mkdir()
+        (plugins / "ogr_Parquet.dll").write_bytes(b"MZ")
+        monkeypatch.setattr(verify, "_core_libs", lambda: libs)
+
+        with pytest.raises(SystemExit, match="no gdal DLL in"):
+            verify.check_link(plugins)
+
+    def test_a_directory_holding_no_loadable_driver_is_refused(self, installed):
+        """Only ``.dll`` counts as the driver; a stray .pdb is not one."""
+        plugins = installed("gdal-2c0038e2.dll", [])
+        (plugins / "ogr_Parquet.dll").rename(plugins / "ogr_Parquet.pdb")
+
+        with pytest.raises(SystemExit, match="no ogr_Parquet"):
+            verify.check_link(plugins)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="otool is macOS-only")
+class TestMachoDepsAgainstARealLibrary:
+    """`_macho_deps` must read a real dylib's load commands through otool."""
+
+    def test_it_lists_the_load_commands_of_a_real_mach_o(self):
+        """The interpreter is a real on-disk Mach-O; otool must list its load commands."""
+        deps = verify._macho_deps(Path(sys.executable))
+
+        assert isinstance(deps, list)
+        assert deps, "a real executable loads at least libSystem"
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("win"),
+    reason="PE import parsing is exercised on Windows",
+)
+class TestPeImportsAgainstARealDll:
+    """`_pe_imports` must read a real DLL's import table."""
+
+    def test_it_reads_a_real_dll_import_table(self):
+        """The interpreter's own DLL is a real PE with a non-trivial import table."""
+        tag = f"python{sys.version_info.major}{sys.version_info.minor}.dll"
+        candidates = [
+            Path(sys.prefix) / tag,
+            *sorted((Path(sys.prefix) / "DLLs").glob("*.dll")),
+        ]
+        target = next((c for c in candidates if c.is_file()), None)
+        if target is None:
+            pytest.skip("no DLL found beside the interpreter")
+
+        imports = verify._pe_imports(target)
+
+        assert isinstance(imports, list)
+        assert all(name for name in imports)
+
+
+#: Where _pe() lays its single section: RVAs 0x1000.. map to file offsets 0x400.., 0x400 long.
+_PE_SECT_VADDR = 0x1000
+_PE_SECT_RAW = 0x400
+_PE_SECT_SIZE = 0x400
+
+
+def _pe(
+    *,
+    dos: bytes = b"MZ",
+    pe_sig: bytes = b"PE\x00\x00",
+    opt_magic: int = 0x20B,
+    import_rva: int = 0x1000,
+    descriptors: tuple[int, ...] = (0x1200,),
+    names: dict[int, bytes] | None = None,
+) -> bytes:
+    """Build a minimal PE whose import table `_pe_imports` can walk.
+
+    Enough of DOS header → PE header → optional header → data directory 1 → one section to drive
+    every branch of the parser from bytes, the way `_elf()` does for the ELF reader. The keyword
+    switches forge the malformed cases (foreign magic, no signature, an out-of-section RVA).
+
+    Args:
+        dos: Leading two bytes; override to forge a non-PE file.
+        pe_sig: The four-byte PE signature; override to break it.
+        opt_magic: ``0x20B`` (PE32+) or ``0x10B`` (PE32); anything else is the "unknown magic"
+            case the parser rejects.
+        import_rva: The import-directory RVA. ``0`` means "no imports"; a value outside the one
+            section forces the no-section branch.
+        descriptors: One name RVA per import descriptor; a null terminator is appended.
+        names: Maps a name RVA to the DLL-name bytes written there.
+
+    Returns:
+        bytes: The synthetic PE image.
+    """
+    names = names if names is not None else {0x1200: b"gdal.dll"}
+    fixed = 112 if opt_magic == 0x20B else 96
+    opt_size = (
+        fixed + 16 * 8
+    )  # the 16 data directories follow the fixed optional header
+    e_lfanew = 0x40
+    coff = e_lfanew + 4
+    opt_off = coff + 20
+    sec_off = opt_off + opt_size
+    blob = bytearray(_PE_SECT_RAW + _PE_SECT_SIZE)
+    blob[0:2] = dos
+    struct.pack_into("<I", blob, 0x3C, e_lfanew)
+    blob[e_lfanew : e_lfanew + 4] = pe_sig
+    struct.pack_into("<H", blob, coff + 0, 0x8664)  # machine
+    struct.pack_into("<H", blob, coff + 2, 1)  # one section
+    struct.pack_into("<H", blob, coff + 16, opt_size)  # size of the optional header
+    struct.pack_into("<H", blob, opt_off, opt_magic)
+    struct.pack_into(
+        "<I", blob, opt_off + fixed + 8, import_rva
+    )  # data dir 1 (imports) RVA
+    struct.pack_into("<I", blob, opt_off + fixed + 12, 0x28)  # its size
+    struct.pack_into("<I", blob, sec_off + 8, _PE_SECT_SIZE)  # virtual size
+    struct.pack_into("<I", blob, sec_off + 12, _PE_SECT_VADDR)  # virtual address
+    struct.pack_into("<I", blob, sec_off + 16, _PE_SECT_SIZE)  # raw size
+    struct.pack_into("<I", blob, sec_off + 20, _PE_SECT_RAW)  # raw pointer
+
+    def _in_section(rva: int) -> bool:
+        return _PE_SECT_VADDR <= rva < _PE_SECT_VADDR + _PE_SECT_SIZE
+
+    if _in_section(import_rva):
+        off = _PE_SECT_RAW + (import_rva - _PE_SECT_VADDR)
+        for name_rva in (*descriptors, 0):
+            struct.pack_into("<I", blob, off + 12, name_rva)
+            off += 20
+        for rva, raw in names.items():
+            if _in_section(rva):
+                start = _PE_SECT_RAW + (rva - _PE_SECT_VADDR)
+                blob[start : start + len(raw)] = raw
+    return bytes(blob)
+
+
+class TestPeImportParser:
+    """`_pe_imports` parsed from synthetic bytes, so every branch runs on every host."""
+
+    def _write(self, tmp_path: Path, blob: bytes) -> Path:
+        path = tmp_path / "x.dll"
+        path.write_bytes(blob)
+        return path
+
+    def test_a_single_import_is_read(self, tmp_path):
+        """The happy path: one descriptor naming one DLL."""
+        assert verify._pe_imports(self._write(tmp_path, _pe())) == ["gdal.dll"]
+
+    def test_several_imports_come_back_in_order(self, tmp_path):
+        """The descriptor array is walked to its null terminator."""
+        blob = _pe(
+            descriptors=(0x1200, 0x1210),
+            names={0x1200: b"a.dll", 0x1210: b"b.dll"},
+        )
+
+        assert verify._pe_imports(self._write(tmp_path, blob)) == ["a.dll", "b.dll"]
+
+    def test_a_pe32_object_with_no_imports_is_empty(self, tmp_path):
+        """PE32 (0x10B) shifts the data directories, and a zero import RVA means no imports."""
+        blob = _pe(opt_magic=0x10B, import_rva=0)
+
+        assert verify._pe_imports(self._write(tmp_path, blob)) == []
+
+    def test_a_null_name_descriptor_ends_the_walk(self, tmp_path):
+        """A descriptor that is not all-zero but names nothing (name RVA 0) still terminates.
+
+        Test scenario:
+            The common terminator is an all-zero descriptor, caught by the first guard. A
+            descriptor carrying a stray non-zero field but a zero Name RVA must end the walk too,
+            via the name-RVA check rather than the all-zero one.
+        """
+        blob = bytearray(
+            _pe()
+        )  # descriptor 0 names gdal.dll; descriptor 1 is the terminator
+        term = _PE_SECT_RAW + 20
+        struct.pack_into(
+            "<I", blob, term + 0, 0x1234
+        )  # a non-zero field, so not all-zero
+        struct.pack_into("<I", blob, term + 12, 0)  # but a zero Name RVA -> terminator
+
+        assert verify._pe_imports(self._write(tmp_path, bytes(blob))) == ["gdal.dll"]
+
+    def test_a_non_pe_file_is_refused(self, tmp_path):
+        """A file without the MZ magic is a diagnosis, not a traceback."""
+        with pytest.raises(SystemExit, match="not a readable PE object"):
+            verify._pe_imports(self._write(tmp_path, b"not a PE at all"))
+
+    def test_a_missing_pe_signature_is_refused(self, tmp_path):
+        """MZ alone is not enough; the PE signature must be present."""
+        with pytest.raises(SystemExit, match="no PE signature"):
+            verify._pe_imports(self._write(tmp_path, _pe(pe_sig=b"NOPE")))
+
+    def test_an_unknown_optional_header_magic_is_refused(self, tmp_path):
+        """Neither PE32 nor PE32+ -- the parser cannot place the data directories."""
+        with pytest.raises(SystemExit, match="unknown optional header magic"):
+            verify._pe_imports(self._write(tmp_path, _pe(opt_magic=0x9999)))
+
+    def test_an_import_rva_outside_every_section_is_refused(self, tmp_path):
+        """A directory RVA the section table cannot map is reported, not silently skipped."""
+        with pytest.raises(SystemExit, match="not a readable PE object"):
+            verify._pe_imports(self._write(tmp_path, _pe(import_rva=0x9999)))
+
+
+class TestMachoDepsErrors:
+    """`_macho_deps` must turn an otool failure into a diagnosis on any host.
+
+    On macOS otool rejects a bogus path; off macOS otool is absent and the subprocess raises
+    ``OSError``. Both land in the same guard, so this exercises it everywhere.
+    """
+
+    def test_an_unreadable_path_is_a_diagnosis(self, tmp_path):
+        with pytest.raises(SystemExit, match="could not read the load commands"):
+            verify._macho_deps(tmp_path / "does-not-exist.dylib")
+
+
+class _FakeResponse:
+    """A urlopen stand-in: readable like a response and usable as a context manager."""
+
+    def __init__(self, data: bytes):
+        self._data = data
+
+    def read(self) -> bytes:
+        return self._data
+
+    def __enter__(self) -> _FakeResponse:
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+
+class TestFetchCplConfig:
+    """`fetch_cpl_config.py` resolves, downloads and extracts the header, all mocked.
+
+    The script is pure stdlib over the network (conda-forge repodata + a package download); every
+    test replaces ``urllib.request.urlopen`` so nothing leaves the machine.
+    """
+
+    _REPODATA = {
+        "packages": {
+            "libgdal-core-3.13.3-h0_0.tar.bz2": {
+                "name": "libgdal-core",
+                "version": "3.13.3",
+                "build_number": 0,
+            },
+            "libgdal-core-3.13.3-h2_2.tar.bz2": {
+                "name": "libgdal-core",
+                "version": "3.13.3",
+                "build_number": 2,
+            },
+            "gdal-3.13.3-h0_0.tar.bz2": {
+                "name": "gdal",
+                "version": "3.13.3",
+                "build_number": 9,
+            },
+        },
+        "packages.conda": {
+            "libgdal-core-3.13.3-h1_1.conda": {
+                "name": "libgdal-core",
+                "version": "3.13.3",
+                "build_number": 1,
+            },
+            "libgdal-core-3.12.0-h0_5.conda": {
+                "name": "libgdal-core",
+                "version": "3.12.0",
+                "build_number": 5,
+            },
+        },
+    }
+
+    def _patch_urlopen(self, monkeypatch, payload=b"fake .conda payload"):
+        """Route repodata reads to the fixture and any other URL to a package payload."""
+
+        def _fake(url):
+            if url.endswith("repodata.json"):
+                return _FakeResponse(json.dumps(self._REPODATA).encode())
+            return _FakeResponse(payload)
+
+        monkeypatch.setattr(fetch_cpl.urllib.request, "urlopen", _fake)
+
+    def test_resolve_picks_the_newest_matching_build(self, monkeypatch):
+        """The highest build_number wins, across both packages and packages.conda, by version."""
+        self._patch_urlopen(monkeypatch)
+
+        url = fetch_cpl.resolve("3.13.3", "osx-arm64")
+
+        assert url.endswith("osx-arm64/libgdal-core-3.13.3-h2_2.tar.bz2")
+
+    def test_resolve_raises_when_no_build_matches(self, monkeypatch):
+        """A version absent from the subdir is a diagnosis, not an empty pick."""
+        self._patch_urlopen(monkeypatch)
+
+        with pytest.raises(
+            SystemExit, match="no libgdal-core 9.9.9 on conda-forge/win-64"
+        ):
+            fetch_cpl.resolve("9.9.9", "win-64")
+
+    def test_load_extractor_exposes_extract(self):
+        """The sibling module loads without a package context and offers `extract`."""
+        assert hasattr(fetch_cpl._load_extractor(), "extract")
+
+    def test_main_rejects_a_wrong_argument_count(self, capsys):
+        """Too few arguments prints usage and exits 2 rather than tracing back."""
+        assert fetch_cpl.main(["fetch_cpl_config.py"]) == 2
+        assert "usage:" in capsys.readouterr().err
+
+    def test_main_downloads_resolves_and_extracts(self, monkeypatch, tmp_path, capsys):
+        """The happy path: resolve, download to a temp file, extract, then clean it up."""
+        self._patch_urlopen(monkeypatch)
+        seen = {}
+
+        def _fake_extract(work, out):
+            seen["work"] = Path(work)
+            seen["out"] = Path(out)
+            return Path(out) / "cpl_config.h"
+
+        monkeypatch.setattr(
+            fetch_cpl, "_load_extractor", lambda: SimpleNamespace(extract=_fake_extract)
+        )
+
+        code = fetch_cpl.main(
+            ["fetch_cpl_config.py", "3.13.3", "osx-arm64", str(tmp_path)]
+        )
+
+        assert code == 0
+        assert seen["work"] == tmp_path / "_libgdal_core.conda"
+        assert seen["out"] == tmp_path
+        assert not seen["work"].exists(), "the downloaded archive must be cleaned up"
+        out = capsys.readouterr().out
+        assert "resolved osx-arm64 libgdal-core" in out
+        assert "extracted" in out
 
 
 class TestVerifyCli:

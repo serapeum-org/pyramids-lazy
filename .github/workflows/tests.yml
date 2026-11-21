@@ -1,43 +1,51 @@
-name: tests
+name: Tests - Suite
+
+permissions:
+  contents: read
 
 on:
   push:
     branches: [main]
   pull_request:
 
-permissions:
-  contents: read
-  # Codecov's tokenless (OIDC) upload needs an id-token.
-  id-token: write
-
+# Cancel superseded runs on PRs: a new push to a PR cancels the previous in-progress run
+# instead of letting both compete for the (limited, especially macOS) hosted-runner pool.
+# main is exempt — every commit merged to main must run the full suite independently, so a
+# later merge never cancels an earlier commit's verification. main gets a unique run_id group
+# (never shared, never cancelled); PRs keep the per-ref group with cancel-in-progress.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  tests:
+  main-package:
     runs-on: ${{ matrix.os }}
+    # id-token: write is scoped here (not workflow-level) for the Codecov OIDC upload.
+    permissions:
+      contents: read
+      id-token: write
+    # Bound a hung test so the job fails in minutes instead of running to GitHub's 6-hour
+    # default; the full matrix completes well under this.
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         # Full-stack (dev + the [parquet] vector extra) across every supported Python.
-        environment: [py311, py312, py313, py314]
+        environment: [py311, py312, py313, py314, py315]
         # The no-[parquet] shape (on 3.11, where the backend-discovery bug was specific) runs as one
         # extra leg on ubuntu — enough to cover the parquet-less resolution without running it across
-        # the whole matrix.
+        # the whole matrix. Lazy-specific; pyramids-core has no equivalent.
         include:
           - os: ubuntu-latest
             environment: base
 
     steps:
+      # No fetch-depth: the test suite reads the working tree, not git history.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
 
       - name: Set up Python
-        uses: serapeum-org/github-actions/actions/python-setup/pixi@38c111084f99d5ff5f4a1e63bedce48fe33a10c0 # pixi/v1.2.1
+        uses: serapeum-org/github-actions/actions/python-setup/pixi@6c0a569b67c149c4648c75495544732cba2d0eca # pixi/v1.2.2
         with:
           environments: ${{ matrix.environment }}
           activate-environment: ${{ matrix.environment }}
@@ -52,7 +60,7 @@ jobs:
         run: pixi run --locked -e ${{ matrix.environment }} main
 
       - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
 
       - name: Test Jupyter notebooks
         # rc 4 (usage/collection error) and 5 (no tests collected) are tolerated: there are no
