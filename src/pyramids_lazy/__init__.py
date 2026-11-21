@@ -39,15 +39,20 @@ from pyramids_lazy.backend import LazyComputeBackend, backend
 # On Windows the bundled GDAL plugin (gdalplugins/ogr_Parquet.dll) links self-vendored Arrow DLLs
 # that sit beside it. Windows has no $ORIGIN/@loader_path, so GDAL cannot find those dependencies
 # when it loads the plugin unless their directory is on the DLL search path — importing this
-# package is what puts it there. Only the native (platform) wheels ship gdalplugins/, so on a pure
-# source install the directory is absent and this is a no-op; Linux and macOS bake the directory
-# into the plugin via rpath and need nothing here.
+# package is what puts it there. PATH is the lever that works: GDAL loads the plugin with a plain
+# LoadLibrary whose standard search consults %PATH%, but NOT the directories add_dll_directory
+# registers (those need the LOAD_LIBRARY_SEARCH_USER_DIRS flag GDAL does not pass), so prepending
+# to PATH is what actually resolves the Arrow DLLs; add_dll_directory is kept for ctypes-style
+# loads. This mirrors what osgeo's own __init__ does for its DLLs. Only the native (platform)
+# wheels ship gdalplugins/, so on a source install the directory is absent and this is a no-op;
+# Linux and macOS bake the directory into the plugin via rpath and need nothing here.
 if (
     sys.platform == "win32"
 ):  # pragma: no cover - the path matters only on the Windows wheel
     _plugin_dir = Path(__file__).parent / "gdalplugins"
     if _plugin_dir.is_dir():
         os.add_dll_directory(str(_plugin_dir))
+        os.environ["PATH"] = str(_plugin_dir) + os.pathsep + os.environ.get("PATH", "")
 
 #: The `pyramids.lazy_support` contract this build requires, re-exported for diagnostics.
 REQUIRED_LAZY_SUPPORT_API_VERSION = _seam.REQUIRED_LAZY_SUPPORT_API_VERSION
