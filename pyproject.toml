@@ -124,12 +124,23 @@ platforms = [
     { platform = "osx-arm64", macos = "14.0" },
 ]
 
-# Interpreter floor/ceiling for the default (version-less) feature. <3.15 keeps every env off 3.15:
-# the netcdf/zarr stack has no cp315 PyPI wheels yet (h5py and numcodecs are sdist-only on PyPI, and
-# numcodecs arrives as a PyPI-transitive dep of zarr that a conda override does not displace), so a
-# 3.15 env cannot install. Revisit when h5py + numcodecs ship cp315 wheels on PyPI.
+# Source the numeric + netcdf/zarr stack from conda-forge, exactly as pyramids-core does. PyPI has
+# no cp315 wheels for h5py/numcodecs, but conda-forge does (h5py 3.16.0 ships a cp315 build on hdf5
+# 1.14.6 — core's own note: "this is what unblocked the py315 leg"). A PARTIAL conversion fails
+# (conda h5py pulls conda numpy, which then conflicts with a PyPI numpy), so numpy comes from conda
+# too and the rest of the PyPI stack (scipy/pandas/pyarrow/...) consumes that one numpy. This is
+# dev/CI-env only: the published wheel and [project.dependencies] stay PyPI, so pip users are
+# unaffected. The hdf5 = 1.14.* pin mirrors core: it forces the h5py build that links hdf5 1.14.x.
 [tool.pixi.dependencies]
-python = ">=3.11,<3.15"
+python = ">=3.11,<3.16"
+numpy = ">=2.0.0"
+h5py = ">=3.8.0,<3.17"
+hdf5 = "1.14.*"
+zarr = ">=3"
+kerchunk = ">=0.2.10"
+# numcodecs is pulled (at the version each interpreter has a conda build for — 0.16.x on cp311,
+# 0.17.x on cp315) by the conda zarr/kerchunk above; do not pin it, or a floor like >=0.17 excludes
+# the cp311 conda build (0.17.x is cp312+ only) and py311 cannot solve.
 
 # Interpreter pins, one feature per supported Python so CI can run a per-version matrix. 3.11 is the
 # floor, where runtime_checkable isinstance behaves differently (hasattr vs getattr_static) — the
@@ -144,6 +155,8 @@ python = "3.12.*"
 python = { version = "3.13.*", build = "*_cp313" }
 [tool.pixi.feature.py314.dependencies]
 python = { version = "3.14.*", build = "*_cp314" }
+[tool.pixi.feature.py315.dependencies]
+python = { version = "3.15.*", build = "*_cp315" }
 
 [tool.pixi.pypi-dependencies]
 pyramids-lazy = { path = ".", editable = true }
@@ -160,6 +173,7 @@ py311 = { features = ["dev", "parquet", "py311", "interop", "viz"], solve-group 
 py312 = { features = ["dev", "parquet", "py312", "interop", "viz"], solve-group = "py312" }
 py313 = { features = ["dev", "parquet", "py313", "interop", "viz"], solve-group = "py313" }
 py314 = { features = ["dev", "parquet", "py314", "interop", "viz"], solve-group = "py314" }
+py315 = { features = ["dev", "parquet", "py315", "interop", "viz"], solve-group = "py315" }
 docs = { features = ["dev", "docs"], solve-group = "docs" }
 
 [tool.pixi.feature.dev.tasks]
