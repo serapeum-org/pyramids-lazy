@@ -550,6 +550,14 @@ def check_driver(  # pragma: no cover - needs a real install + loadable plugin
         )
         os.environ["PYRAMIDS_KEEP_GDAL_ENV"] = "1"
 
+    if sys.platform.startswith("win"):
+        # Windows has no rpath: the plugin's self-vendored Arrow DLLs are found only once
+        # pyramids_lazy has put its gdalplugins directory on the DLL search path, which it does at
+        # import (see pyramids_lazy/__init__). Linux and macOS resolve them from the plugin's own
+        # rpath, so this import is Windows-only. It must precede `import pyramids`, which triggers
+        # core's GDAL bootstrap and the plugin load.
+        import pyramids_lazy  # noqa: F401,PLC0415
+
     import pyramids  # noqa: F401,PLC0415 - import triggers core's GDAL bootstrap
     from osgeo import gdal, ogr  # noqa: PLC0415
 
