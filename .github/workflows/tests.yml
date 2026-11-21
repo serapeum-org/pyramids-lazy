@@ -10,9 +10,12 @@ permissions:
   # Codecov's tokenless (OIDC) upload needs an id-token.
   id-token: write
 
+# Cancel superseded PR runs, but never cancel a run on main: every commit merged to main must
+# verify independently, so main gets a unique run_id group (never shared, never cancelled) while
+# PRs keep the per-ref group with cancel-in-progress. Matches pyramids-core.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   tests:
@@ -23,7 +26,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         # Full-stack (dev + the [parquet] vector extra) across every supported Python.
-        environment: [py311, py312, py313, py314]
+        environment: [py311, py312, py313, py314, py315]
         # The no-[parquet] shape (on 3.11, where the backend-discovery bug was specific) runs as one
         # extra leg on ubuntu — enough to cover the parquet-less resolution without running it across
         # the whole matrix.
@@ -37,7 +40,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: serapeum-org/github-actions/actions/python-setup/pixi@38c111084f99d5ff5f4a1e63bedce48fe33a10c0 # pixi/v1.2.1
+        uses: serapeum-org/github-actions/actions/python-setup/pixi@6c0a569b67c149c4648c75495544732cba2d0eca # pixi/v1.2.2
         with:
           environments: ${{ matrix.environment }}
           activate-environment: ${{ matrix.environment }}

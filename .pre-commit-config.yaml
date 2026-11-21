@@ -137,6 +137,18 @@ repos:
 
   - repo: local
     hooks:
+      # mypy needs the typed dev deps + an importable package, so it shells out to the pixi dev
+      # env. CI (lint.yml) installs that env and runs this hook; locally it uses the same env.
+      - id: mypy
+        name: "[py   -  type] mypy"
+        entry: pixi run --frozen -e dev mypy
+        language: system
+        pass_filenames: false
+        always_run: true
+        types: [python]
+
+  - repo: local
+    hooks:
       - id: pytest-check
         name: pytest-check
         entry: pytest -v --cov=src/pyramids_lazy --cov=ci/parquet-plugin --cov-report=term-missing -m "not live"
