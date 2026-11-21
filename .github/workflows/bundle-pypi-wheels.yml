@@ -1,0 +1,492 @@
+name: Bundle PyPI Wheels
+
+# Builds pyramids-lazy's OWN wheel as a native `py3-none-<platform>` wheel carrying the compiled
+# OGR-Parquet driver + its Arrow runtime in `pyramids_lazy/gdalplugins/`. The driver is linked
+# against the libgdal inside a published pyramids-core wheel (not relinked after the fact); the
+# rationale is in planning/parquet-native-wheel-port-plan.md and issue #4.
+#
+# The wheel is interpreter-independent (the plugin loads via GDAL_DRIVER_PATH, nothing links
+# libpython), so it is ONE wheel per platform, not per CPython -- see setup.py for the forced
+# `py3-none-<plat>` tag. The `release` job below is the canonical publisher (sdist + wheels to the
+# GitHub release and PyPI on a successful github-release). manylinux x86_64 + aarch64, macOS arm64/x86_64,
+# win_amd64
+# follow (plan Phasing). musllinux and win_arm64 are NOT companion targets: conda-forge ships
+# no musl / win-arm64 libgdal-core, so fetch_cpl_config.py has no cpl_config.h source for
+# them, and musl's VSI_STAT64_T etc. differ from glibc so the glibc header cannot be reused.
+# For win_arm64 the route is to enable arrow+parquet in core's ci/vcpkg.json so the driver is
+# compiled INTO core's own libgdal there -- a pyramids-core change. musl Parquet would likewise
+# need core to carry the driver. Both get the pure backend + branded hint until then.
+
+permissions:
+  contents: read
+
+# Triggers mirror pyramids-core's bundle-pypi-wheels.yml: build on every push to main and
+# after a release, with a dormant pull_request arm and manual dispatch. The `release` job
+# publishes the built sdist + wheels to the GitHub release and PyPI on a successful
+# github-release (workflow_run); a plain push builds + verifies only (the release job skips).
+on:
+  push:
+    branches: [main]
+  # Dormant, as in core: flip on to build the native wheels on a PR touching the build.
+  # pull_request:
+  #   branches: [main]
+  #   paths:
+  #     - "ci/parquet-plugin/**"
+  #     - "setup.py"
+  #     - ".github/workflows/bundle-pypi-wheels.yml"
+  workflow_run:
+    workflows: ["github-release"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch / ref to build wheels from (defaults to the ref selected in the UI)"
+        required: false
+        default: ""
+        type: string
+      core-version:
+        description: "pyramids-core version to build against (blank = the pinned default)"
+        required: false
+        default: ""
+        type: string
+      gdal-version:
+        description: "override the GDAL version derived from the core wheel's soname"
+        required: false
+        default: ""
+        type: string
+      arrow-version:
+        description: "Arrow C++ version to build"
+        required: false
+        default: ""
+        type: string
+      dry_run_release:
+        description: "Also run the release job's gather + composition gate (stops before upload/publish)"
+        required: false
+        default: false
+        type: boolean
+
+# The core release the wheels build and link against. Pinned, not "latest": the GDAL version is
+# derived from whatever core serves and only the exact tarballs in build.sh's digest table are
+# accepted, so "latest" would fail this workflow on an unrelated PR the moment core bumps GDAL.
+# Bump together with the digest table. 0.81.0 is the release that ships the gdal_plugin_path seam
+# this wheel registers through.
+env:
+  PINNED_CORE_VERSION: "0.81.0"
+  # The GDAL the pinned core links. Linux/macOS derive it from the downloaded
+  # libgdal; Windows cannot (its gdal-<hash>.dll carries no version), so it is
+  # passed explicitly. Bump together with core and the digest table.
+  PINNED_GDAL_VERSION: "3.13.3"
+
+concurrency:
+  # Per-run group (unique run_id) for push / workflow_run so a merge to main or a release is
+  # always built to completion; only pull_request builds share a per-branch group and cancel.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  resolve-ref:
+    name: resolve the release ref
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    # core's workflow_run guard: only build for a dispatch/push, or a SUCCESSFUL same-repo
+    # github-release. Downstream jobs `needs: resolve-ref`, so they skip when this skips.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository)
+    outputs:
+      ref: ${{ steps.ref.outputs.ref }}
+    steps:
+      - name: Download the release ref from the github-release run
+        # On the release (workflow_run) path head_branch/head_sha point at the pre-bump main:
+        # github-release creates a release/auto-* branch and pushes the version bump THERE, then
+        # uploads that branch name as the `release-ref` artifact. Fetch it so the wheels build the
+        # tip that actually holds the bump -- exactly what pypi-release.yml does, and NOT
+        # head_branch/head_sha (which would build main).
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-ref
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: .release-ref
+      - name: Resolve the ref to build
+        id: ref
+        run: |
+          set -euo pipefail
+          case "${{ github.event_name }}" in
+            workflow_run) REF="$(cat .release-ref/release-ref.txt)" ;;
+            workflow_dispatch) REF="${{ inputs.branch || github.ref_name }}" ;;
+            *) REF="${{ github.ref_name }}" ;;
+          esac
+          echo "resolved ref: ${REF}"
+          echo "ref=${REF}" >> "$GITHUB_OUTPUT"
+
+
+  build-linux-wheels:
+    name: linux ${{ matrix.arch }}
+    needs: resolve-ref
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runs-on: ubuntu-latest
+          - arch: aarch64
+            runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-ref.outputs.ref }}
+      - uses: pypa/cibuildwheel@f9b966cfadf4109556cadc5bb39ddb72d0ce664e # v4.3.5
+        env:
+          CIBW_ARCHS_LINUX: ${{ matrix.arch }}
+          # before-all (build.sh) runs inside the manylinux container; pass what it needs in.
+          CIBW_ENVIRONMENT: >-
+            PYRAMIDS_LAZY_NATIVE=1 OUTPUT=/tmp/pp-out
+            PLAT=manylinux_2_28_${{ matrix.arch }}
+            CORE_VERSION=${{ inputs.core-version || env.PINNED_CORE_VERSION }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wheels-linux-${{ matrix.arch }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+          retention-days: 14
+
+  build-macos-wheels:
+    name: macos ${{ matrix.arch }}
+    needs: resolve-ref
+    # Build each arch NATIVELY: arm64 on macos-15, x86_64 on macos-15-intel. GitHub retired the
+    # macos-13 Intel image on 2025-12-04 (jobs pinned to it queue forever), and macos-15-intel is
+    # the replacement native x86_64 image (supported into 2027). Native beats cross-compiling
+    # x86_64 on the arm64 runner, which made Arrow's bundled boost fail at configure (source_group).
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runs-on: macos-15
+          - arch: x86_64
+            runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-ref.outputs.ref }}
+      - uses: pypa/cibuildwheel@f9b966cfadf4109556cadc5bb39ddb72d0ce664e # v4.3.5
+        env:
+          CIBW_ARCHS_MACOS: ${{ matrix.arch }}
+          CIBW_ENVIRONMENT: >-
+            PYRAMIDS_LAZY_NATIVE=1 OUTPUT=/tmp/pp-out
+            PLAT=macosx_11_0_${{ matrix.arch }}
+            CORE_VERSION=${{ inputs.core-version || env.PINNED_CORE_VERSION }}
+            MACOSX_DEPLOYMENT_TARGET=11.0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wheels-macos-${{ matrix.arch }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+          retention-days: 14
+
+  build-windows-wheels:
+    name: windows AMD64
+    needs: resolve-ref
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-ref.outputs.ref }}
+      - uses: pypa/cibuildwheel@f9b966cfadf4109556cadc5bb39ddb72d0ce664e # v4.3.5
+        env:
+          CIBW_ARCHS_WINDOWS: AMD64
+          CIBW_ENVIRONMENT: >-
+            PYRAMIDS_LAZY_NATIVE=1 OUTPUT=C:/pp-out
+            PLAT=win_amd64
+            CORE_VERSION=${{ inputs.core-version || env.PINNED_CORE_VERSION }}
+            GDAL_VERSION=${{ inputs.gdal-version || env.PINNED_GDAL_VERSION }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wheels-windows-AMD64
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+          retention-days: 14
+
+  sdist:
+    name: sdist (pure)
+    needs: resolve-ref
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-ref.outputs.ref }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Build the sdist
+        # No plugin staged and PYRAMIDS_LAZY_NATIVE unset, so this is the ordinary pure source
+        # dist; a source install on an unsupported platform gets the pure backend and the
+        # OGR-Parquet path raises its branded hint.
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet --upgrade build
+          python -m build --sdist --outdir dist
+          test -z "$(tar tzf dist/*.tar.gz | grep gdalplugins || true)" \
+            || { echo "sdist must not carry gdalplugins/" >&2; exit 1; }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  verify-debian12:
+    name: verify debian12 (glibc)
+    needs: build-linux-wheels
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: python:3.12-slim-bookworm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-ref.outputs.ref }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wheels-linux-x86_64
+          path: wheelhouse
+      - name: Install the wheel (pulls pyramids-core) and verify the driver loads
+        shell: bash
+        run: |
+          set -euo pipefail
+          ldd --version | head -1 || true
+          pip install "$(ls wheelhouse/*.whl)" --only-binary=:all:
+          python ci/parquet-plugin/verify.py --via-entry-point
+
+  verify-rocky9:
+    name: verify rocky9 (glibc)
+    needs: build-linux-wheels
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: rockylinux:9
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-ref.outputs.ref }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wheels-linux-x86_64
+          path: wheelhouse
+      - name: Install python + the wheel, verify the driver loads
+        shell: bash
+        run: |
+          set -euo pipefail
+          dnf install -y python3.12 python3.12-pip >/dev/null
+          python3.12 -m pip install "$(ls wheelhouse/*.whl)" --only-binary=:all:
+          python3.12 ci/parquet-plugin/verify.py --via-entry-point
+
+  verify-rocky9-aarch64:
+    name: verify rocky9 aarch64 (glibc)
+    needs: build-linux-wheels
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    container:
+      image: rockylinux:9
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-ref.outputs.ref }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wheels-linux-aarch64
+          path: wheelhouse
+      - name: Install python + the wheel, verify the driver loads
+        shell: bash
+        run: |
+          set -euo pipefail
+          dnf install -y python3.12 python3.12-pip >/dev/null
+          python3.12 -m pip install "$(ls wheelhouse/*.whl)" --only-binary=:all:
+          python3.12 ci/parquet-plugin/verify.py --via-entry-point
+
+  verify-macos:
+    name: verify macos ${{ matrix.arch }}
+    needs: build-macos-wheels
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runs-on: macos-15
+          - arch: x86_64
+            runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-ref.outputs.ref }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wheels-macos-${{ matrix.arch }}
+          path: wheelhouse
+      - name: Install the wheel, verify the driver loads
+        run: |
+          set -euo pipefail
+          python -m pip install "$(ls wheelhouse/*.whl)" --only-binary=:all:
+          python ci/parquet-plugin/verify.py --via-entry-point
+
+  verify-windows:
+    name: verify windows AMD64
+    needs: build-windows-wheels
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-ref.outputs.ref }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wheels-windows-AMD64
+          path: wheelhouse
+      - name: Install the wheel, verify the driver loads
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install "$(ls wheelhouse/*.whl)" --only-binary=:all:
+          python ci/parquet-plugin/verify.py --via-entry-point
+
+  report:
+    name: report
+    needs:
+      [build-linux-wheels, build-macos-wheels, build-windows-wheels, sdist]
+    if: always() && needs.resolve-ref.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: artifacts
+        continue-on-error: true
+      - name: Summarise what was produced
+        run: |
+          {
+            echo "## pyramids-lazy native wheels"
+            echo
+            echo "| artifact | size |"
+            echo "|---|---|"
+            shopt -s nullglob
+            for f in artifacts/*/*.whl artifacts/*/*.tar.gz; do
+              echo "| \`$(basename "$f")\` | $(du -h "$f" | cut -f1) |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    name: Publish to PyPI + attach to the GitHub release
+    # Every build + verify job gates the publish: a red verify must stop the release, not merely
+    # mark the run failed. Mirrors pyramids-core's bundle release job.
+    needs:
+      [build-linux-wheels, build-macos-wheels, build-windows-wheels, sdist,
+       verify-debian12, verify-rocky9, verify-rocky9-aarch64, verify-macos, verify-windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Publish only after a SUCCESSFUL same-repo github-release (the canonical path). A manual
+    # dispatch with dry_run_release runs the gather + composition gate and then STOPS before any
+    # upload/publish -- how the release plumbing is exercised without cutting a release. A plain
+    # push to main never satisfies this `if`, so it builds + verifies but publishes nothing.
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository) ||
+      (github.event_name == 'workflow_dispatch' && inputs.dry_run_release)
+    permissions:
+      contents: write
+    steps:
+      - name: Download release artifacts from this run
+        # Every build job uploads a unique name (sdist, wheels-<os>-<arch>); download-artifact v4+
+        # `merge-multiple` collects them all into dist/. Keep the per-job names unique if the build
+        # matrix grows.
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist/
+          pattern: "{sdist,wheels-*}"
+          merge-multiple: true
+
+      - name: List artifacts about to be released
+        run: ls -lah dist/
+
+      - name: Assert release composition before publishing
+        # pyramids-lazy ships ONE py3-none wheel per platform (not per CPython), so the expected
+        # set is exactly 1 sdist + 5 wheels: manylinux x86_64/aarch64, macOS arm64/x86_64, win_amd64.
+        # A partial gather (a missing platform artifact) fails here instead of publishing short.
+        # Counting uses nullglob arrays, never `ls | wc -l` (a zero-match ls exits 2 under pipefail).
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          fail=0
+          sdists=(dist/*.tar.gz)
+          if [ "${#sdists[@]}" -ne 1 ]; then
+            echo "ERROR: expected exactly 1 sdist, found ${#sdists[@]}" >&2; fail=1
+          fi
+          wheels=(dist/*.whl)
+          if [ "${#wheels[@]}" -ne 5 ]; then
+            echo "ERROR: expected 5 wheels, found ${#wheels[@]}" >&2; fail=1
+          fi
+          for tag in manylinux_2_28_x86_64 manylinux_2_28_aarch64 "macosx*arm64" "macosx*x86_64" win_amd64; do
+            plat=(dist/*${tag}.whl)
+            if [ "${#plat[@]}" -ne 1 ]; then
+              echo "ERROR: expected 1 ${tag} wheel, found ${#plat[@]}" >&2; fail=1
+            fi
+          done
+          if [ "${fail}" -ne 0 ]; then
+            echo "release composition check FAILED -- nothing was published" >&2; exit 1
+          fi
+          echo "release composition OK: 1 sdist + ${#wheels[@]} wheels (one per platform)"
+
+      - name: Dry run stops here -- gather + gate passed, nothing published
+        if: github.event_name == 'workflow_dispatch'
+        run: echo "release dry run OK (composition gate passed); upload/publish skipped"
+
+      - name: Resolve target release tag
+        if: github.event_name == 'workflow_run'
+        id: release-tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG=$(gh release view --repo '${{ github.repository }}' --json tagName --jq '.tagName')
+          echo "Resolved release tag: $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Attach wheels + sdist to the GitHub release
+        if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload '${{ steps.release-tag.outputs.tag }}' \
+              dist/*.whl dist/*.tar.gz \
+              --repo '${{ github.repository }}' \
+              --clobber
+
+      - name: Publish to PyPI
+        if: github.event_name == 'workflow_run'
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          password: ${{ secrets.PYPI_PUBLISH }}
+          packages-dir: dist/
+          skip-existing: true
+          verbose: true

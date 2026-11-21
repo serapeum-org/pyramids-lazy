@@ -124,7 +124,10 @@ platforms = [
     { platform = "osx-arm64", macos = "14.0" },
 ]
 
-# Interpreter only; <3.15 keeps the version-less dev/docs envs off 3.15 (no cp315 h5py wheel yet).
+# Interpreter floor/ceiling for the default (version-less) feature. <3.15 keeps every env off 3.15:
+# the netcdf/zarr stack has no cp315 PyPI wheels yet (h5py and numcodecs are sdist-only on PyPI, and
+# numcodecs arrives as a PyPI-transitive dep of zarr that a conda override does not displace), so a
+# 3.15 env cannot install. Revisit when h5py + numcodecs ship cp315 wheels on PyPI.
 [tool.pixi.dependencies]
 python = ">=3.11,<3.15"
 
@@ -209,6 +212,11 @@ markers = [
 convention = "google"
 add_ignore = "D403"
 match = '(?!test_).*\.py'
+
+[tool.bandit]
+# ci/ etc. are non-shipped build tooling run with trusted fixed commands.
+exclude_dirs = ["ci", "tests", "examples", "scripts", "planning", "docs"]
+skips = ["B101"]
 
 [tool.coverage.run]
 # Branch coverage, measured wherever the suite runs (the pixi tasks and the pre-commit

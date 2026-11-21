@@ -39,6 +39,8 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import os
+import struct
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -61,9 +63,9 @@ def _plugin_dir() -> Path:
     Raises:
         SystemExit: If the plugin distribution is not installed.
     """
-    spec = importlib.util.find_spec("pyramids_lazy_parquet")
+    spec = importlib.util.find_spec("pyramids_lazy")
     if spec is None or not spec.submodule_search_locations:
-        raise SystemExit("pyramids_lazy_parquet is not installed")
+        raise SystemExit("pyramids_lazy is not installed")
     return Path(next(iter(spec.submodule_search_locations))) / "gdalplugins"
 
 
@@ -81,10 +83,224 @@ def _core_libs() -> Path:
     if spec is None or not spec.submodule_search_locations:
         raise SystemExit("pyramids-core is not installed")
     package = Path(next(iter(spec.submodule_search_locations)))
-    for candidate in (package.parent / "pyramids_core.libs", package / ".libs"):
+    # pyramids_core.libs is auditwheel's (Linux), .dylibs is delocate's (macOS), .libs is the
+    # older layout. macOS core ships libgdal in <package>/.dylibs, so that case must be listed
+    # or check_link reports "no vendored library directory" before it can read anything.
+    for candidate in (
+        package.parent / "pyramids_core.libs",
+        package / ".dylibs",
+        package / ".libs",
+    ):
         if candidate.is_dir():
             return candidate
     raise SystemExit(f"no vendored library directory beside {package}")
+
+
+def _macho_deps(path: Path) -> list[str]:
+    """Read a Mach-O object's ``LC_LOAD_DYLIB`` paths via ``otool -L``.
+
+    The macOS analogue of :func:`_parsed_needed`. ``otool -L`` prints the object's own name on
+    the first line, then one indented ``<path> (compatibility ...)`` line per load command; this
+    keeps the leading path token of each. ``otool`` ships with the Command Line Tools and is
+    present on every GitHub macOS runner.
+
+    Args:
+        path: The Mach-O object to read.
+
+    Returns:
+        list[str]: Its load-command paths, in order, possibly empty.
+
+    Raises:
+        SystemExit: If ``otool`` is absent or fails on ``path`` -- reported as a diagnosis, the
+            way every other packaging fault in this script is.
+    """
+    try:
+        proc = subprocess.run(
+            ["otool", "-L", str(path)], check=True, capture_output=True, text=True
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise SystemExit(
+            f"could not read the load commands of {path.name}: {exc}"
+        ) from exc
+    deps = []
+    for line in proc.stdout.splitlines()[1:]:
+        token = line.strip().split(" ", 1)[0]
+        if token:
+            deps.append(token)
+    return deps
+
+
+def _check_link_macho(plugins: Path, libs: Path) -> str:
+    """macOS counterpart of :func:`check_link`, read from Mach-O load commands.
+
+    Same two assertions as the ELF path, translated to Mach-O: the plugin must load core's
+    libgdal (the ELF soname match becomes a file-name match, since an install_name carries no
+    soname), and nothing staged in the wheel may load a Python library.
+
+    Args:
+        plugins: The installed ``gdalplugins`` directory.
+        libs: The core wheel's vendored library directory (``pyramids/.dylibs``).
+
+    Returns:
+        str: The file name of the installed libgdal the plugin was proved against.
+
+    Raises:
+        SystemExit: If the core carries no libgdal, the plugin directory holds no
+            ``ogr_Parquet.{so,dylib}``, the plugin loads a libgdal the installed core does not
+            provide, or a staged object loads ``libpython`` / the Python framework.
+    """
+    installed = sorted(libs.glob("libgdal*.dylib"))
+    if not installed:
+        raise SystemExit(f"no libgdal in {libs}")
+    installed_names = {lib.name for lib in installed}
+    drivers = [
+        p
+        for p in sorted(plugins.glob("ogr_Parquet.*"))
+        if p.suffix in {".so", ".dylib"}
+    ]
+    if not drivers:
+        raise SystemExit(f"no ogr_Parquet.so or .dylib in {plugins}")
+    plugin_deps = _macho_deps(drivers[0])
+    gdal_refs = [dep for dep in plugin_deps if "libgdal" in Path(dep).name]
+
+    print(f"  installed libgdal   : {', '.join(sorted(installed_names))}")
+    print(f"  plugin libgdal load : {', '.join(gdal_refs) or '(none)'}")
+    if not any(Path(ref).name in installed_names for ref in gdal_refs):
+        raise SystemExit(
+            f"plugin loads {gdal_refs!r} but the installed core provides "
+            f"{sorted(installed_names)!r} -- this wheel was built against a different core build"
+        )
+    staged = sorted(plugins.glob("*.dylib")) + sorted(plugins.glob("*.so"))
+    for obj in staged:
+        for dep in _macho_deps(obj):
+            if "libpython" in dep or "Python.framework" in dep:
+                raise SystemExit(f"{obj.name} loads {dep}; py3-none tag is a lie")
+    print("  link check          : OK")
+    return sorted(installed_names)[0]
+
+
+def _pe_imports(path: Path) -> list[str]:
+    """Read a PE object's imported DLL names from its import directory.
+
+    The Windows analogue of :func:`_parsed_needed` / :func:`_macho_deps`, parsed in pure Python so
+    the check needs no Visual Studio tooling (``dumpbin``) on PATH. Walks DOS header -> PE header
+    -> optional header -> data directory 1 (imports), mapping each descriptor's Name RVA to a file
+    offset through the section table.
+
+    Args:
+        path: The PE object (``.dll``) to read.
+
+    Returns:
+        list[str]: Its imported DLL names, in order, possibly empty.
+
+    Raises:
+        SystemExit: If it is not a PE object or the headers cannot be parsed -- reported as a
+            diagnosis, like every other packaging fault here.
+    """
+    data = path.read_bytes()
+    try:
+        if data[:2] != b"MZ":
+            raise ValueError(f"not a PE object (magic {data[:2]!r})")
+        pe_off = struct.unpack_from("<I", data, 0x3C)[0]
+        if data[pe_off : pe_off + 4] != b"PE\0\0":
+            raise ValueError("no PE signature")
+        coff = pe_off + 4
+        num_sections = struct.unpack_from("<H", data, coff + 2)[0]
+        opt_size = struct.unpack_from("<H", data, coff + 16)[0]
+        opt_off = coff + 20
+        magic = struct.unpack_from("<H", data, opt_off)[0]
+        if magic == 0x20B:
+            dd_off = opt_off + 112  # PE32+
+        elif magic == 0x10B:
+            dd_off = opt_off + 96  # PE32
+        else:
+            raise ValueError(f"unknown optional header magic {magic:#x}")
+        import_rva = struct.unpack_from("<I", data, dd_off + 8)[
+            0
+        ]  # data dir index 1 = imports
+        if import_rva == 0:
+            return []
+        sec_off = opt_off + opt_size
+        sections = []
+        for i in range(num_sections):
+            base = sec_off + i * 40
+            vsize = struct.unpack_from("<I", data, base + 8)[0]
+            vaddr = struct.unpack_from("<I", data, base + 12)[0]
+            raw = struct.unpack_from("<I", data, base + 20)[0]
+            sections.append((vaddr, vsize, raw))
+
+        def rva_to_off(rva: int) -> int:
+            for vaddr, vsize, raw in sections:
+                if vaddr <= rva < vaddr + max(vsize, 1):
+                    return raw + (rva - vaddr)
+            raise ValueError(f"RVA {rva:#x} is in no section")
+
+        names = []
+        off = rva_to_off(import_rva)
+        while True:
+            desc = data[off : off + 20]
+            if len(desc) < 20 or desc == b"\0" * 20:
+                break
+            name_rva = struct.unpack_from("<I", desc, 12)[0]
+            if name_rva == 0:
+                break
+            noff = rva_to_off(name_rva)
+            names.append(
+                data[noff : data.index(b"\0", noff)].decode("ascii", "replace")
+            )
+            off += 20
+        return names
+    except (ValueError, struct.error, IndexError) as exc:
+        raise SystemExit(f"{path.name} is not a readable PE object: {exc}") from exc
+
+
+def _check_link_pe(plugins: Path, libs: Path) -> str:
+    """Windows counterpart of :func:`check_link`, read from the PE import table.
+
+    Same two assertions as the ELF path, translated to PE: the plugin must import core's hashed
+    ``gdal-<hash>.dll`` (the soname match becomes a file-name match, case-insensitive), and nothing
+    staged in the wheel may import a Python DLL. The hashed name changes between core releases, so
+    this is exactly the mismatch neither artefact can catch alone on Windows.
+
+    Args:
+        plugins: The installed ``gdalplugins`` directory.
+        libs: The core wheel's vendored library directory (``pyramids_core.libs``).
+
+    Returns:
+        str: The file name of the installed gdal DLL the plugin was proved against.
+
+    Raises:
+        SystemExit: If the core carries no gdal DLL, the plugin directory holds no
+            ``ogr_Parquet.dll``, the plugin imports a gdal DLL the installed core does not provide,
+            or a staged object imports a ``python3*.dll``.
+    """
+    installed = sorted(libs.glob("gdal*.dll")) + sorted(libs.glob("libgdal*.dll"))
+    if not installed:
+        raise SystemExit(f"no gdal DLL in {libs}")
+    installed_lower = {lib.name.lower() for lib in installed}
+    drivers = [
+        p for p in sorted(plugins.glob("ogr_Parquet.*")) if p.suffix.lower() == ".dll"
+    ]
+    if not drivers:
+        raise SystemExit(f"no ogr_Parquet.dll in {plugins}")
+    plugin_imports = _pe_imports(drivers[0])
+    gdal_imports = [dep for dep in plugin_imports if "gdal" in dep.lower()]
+
+    print(f"  installed gdal DLL  : {', '.join(sorted(lib.name for lib in installed))}")
+    print(f"  plugin gdal import  : {', '.join(gdal_imports) or '(none)'}")
+    if not any(dep.lower() in installed_lower for dep in gdal_imports):
+        raise SystemExit(
+            f"plugin imports {gdal_imports!r} but the installed core provides "
+            f"{sorted(lib.name for lib in installed)!r} -- this wheel was built against a "
+            "different core build"
+        )
+    for obj in sorted(plugins.glob("*.dll")):
+        for dep in _pe_imports(obj):
+            low = dep.lower()
+            if low.startswith("python3") and low.endswith(".dll"):
+                raise SystemExit(f"{obj.name} imports {dep}; py3-none tag is a lie")
+    print("  link check          : OK")
+    return sorted(lib.name for lib in installed)[0]
 
 
 def check_link(plugins: Path) -> str:
@@ -111,6 +327,14 @@ def check_link(plugins: Path) -> str:
             as the parser's ``ValueError``.
     """
     libs = _core_libs()
+    if sys.platform == "darwin":
+        # macOS carries no DT_SONAME; the ELF parser rejects Mach-O outright. Assert the same
+        # two things (links the installed libgdal, links no interpreter) from otool instead.
+        return _check_link_macho(plugins, libs)
+    if sys.platform.startswith("win"):
+        # Windows PE is neither ELF nor Mach-O; assert the same two things from the plugin's
+        # import table (which names core's hashed gdal-<hash>.dll) instead.
+        return _check_link_pe(plugins, libs)
     installed = sorted(libs.glob("libgdal*.so*")) + sorted(libs.glob("libgdal*.dylib"))
     if not installed:
         raise SystemExit(f"no libgdal in {libs}")
@@ -325,6 +549,14 @@ def check_driver(  # pragma: no cover - needs a real install + loadable plugin
             plugins, os.pathsep.join(p for p in inherited if p)
         )
         os.environ["PYRAMIDS_KEEP_GDAL_ENV"] = "1"
+
+    if sys.platform.startswith("win"):
+        # Windows has no rpath: the plugin's self-vendored Arrow DLLs are found only once
+        # pyramids_lazy has put its gdalplugins directory on the DLL search path, which it does at
+        # import (see pyramids_lazy/__init__). Linux and macOS resolve them from the plugin's own
+        # rpath, so this import is Windows-only. It must precede `import pyramids`, which triggers
+        # core's GDAL bootstrap and the plugin load.
+        import pyramids_lazy  # noqa: F401,PLC0415
 
     import pyramids  # noqa: F401,PLC0415 - import triggers core's GDAL bootstrap
     from osgeo import gdal, ogr  # noqa: PLC0415

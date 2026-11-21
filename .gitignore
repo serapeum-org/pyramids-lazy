@@ -33,3 +33,6 @@ site/
 
 # Project memory — local notes, never part of the package's history.
 CLAUDE.md
+
+# Staged by ci/parquet-plugin/build.sh before a native wheel build; never committed.
+src/pyramids_lazy/gdalplugins/

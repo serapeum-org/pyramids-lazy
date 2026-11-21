@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+# macOS driver compile for cibuildwheel `before-all`. The Mach-O analogue of build.sh.
+#
+# STATUS: first draft, CI-iterated. build.sh (ELF/gcc/patchelf) is proven on manylinux; this
+# ports the same five steps to macOS (clang, .dylib, install_name_tool, delocate does the final
+# vendoring). It has NOT run yet -- treat every step as a hypothesis the macOS job will confirm
+# or correct. Known differences from Linux already accounted for: auditwheel->delocate (run by
+# cibuildwheel's repair, not here), cpl_config.h from conda's osx-64/osx-arm64 libgdal-core, and
+# the soname is an install_name, not a DT_SONAME hash.
+#
+# Reads the same env as build.sh: CORE_VERSION, PLAT (a macosx_* tag), PYTAG, OUTPUT, plus
+# ARROW_VERSION. Stages the plugin into src/pyramids_lazy/gdalplugins/ for the wheel build.
+set -euo pipefail
+
+CORE_VERSION="${CORE_VERSION:-}"
+ARROW_VERSION="${ARROW_VERSION:-26.0.1}"
+PLAT="${PLAT:-macosx_11_0_arm64}"
+PYTAG="${PYTAG:-cp312}"
+OUTPUT="${OUTPUT:-/tmp/pp-out}"
+WORK="${WORK:-/tmp/pp}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PKG_PLUGINS="$(cd "$SCRIPT_DIR/../.." && pwd)/src/pyramids_lazy/gdalplugins"
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+step() { echo; echo "=== $* ==="; }
+
+mkdir -p "$WORK" "$OUTPUT"
+PY="$(command -v python3.12 || command -v python3)"
+"$PY" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' \
+    || die "need python >= 3.9, found $("$PY" -V 2>&1)"
+
+# Arrow 26 bundles boost, whose locale/CMakeLists.txt calls source_group(TREE) with a file
+# (locale.hpp) that sits beside the tree, not under it. CMake >= 3.28 (the Xcode runner's
+# cmake) makes "is not a prefix of file" a hard error; 3.27.x still tolerates it. Pin it and
+# put it first on PATH for both the Arrow and the plugin build.
+"$PY" -m pip install --quiet "cmake==3.27.9" || die "could not pin cmake 3.27.9"
+CMAKE_BIN="$("$PY" -c 'import cmake, os; print(os.path.join(os.path.dirname(cmake.__file__), "data", "bin"))')"
+export PATH="$CMAKE_BIN:$PATH"
+hash -r
+echo "using cmake: $(command -v cmake) ($(cmake --version | head -1))"
+
+step "1. download the pyramids-core macOS wheel this plugin will load beside"
+cd "$WORK"
+SPEC="pyramids-core${CORE_VERSION:+==$CORE_VERSION}"
+"$PY" -m pip download --no-deps --only-binary=:all: \
+    --platform "$PLAT" --python-version "${PYTAG#cp}" --implementation cp --abi "$PYTAG" \
+    -d "$WORK/corewheel" "$SPEC" >/dev/null || die "could not download $SPEC for $PLAT"
+rm -rf "$WORK/core" && mkdir -p "$WORK/core"
+core_whl=("$WORK"/corewheel/pyramids_core-*.whl)  # exactly one; a glob avoids ls (SC2012)
+"$PY" -c "import sys,zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" \
+    "${core_whl[0]}" "$WORK/core"
+CORE_GDAL="$(find "$WORK/core" -name 'libgdal*.dylib' -print -quit)"
+[ -n "$CORE_GDAL" ] || die "no libgdal*.dylib in the core macOS wheel"
+CORE_INSTALL_NAME="$(otool -D "$CORE_GDAL" | tail -1)"
+echo "vendored libgdal : $(basename "$CORE_GDAL")"
+echo "its install_name : $CORE_INSTALL_NAME"
+# The GDAL version for the source checkout + the conda header package, derived from the file.
+GDAL_VERSION="${GDAL_VERSION:-$(basename "$CORE_GDAL" | sed -nE 's/.*\.([0-9]+\.[0-9]+\.[0-9]+)\.dylib$/\1/p')}"
+[ -n "$GDAL_VERSION" ] || die "cannot derive the GDAL version from $(basename "$CORE_GDAL")"
+
+step "2. GDAL $GDAL_VERSION sources + the generated cpl_config.h from conda libgdal-core"
+curl -fsSL -o gdal.tar.gz \
+    "https://download.osgeo.org/gdal/${GDAL_VERSION}/gdal-${GDAL_VERSION}.tar.gz" || die "GDAL source download failed"
+tar -xzf gdal.tar.gz
+GDAL_SRC="$WORK/gdal-${GDAL_VERSION}"
+GEN_INCLUDE="$WORK/gdal-include"
+rm -rf "$GEN_INCLUDE" && mkdir -p "$GEN_INCLUDE"
+# Same transitive header set as build.sh (see its comment); flattened for the standalone build.
+for sub in gcore gcore/multidim port ogr ogr/ogrsf_frmts ogr/ogrsf_frmts/generic frmts/mem alg apps; do
+    find "$GDAL_SRC/$sub" -maxdepth 1 -name '*.h' -exec cp -n {} "$GEN_INCLUDE/" \;
+done
+cp "$GDAL_SRC/gcore/gdal_version.h.in" "$GEN_INCLUDE/gdal_version.h"
+# cpl_config.h: the osx subdir of conda-forge libgdal-core (glibc->macOS: the macOS feature
+# macros). extract_cpl_config.py + lib.sh's digest table need an osx entry (CI-iteration item).
+case "$PLAT" in
+    *arm64) CONDA_SUBDIR=osx-arm64 ;;
+    *x86_64) CONDA_SUBDIR=osx-64 ;;
+    *) die "unknown macOS platform $PLAT" ;;
+esac
+"$PY" -c 'import compression.zstd' 2>/dev/null || "$PY" -m pip install --quiet "zstandard==0.23.0" \
+    || die "could not install a zstd decoder for cpl_config.h"
+"$PY" "$SCRIPT_DIR/fetch_cpl_config.py" "$GDAL_VERSION" "$CONDA_SUBDIR" "$GEN_INCLUDE" \
+    || die "could not obtain cpl_config.h for $CONDA_SUBDIR"
+
+step "3. minimal Arrow $ARROW_VERSION"
+curl -fsSL -o arrow.tar.gz \
+    "https://downloads.apache.org/arrow/arrow-${ARROW_VERSION}/apache-arrow-${ARROW_VERSION}.tar.gz" \
+    || die "Arrow source download failed"
+tar -xzf arrow.tar.gz
+ARROW_SRC="$WORK/apache-arrow-${ARROW_VERSION}/cpp"
+ARROW_PREFIX="$WORK/arrow-prefix"
+mkdir -p "$ARROW_SRC/build" && cd "$ARROW_SRC/build"
+cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$ARROW_PREFIX" \
+    -DARROW_DEPENDENCY_SOURCE=BUNDLED -DARROW_BUILD_SHARED=ON -DARROW_BUILD_STATIC=OFF \
+    -DARROW_PARQUET=ON -DARROW_DATASET=ON -DARROW_COMPUTE=ON -DARROW_ACERO=ON \
+    -DARROW_CSV=OFF -DARROW_JSON=OFF -DARROW_FILESYSTEM=ON \
+    -DARROW_WITH_LZ4=ON -DARROW_WITH_SNAPPY=ON -DARROW_WITH_ZLIB=ON -DARROW_WITH_ZSTD=ON \
+    > "$WORK/arrow-cmake.log" 2>&1 || { tail -40 "$WORK/arrow-cmake.log"; die "Arrow configure"; }
+cmake --build . -j"$(sysctl -n hw.ncpu)" > "$WORK/arrow-build.log" 2>&1 \
+    || { grep -nE "error:" "$WORK/arrow-build.log" | head; die "Arrow build"; }
+cmake --install . > /dev/null
+
+step "4. ogr_Parquet as a standalone plugin against the wheel's libgdal"
+PLUGIN_BUILD="$WORK/plugin-build"
+mkdir -p "$PLUGIN_BUILD" && cd "$PLUGIN_BUILD"
+cmake "$GDAL_SRC/ogr/ogrsf_frmts/parquet" \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$ARROW_PREFIX" \
+    -DGDAL_INCLUDE_DIR="$GEN_INCLUDE" -DGDAL_LIBRARY="$CORE_GDAL" \
+    -DArrow_DIR="$ARROW_PREFIX/lib/cmake/Arrow" -DParquet_DIR="$ARROW_PREFIX/lib/cmake/Parquet" \
+    -DArrowDataset_DIR="$ARROW_PREFIX/lib/cmake/ArrowDataset" \
+    -DGDAL_USE_ARROWDATASET=ON \
+    > "$WORK/plugin-cmake.log" 2>&1 || { tail -50 "$WORK/plugin-cmake.log"; die "plugin configure"; }
+cmake --build . -j"$(sysctl -n hw.ncpu)" > "$WORK/plugin-build.log" 2>&1 \
+    || { grep -nE "error:" "$WORK/plugin-build.log" | head; die "plugin build"; }
+# GDAL builds the driver as a MODULE library, which cmake names ogr_Parquet.so even on macOS.
+PLUGIN_DYLIB="$(find "$PLUGIN_BUILD" \( -name 'ogr_Parquet.dylib' -o -name 'ogr_Parquet.so' \) -print -quit)"
+if [ -z "$PLUGIN_DYLIB" ]; then
+    echo "build dir contents:"; find "$PLUGIN_BUILD" -name 'ogr_Parquet*' -o -name '*.so' -o -name '*.dylib'
+    die "ogr_Parquet.{so,dylib} was not produced"
+fi
+
+step "5. stage the plugin + self-vendor its Arrow dylibs (the Mach-O analogue of build.sh)"
+mkdir -p "$PKG_PLUGINS"
+cp "$PLUGIN_DYLIB" "$PKG_PLUGINS/"
+PLUGIN_NAME="$(basename "$PLUGIN_DYLIB")"
+cp "$GDAL_SRC/LICENSE.TXT" "$PKG_PLUGINS/GDAL-LICENSE.txt"
+cp "$WORK/apache-arrow-${ARROW_VERSION}/LICENSE.txt" "$PKG_PLUGINS/Arrow-LICENSE.txt"
+cp "$WORK/apache-arrow-${ARROW_VERSION}/NOTICE.txt" "$PKG_PLUGINS/Arrow-NOTICE.txt"
+# Self-vendor the Arrow dylibs beside the plugin, exactly as build.sh does on Linux with $ORIGIN.
+# The reason we do NOT leave this to delocate: the forced py3-none build stages the plugin into
+# the wheel under pyramids_lazy-*.data/purelib/pyramids_lazy/gdalplugins/, which is a DEEPER path
+# than the installed site-packages/pyramids_lazy/gdalplugins/. delocate vendors Arrow into
+# <wheel>/pyramids_lazy.dylibs and burns a load path computed from that deeper wheel-archive
+# position (@loader_path/../../../../pyramids_lazy.dylibs/...), so at runtime it resolves one
+# level too high and dlopen fails with "Library not loaded". Copying the libs beside the plugin
+# and resolving @rpath through an @loader_path rpath is immune to where the wheel unpacks --
+# the same property $ORIGIN gives the Linux build.
+shopt -s nullglob
+arrow_libs=("$ARROW_PREFIX"/lib/libarrow*.dylib "$ARROW_PREFIX"/lib/libparquet*.dylib)
+shopt -u nullglob
+[ "${#arrow_libs[@]}" -gt 0 ] || die "no Arrow dylibs in $ARROW_PREFIX/lib to vendor"
+# -a preserves Arrow's versioned-file + symlink layout, so both @rpath/libX.NN.dylib (the
+# install_name) and @rpath/libX.NN.N.N.dylib (what the plugin linked) resolve with no duplication.
+cp -a "${arrow_libs[@]}" "$PKG_PLUGINS/"
+# Arrow's dylibs declare their install_name as @rpath/libXXX and link each other the same way;
+# an @loader_path rpath on every real Mach-O object makes @rpath resolve to this directory.
+# install_name_tool must act on a real file, never a symlink.
+for obj in "$PKG_PLUGINS/$PLUGIN_NAME" "$PKG_PLUGINS"/libarrow*.dylib "$PKG_PLUGINS"/libparquet*.dylib; do
+    { [ -f "$obj" ] && [ ! -L "$obj" ]; } || continue
+    install_name_tool -add_rpath "@loader_path" "$obj" 2>/dev/null \
+        || echo "  (@loader_path rpath already present on $(basename "$obj"))"
+done
+echo "  vendored ${#arrow_libs[@]} Arrow dylib entries beside the plugin; @rpath -> @loader_path"
+# Core's libgdal stays EXTERNAL -- loaded at runtime from the installed pyramids-core, not
+# bundled. The plugin linked it by core's own install_name (an absolute path that will not
+# exist on the user's machine); rewrite that to a path relative to the plugin so it resolves:
+# <site-packages>/pyramids_lazy/gdalplugins/ -> ../../<core dylib dir>/libgdal. delocate then
+# leaves it alone (--exclude libgdal) and --ignore-missing-dependencies accepts it unresolved
+# at repair time (pyramids-core is not in this wheel).
+CORE_GDAL_BASENAME="$(basename "$CORE_GDAL")"
+CORE_REL_DIR="$(dirname "${CORE_GDAL#"$WORK"/core/}")"
+LIBGDAL_REF="@loader_path/../../$CORE_REL_DIR/$CORE_GDAL_BASENAME"
+install_name_tool -change "$CORE_INSTALL_NAME" "$LIBGDAL_REF" "$PKG_PLUGINS/$PLUGIN_NAME"
+echo "staged $PLUGIN_NAME; libgdal -> $LIBGDAL_REF"
+# install_name_tool invalidates the ad-hoc code signature, and the arm64 loader (dyld) refuses an
+# unsigned/invalidly-signed dylib with "code signature ... not valid". delocate re-signs objects
+# it rewrites, but it leaves these already-in-wheel libs alone, so re-sign them here. Ad-hoc
+# ("-" identity) is enough for a loadable, non-distributed CI artefact.
+for obj in "$PKG_PLUGINS/$PLUGIN_NAME" "$PKG_PLUGINS"/libarrow*.dylib "$PKG_PLUGINS"/libparquet*.dylib; do
+    { [ -f "$obj" ] && [ ! -L "$obj" ]; } || continue
+    codesign --force --sign - "$obj" 2>/dev/null || die "codesign (ad-hoc) failed on $(basename "$obj")"
+done
+echo "  re-signed the plugin + vendored dylibs (ad-hoc)"

@@ -115,6 +115,12 @@ SUITE_REASONS: tuple[tuple[str, bool], ...] = (
     # `tests/ci` cross-checks `soname.py` against a real shared object, which only exists on
     # Linux; the macOS and Windows legs have nothing to read and no install could change that.
     ("ELF is Linux-only here", False),
+    # Same idea for the macOS and Windows legs of `tests/ci`: `_macho_deps` shells out to otool
+    # and `_pe_imports` is cross-checked against a real DLL, each of which exists only on its own
+    # platform. Nothing is missing and no install could change it, so these are NOT dependency
+    # skips either.
+    ("otool is macOS-only", False),
+    ("PE import parsing is exercised on Windows", False),
     # Deliberately NOT a dependency skip: `bash` is a system tool the lib.sh tests drive,
     # not an optional dependency of this package, so no install could satisfy it.
     ("bash unavailable on this machine", False),
