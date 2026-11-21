@@ -546,6 +546,45 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#supported-platforms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported platforms
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Supported platforms">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-means" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What ❌ means
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-these-three-and-whether-they-can-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why these three, and whether they can change
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#dependencies" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1241,6 +1280,45 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#supported-platforms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported platforms
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Supported platforms">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-means" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What ❌ means
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-these-three-and-whether-they-can-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why these three, and whether they can change
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#dependencies" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1371,6 +1449,93 @@
 </code></pre></div>
 <p>Nothing further is needed. Once installed, <code>pyramids-core</code> discovers the backend through its entry
 point and routes every lazy operation to it — there is no import to add and no setting to flip.</p>
+<h2 id="supported-platforms"><a class="toclink" href="#supported-platforms">Supported platforms</a><a class="headerlink" href="#supported-platforms" title="Permanent link">#</a></h2>
+<p><code>pyramids-lazy</code> publishes one <code>py3-none-&lt;platform&gt;</code> wheel per supported platform. Each wheel bundles
+the compiled <strong>OGR-Parquet GDAL driver</strong> and its minimal Apache Arrow runtime under
+<code>pyramids_lazy/gdalplugins/</code>, which <code>pyramids-core</code>'s GDAL loads at runtime through the
+<code>pyramids.gdal_plugin_path</code> entry point. The wheel is interpreter-independent — the driver loads via
+<code>GDAL_DRIVER_PATH</code>, not as a C extension linking <code>libpython</code> — so a single wheel serves every
+supported Python. That is unlike <code>pyramids-core</code>, which vendors the <code>osgeo</code> C extensions and so ships
+a per-interpreter (<code>cp311</code> … <code>cp315</code>) wheel for each platform.</p>
+<table>
+<thead>
+<tr>
+<th>Platform (wheel tag)</th>
+<th style="text-align: center;"><code>pyramids-lazy</code></th>
+<th style="text-align: center;"><code>pyramids-core</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>manylinux_2_28_x86_64</code> — glibc Linux x86-64</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">✅</td>
+</tr>
+<tr>
+<td><code>manylinux_2_28_aarch64</code> — glibc Linux arm64</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">✅</td>
+</tr>
+<tr>
+<td><code>macosx_11_0_arm64</code> — macOS Apple Silicon</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">✅</td>
+</tr>
+<tr>
+<td><code>macosx_11_0_x86_64</code> — macOS Intel</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">✅</td>
+</tr>
+<tr>
+<td><code>win_amd64</code> — Windows x86-64</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">✅</td>
+</tr>
+<tr>
+<td><code>musllinux_1_2_x86_64</code> — musl Linux x86-64 (e.g. Alpine)</td>
+<td style="text-align: center;">❌</td>
+<td style="text-align: center;">✅</td>
+</tr>
+<tr>
+<td><code>musllinux_1_2_aarch64</code> — musl Linux arm64</td>
+<td style="text-align: center;">❌</td>
+<td style="text-align: center;">✅</td>
+</tr>
+<tr>
+<td><code>win_arm64</code> — Windows arm64</td>
+<td style="text-align: center;">❌</td>
+<td style="text-align: center;">✅</td>
+</tr>
+</tbody>
+</table>
+<h3 id="what-means"><a class="toclink" href="#what-means">What ❌ means</a><a class="headerlink" href="#what-means" title="Permanent link">#</a></h3>
+<p>A ❌ marks a platform where <code>pyramids-lazy</code> does <strong>not</strong> ship a native wheel carrying the bundled
+OGR-Parquet driver (the <code>gdalplugins/</code> plugin — distinct from the pure-Python <code>[parquet]</code> extra
+below). It does <strong>not</strong> mean the package is unavailable there. On such a platform:</p>
+<ul>
+<li><code>pip install pyramids-lazy</code> still succeeds. There is no matching platform wheel and no
+  <code>py3-none-any</code> wheel, so pip falls back to the <strong>source distribution</strong>, which builds as an ordinary
+  pure-Python package — no compiler needed, because the native driver is only ever staged inside the
+  platform wheels, never compiled from the sdist.</li>
+<li><code>pyramids-core</code> installs normally: it publishes wheels for all three of these targets, so the
+  <code>pyramids</code> import and its vendored GDAL are present as usual.</li>
+<li>The full lazy/dask backend works — lazy raster/variable/cube reads, <code>to_dask_dataframe</code>, kerchunk
+  manifests, multi-file reads and Zarr — because all of that is pure Python.</li>
+<li>The one thing absent is GDAL/OGR-level <code>.parquet</code> access <strong>through the bundled driver</strong>: with no
+  <code>gdalplugins/</code> directory, <code>pyramids-core</code>'s GDAL registers no Parquet driver from <code>pyramids-lazy</code>,
+  and code reaching for it gets a branded "not available" hint rather than a raw GDAL error.</li>
+</ul>
+<p>In short: ❌ means "no bundled GeoParquet GDAL driver on this platform", not "cannot install".</p>
+<h3 id="why-these-three-and-whether-they-can-change"><a class="toclink" href="#why-these-three-and-whether-they-can-change">Why these three, and whether they can change</a><a class="headerlink" href="#why-these-three-and-whether-they-can-change" title="Permanent link">#</a></h3>
+<ul>
+<li><strong>musllinux (x86-64 / arm64).</strong> conda-forge publishes no musl <code>libgdal-core</code>, so the build has no
+  matching <code>cpl_config.h</code> to compile the driver against — and musl's ABI feature macros differ from
+  glibc, so the glibc header cannot be reused. There is no route today.</li>
+<li><strong>win_arm64.</strong> This gap closes on the <code>pyramids-core</code> side: the plan is to compile Arrow + Parquet
+  directly into core's own <code>libgdal</code> (through core's vcpkg build), after which Windows-arm64 users
+  get the Parquet driver from <code>pyramids-core</code> itself, with no <code>pyramids-lazy</code> plugin involved.</li>
+</ul>
+<p>Both gaps therefore need a <code>pyramids-core</code> change, not a <code>pyramids-lazy</code> one.</p>
 <h2 id="dependencies"><a class="toclink" href="#dependencies">Dependencies</a><a class="headerlink" href="#dependencies" title="Permanent link">#</a></h2>
 <h3 id="runtime"><a class="toclink" href="#runtime">Runtime</a><a class="headerlink" href="#runtime" title="Permanent link">#</a></h3>
 <ul>

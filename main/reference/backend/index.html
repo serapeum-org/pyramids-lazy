@@ -3946,21 +3946,21 @@ bare checkout on <code>PYTHONPATH</code> as well as from an installed distributi
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/pyramids_lazy/__init__.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#pyramids_lazy.get_compute_backend--source--__codelineno-0-52">52</a></span>
-<span class="normal"><a href="#pyramids_lazy.get_compute_backend--source--__codelineno-0-53">53</a></span>
-<span class="normal"><a href="#pyramids_lazy.get_compute_backend--source--__codelineno-0-54">54</a></span>
-<span class="normal"><a href="#pyramids_lazy.get_compute_backend--source--__codelineno-0-55">55</a></span>
-<span class="normal"><a href="#pyramids_lazy.get_compute_backend--source--__codelineno-0-56">56</a></span>
-<span class="normal"><a href="#pyramids_lazy.get_compute_backend--source--__codelineno-0-57">57</a></span>
-<span class="normal"><a href="#pyramids_lazy.get_compute_backend--source--__codelineno-0-58">58</a></span>
-<span class="normal"><a href="#pyramids_lazy.get_compute_backend--source--__codelineno-0-59">59</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="pyramids_lazy.get_compute_backend--source--__codelineno-0-52" name="pyramids_lazy.get_compute_backend--source--__codelineno-0-52"></a><span class="k">def</span><span class="w"> </span><span class="nf">get_compute_backend</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">LazyComputeBackend</span><span class="p">:</span>
-<a id="pyramids_lazy.get_compute_backend--source--__codelineno-0-53" name="pyramids_lazy.get_compute_backend--source--__codelineno-0-53"></a><span class="w">    </span><span class="sd">"""Return the singleton compute backend (core's first-party fallback entry point).</span>
-<a id="pyramids_lazy.get_compute_backend--source--__codelineno-0-54" name="pyramids_lazy.get_compute_backend--source--__codelineno-0-54"></a>
-<a id="pyramids_lazy.get_compute_backend--source--__codelineno-0-55" name="pyramids_lazy.get_compute_backend--source--__codelineno-0-55"></a><span class="sd">    ``pyramids.base._compute_backend.require_compute_backend`` calls this by name when no backend is</span>
-<a id="pyramids_lazy.get_compute_backend--source--__codelineno-0-56" name="pyramids_lazy.get_compute_backend--source--__codelineno-0-56"></a><span class="sd">    registered on the ``pyramids.compute_backend`` entry-point group, so the plugin is usable from a</span>
-<a id="pyramids_lazy.get_compute_backend--source--__codelineno-0-57" name="pyramids_lazy.get_compute_backend--source--__codelineno-0-57"></a><span class="sd">    bare checkout on ``PYTHONPATH`` as well as from an installed distribution.</span>
-<a id="pyramids_lazy.get_compute_backend--source--__codelineno-0-58" name="pyramids_lazy.get_compute_backend--source--__codelineno-0-58"></a><span class="sd">    """</span>
-<a id="pyramids_lazy.get_compute_backend--source--__codelineno-0-59" name="pyramids_lazy.get_compute_backend--source--__codelineno-0-59"></a>    <span class="k">return</span> <span class="n">backend</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#pyramids_lazy.get_compute_backend--source--__codelineno-0-73">73</a></span>
+<span class="normal"><a href="#pyramids_lazy.get_compute_backend--source--__codelineno-0-74">74</a></span>
+<span class="normal"><a href="#pyramids_lazy.get_compute_backend--source--__codelineno-0-75">75</a></span>
+<span class="normal"><a href="#pyramids_lazy.get_compute_backend--source--__codelineno-0-76">76</a></span>
+<span class="normal"><a href="#pyramids_lazy.get_compute_backend--source--__codelineno-0-77">77</a></span>
+<span class="normal"><a href="#pyramids_lazy.get_compute_backend--source--__codelineno-0-78">78</a></span>
+<span class="normal"><a href="#pyramids_lazy.get_compute_backend--source--__codelineno-0-79">79</a></span>
+<span class="normal"><a href="#pyramids_lazy.get_compute_backend--source--__codelineno-0-80">80</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="pyramids_lazy.get_compute_backend--source--__codelineno-0-73" name="pyramids_lazy.get_compute_backend--source--__codelineno-0-73"></a><span class="k">def</span><span class="w"> </span><span class="nf">get_compute_backend</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">LazyComputeBackend</span><span class="p">:</span>
+<a id="pyramids_lazy.get_compute_backend--source--__codelineno-0-74" name="pyramids_lazy.get_compute_backend--source--__codelineno-0-74"></a><span class="w">    </span><span class="sd">"""Return the singleton compute backend (core's first-party fallback entry point).</span>
+<a id="pyramids_lazy.get_compute_backend--source--__codelineno-0-75" name="pyramids_lazy.get_compute_backend--source--__codelineno-0-75"></a>
+<a id="pyramids_lazy.get_compute_backend--source--__codelineno-0-76" name="pyramids_lazy.get_compute_backend--source--__codelineno-0-76"></a><span class="sd">    ``pyramids.base._compute_backend.require_compute_backend`` calls this by name when no backend is</span>
+<a id="pyramids_lazy.get_compute_backend--source--__codelineno-0-77" name="pyramids_lazy.get_compute_backend--source--__codelineno-0-77"></a><span class="sd">    registered on the ``pyramids.compute_backend`` entry-point group, so the plugin is usable from a</span>
+<a id="pyramids_lazy.get_compute_backend--source--__codelineno-0-78" name="pyramids_lazy.get_compute_backend--source--__codelineno-0-78"></a><span class="sd">    bare checkout on ``PYTHONPATH`` as well as from an installed distribution.</span>
+<a id="pyramids_lazy.get_compute_backend--source--__codelineno-0-79" name="pyramids_lazy.get_compute_backend--source--__codelineno-0-79"></a><span class="sd">    """</span>
+<a id="pyramids_lazy.get_compute_backend--source--__codelineno-0-80" name="pyramids_lazy.get_compute_backend--source--__codelineno-0-80"></a>    <span class="k">return</span> <span class="n">backend</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
