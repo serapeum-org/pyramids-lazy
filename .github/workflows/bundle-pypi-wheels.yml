@@ -154,9 +154,10 @@ jobs:
   build-macos-wheels:
     name: macos ${{ matrix.arch }}
     needs: resolve-ref
-    # Build each arch NATIVELY: arm64 on macos-15, x86_64 on macos-13. Cross-compiling x86_64 on
-    # the arm64 runner made Arrow's bundled boost fail at configure (source_group), so the build
-    # runner must match the target arch.
+    # Build each arch NATIVELY: arm64 on macos-15, x86_64 on macos-15-intel. GitHub retired the
+    # macos-13 Intel image on 2025-12-04 (jobs pinned to it queue forever), and macos-15-intel is
+    # the replacement native x86_64 image (supported into 2027). Native beats cross-compiling
+    # x86_64 on the arm64 runner, which made Arrow's bundled boost fail at configure (source_group).
     runs-on: ${{ matrix.runs-on }}
     timeout-minutes: 60
     strategy:
@@ -166,7 +167,7 @@ jobs:
           - arch: arm64
             runs-on: macos-15
           - arch: x86_64
-            runs-on: macos-13
+            runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -320,7 +321,7 @@ jobs:
           - arch: arm64
             runs-on: macos-15
           - arch: x86_64
-            runs-on: macos-13
+            runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
