@@ -879,7 +879,12 @@ class TestVerifyDiscovery:
 
 
 class TestVerifyNonElfObjects:
-    """The `.dylib` branches anticipate macOS, but the parser reads ELF only."""
+    """The ELF path rejects a non-ELF object; pinned to Linux so that branch is exercised."""
+
+    @pytest.fixture(autouse=True)
+    def _force_elf_path(self, monkeypatch):
+        """check_link dispatches on sys.platform; these fixtures are ELF, so pin that branch."""
+        monkeypatch.setattr(verify.sys, "platform", "linux")
 
     @staticmethod
     def _macho(path: Path) -> Path:
@@ -925,6 +930,11 @@ class TestVerifyNonElfObjects:
 
 class TestDamagedElfObjects:
     """ELF magic is not enough: a truncated object must still exit with a diagnosis."""
+
+    @pytest.fixture(autouse=True)
+    def _force_elf_path(self, monkeypatch):
+        """check_link dispatches on sys.platform; pin the ELF branch for these ELF fixtures."""
+        monkeypatch.setattr(verify.sys, "platform", "linux")
 
     def test_a_truncated_staged_library_stops_the_link_check(
         self, tmp_path, monkeypatch
@@ -1069,6 +1079,11 @@ class TestVerifyLinkCheck:
     real Linux install to exercise.
     """
 
+    @pytest.fixture(autouse=True)
+    def _force_elf_path(self, monkeypatch):
+        """check_link dispatches on sys.platform; these fixtures are ELF, so pin that branch."""
+        monkeypatch.setattr(verify.sys, "platform", "linux")
+
     @pytest.fixture
     def installed(self, monkeypatch, tmp_path: Path):
         """Fake an installed core + plugin pair with chosen sonames.
@@ -1174,6 +1189,215 @@ class TestVerifyLinkCheck:
         monkeypatch.setattr(verify, "_core_libs", lambda: libs)
 
         assert verify.check_link(plugins) == "libgdal.so.39"
+
+
+class TestVerifyLinkCheckMacho:
+    """check_link's macOS branch, read from otool load commands (``_macho_deps`` mocked).
+
+    Mach-O carries no DT_SONAME, so the ELF soname match becomes a file-name match. The decision
+    logic is what matters here; the load-command reader is mocked so the test runs on any host,
+    and a real otool read is covered separately where a dylib exists.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _force_macos(self, monkeypatch):
+        """Pin the darwin branch regardless of the host the suite runs on."""
+        monkeypatch.setattr(verify.sys, "platform", "darwin")
+
+    @pytest.fixture
+    def installed(self, monkeypatch, tmp_path: Path):
+        """Fake a core libgdal dylib + plugin, with the plugin's load commands supplied.
+
+        Returns:
+            Callable[[str, list[str]], Path]: Takes the installed dylib name and the load
+                commands otool would report for the plugin, and returns the plugin directory.
+        """
+
+        def _make(core_name: str, plugin_loads: list[str]) -> Path:
+            libs = tmp_path / "pyramids_core.libs"
+            libs.mkdir(exist_ok=True)
+            (libs / core_name).write_bytes(b"\xcf\xfa\xed\xfe")
+            plugins = tmp_path / "gdalplugins"
+            plugins.mkdir(exist_ok=True)
+            (plugins / "ogr_Parquet.so").write_bytes(b"\xcf\xfa\xed\xfe")
+            monkeypatch.setattr(verify, "_core_libs", lambda: libs)
+            monkeypatch.setattr(verify, "_macho_deps", lambda path: list(plugin_loads))
+            return plugins
+
+        return _make
+
+    def test_a_matching_pair_passes(self, installed, capsys):
+        """The plugin loads core's libgdal by an @loader_path path of the same file name."""
+        plugins = installed(
+            "libgdal.39.3.13.3.dylib",
+            [
+                "@loader_path/../../pyramids/.dylibs/libgdal.39.3.13.3.dylib",
+                "@rpath/libarrow.2600.dylib",
+            ],
+        )
+
+        assert verify.check_link(plugins) == "libgdal.39.3.13.3.dylib"
+        assert "link check          : OK" in capsys.readouterr().out
+
+    def test_a_mismatched_pair_is_refused(self, installed):
+        """A plugin built against a different core build names a libgdal core does not ship."""
+        plugins = installed(
+            "libgdal.39.3.13.3.dylib",
+            ["@loader_path/../../pyramids/.dylibs/libgdal.38.3.12.4.dylib"],
+        )
+
+        with pytest.raises(SystemExit, match="different core build"):
+            verify.check_link(plugins)
+
+    def test_a_python_dependency_is_refused(self, installed):
+        """No staged object may load libpython; the py3-none tag promises it."""
+        plugins = installed(
+            "libgdal.39.3.13.3.dylib",
+            [
+                "@loader_path/../../pyramids/.dylibs/libgdal.39.3.13.3.dylib",
+                "@rpath/libpython3.12.dylib",
+            ],
+        )
+
+        with pytest.raises(SystemExit, match="py3-none tag is a lie"):
+            verify.check_link(plugins)
+
+    def test_a_core_without_libgdal_is_refused(self, monkeypatch, tmp_path: Path):
+        """An empty vendored directory must not silently pass."""
+        libs = tmp_path / "pyramids_core.libs"
+        libs.mkdir()
+        plugins = tmp_path / "gdalplugins"
+        plugins.mkdir()
+        (plugins / "ogr_Parquet.so").write_bytes(b"\xcf\xfa\xed\xfe")
+        monkeypatch.setattr(verify, "_core_libs", lambda: libs)
+
+        with pytest.raises(SystemExit, match="no libgdal in"):
+            verify.check_link(plugins)
+
+    def test_a_directory_holding_no_loadable_driver_is_refused(self, installed):
+        """Only ``.so``/``.dylib`` count as the driver; a debug sidecar is not one."""
+        plugins = installed("libgdal.39.3.13.3.dylib", [])
+        (plugins / "ogr_Parquet.so").rename(plugins / "ogr_Parquet.so.debug")
+
+        with pytest.raises(SystemExit, match="no ogr_Parquet"):
+            verify.check_link(plugins)
+
+
+class TestVerifyLinkCheckPE:
+    """check_link's Windows branch, read from the PE import table (``_pe_imports`` mocked).
+
+    The soname match becomes a case-insensitive file-name match against core's hashed
+    ``gdal-<hash>.dll``. The reader is mocked so the logic runs on any host; a real PE parse is
+    covered separately on Windows.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _force_windows(self, monkeypatch):
+        """Pin the win32 branch regardless of the host the suite runs on."""
+        monkeypatch.setattr(verify.sys, "platform", "win32")
+
+    @pytest.fixture
+    def installed(self, monkeypatch, tmp_path: Path):
+        """Fake a core gdal DLL + plugin, with the plugin's import table supplied.
+
+        Returns:
+            Callable[[str, list[str]], Path]: Takes the installed DLL name and the plugin's
+                imported DLL names, and returns the plugin directory.
+        """
+
+        def _make(core_name: str, plugin_imports: list[str]) -> Path:
+            libs = tmp_path / "pyramids_core.libs"
+            libs.mkdir(exist_ok=True)
+            (libs / core_name).write_bytes(b"MZ")
+            plugins = tmp_path / "gdalplugins"
+            plugins.mkdir(exist_ok=True)
+            (plugins / "ogr_Parquet.dll").write_bytes(b"MZ")
+            monkeypatch.setattr(verify, "_core_libs", lambda: libs)
+            monkeypatch.setattr(
+                verify, "_pe_imports", lambda path: list(plugin_imports)
+            )
+            return plugins
+
+        return _make
+
+    def test_a_matching_pair_passes(self, installed, capsys):
+        """The plugin imports exactly the hashed gdal DLL core ships."""
+        plugins = installed(
+            "gdal-2c0038e2.dll", ["gdal-2c0038e2.dll", "arrow.dll", "KERNEL32.dll"]
+        )
+
+        assert verify.check_link(plugins) == "gdal-2c0038e2.dll"
+        assert "link check          : OK" in capsys.readouterr().out
+
+    def test_the_unmangled_gdal_dll_is_refused(self, installed):
+        """The exact hazard the LIBRARY fix prevents: importing the bare gdal.dll."""
+        plugins = installed("gdal-2c0038e2.dll", ["gdal.dll", "arrow.dll"])
+
+        with pytest.raises(SystemExit, match="different core build"):
+            verify.check_link(plugins)
+
+    def test_a_python_dependency_is_refused(self, installed):
+        """No staged object may import a python3*.dll."""
+        plugins = installed("gdal-2c0038e2.dll", ["gdal-2c0038e2.dll", "python312.dll"])
+
+        with pytest.raises(SystemExit, match="py3-none tag is a lie"):
+            verify.check_link(plugins)
+
+    def test_a_core_without_a_gdal_dll_is_refused(self, monkeypatch, tmp_path: Path):
+        """An empty vendored directory must not silently pass."""
+        libs = tmp_path / "pyramids_core.libs"
+        libs.mkdir()
+        plugins = tmp_path / "gdalplugins"
+        plugins.mkdir()
+        (plugins / "ogr_Parquet.dll").write_bytes(b"MZ")
+        monkeypatch.setattr(verify, "_core_libs", lambda: libs)
+
+        with pytest.raises(SystemExit, match="no gdal DLL in"):
+            verify.check_link(plugins)
+
+    def test_a_directory_holding_no_loadable_driver_is_refused(self, installed):
+        """Only ``.dll`` counts as the driver; a stray .pdb is not one."""
+        plugins = installed("gdal-2c0038e2.dll", [])
+        (plugins / "ogr_Parquet.dll").rename(plugins / "ogr_Parquet.pdb")
+
+        with pytest.raises(SystemExit, match="no ogr_Parquet"):
+            verify.check_link(plugins)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="otool is macOS-only")
+class TestMachoDepsAgainstARealLibrary:
+    """`_macho_deps` must read a real dylib's load commands through otool."""
+
+    def test_it_lists_the_load_commands_of_a_real_mach_o(self):
+        """The interpreter is a real on-disk Mach-O; otool must list its load commands."""
+        deps = verify._macho_deps(Path(sys.executable))
+
+        assert isinstance(deps, list)
+        assert deps, "a real executable loads at least libSystem"
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("win"),
+    reason="PE import parsing is exercised on Windows",
+)
+class TestPeImportsAgainstARealDll:
+    """`_pe_imports` must read a real DLL's import table."""
+
+    def test_it_reads_a_real_dll_import_table(self):
+        """The interpreter's own DLL is a real PE with a non-trivial import table."""
+        tag = f"python{sys.version_info.major}{sys.version_info.minor}.dll"
+        candidates = [
+            Path(sys.prefix) / tag,
+            *sorted((Path(sys.prefix) / "DLLs").glob("*.dll")),
+        ]
+        target = next((c for c in candidates if c.is_file()), None)
+        if target is None:
+            pytest.skip("no DLL found beside the interpreter")
+
+        imports = verify._pe_imports(target)
+
+        assert isinstance(imports, list)
+        assert all(name for name in imports)
 
 
 class TestVerifyCli:

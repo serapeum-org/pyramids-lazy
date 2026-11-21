@@ -337,6 +337,7 @@ done
 # without it the plugin loads fine on the build image but fails on a minimal glibc target
 # (debian-slim) with "libatomic.so.1: cannot open shared object file". Copy it beside the plugin
 # and let $ORIGIN find it, same as the Arrow libs.
+# shellcheck disable=SC2043  # a one-item list on purpose: a seam for more non-base syslibs later
 for syslib in libatomic.so.1; do
     src="$(gcc -print-file-name="$syslib" 2>/dev/null)"
     if [ -f "$src" ]; then

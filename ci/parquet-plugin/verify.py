@@ -86,7 +86,11 @@ def _core_libs() -> Path:
     # pyramids_core.libs is auditwheel's (Linux), .dylibs is delocate's (macOS), .libs is the
     # older layout. macOS core ships libgdal in <package>/.dylibs, so that case must be listed
     # or check_link reports "no vendored library directory" before it can read anything.
-    for candidate in (package.parent / "pyramids_core.libs", package / ".dylibs", package / ".libs"):
+    for candidate in (
+        package.parent / "pyramids_core.libs",
+        package / ".dylibs",
+        package / ".libs",
+    ):
         if candidate.is_dir():
             return candidate
     raise SystemExit(f"no vendored library directory beside {package}")
@@ -115,7 +119,9 @@ def _macho_deps(path: Path) -> list[str]:
             ["otool", "-L", str(path)], check=True, capture_output=True, text=True
         )
     except (OSError, subprocess.CalledProcessError) as exc:
-        raise SystemExit(f"could not read the load commands of {path.name}: {exc}") from exc
+        raise SystemExit(
+            f"could not read the load commands of {path.name}: {exc}"
+        ) from exc
     deps = []
     for line in proc.stdout.splitlines()[1:]:
         token = line.strip().split(" ", 1)[0]
@@ -147,7 +153,11 @@ def _check_link_macho(plugins: Path, libs: Path) -> str:
     if not installed:
         raise SystemExit(f"no libgdal in {libs}")
     installed_names = {lib.name for lib in installed}
-    drivers = [p for p in sorted(plugins.glob("ogr_Parquet.*")) if p.suffix in {".so", ".dylib"}]
+    drivers = [
+        p
+        for p in sorted(plugins.glob("ogr_Parquet.*"))
+        if p.suffix in {".so", ".dylib"}
+    ]
     if not drivers:
         raise SystemExit(f"no ogr_Parquet.so or .dylib in {plugins}")
     plugin_deps = _macho_deps(drivers[0])
@@ -192,7 +202,7 @@ def _pe_imports(path: Path) -> list[str]:
         if data[:2] != b"MZ":
             raise ValueError(f"not a PE object (magic {data[:2]!r})")
         pe_off = struct.unpack_from("<I", data, 0x3C)[0]
-        if data[pe_off:pe_off + 4] != b"PE\0\0":
+        if data[pe_off : pe_off + 4] != b"PE\0\0":
             raise ValueError("no PE signature")
         coff = pe_off + 4
         num_sections = struct.unpack_from("<H", data, coff + 2)[0]
@@ -205,7 +215,9 @@ def _pe_imports(path: Path) -> list[str]:
             dd_off = opt_off + 96  # PE32
         else:
             raise ValueError(f"unknown optional header magic {magic:#x}")
-        import_rva = struct.unpack_from("<I", data, dd_off + 8)[0]  # data dir index 1 = imports
+        import_rva = struct.unpack_from("<I", data, dd_off + 8)[
+            0
+        ]  # data dir index 1 = imports
         if import_rva == 0:
             return []
         sec_off = opt_off + opt_size
@@ -226,14 +238,16 @@ def _pe_imports(path: Path) -> list[str]:
         names = []
         off = rva_to_off(import_rva)
         while True:
-            desc = data[off:off + 20]
+            desc = data[off : off + 20]
             if len(desc) < 20 or desc == b"\0" * 20:
                 break
             name_rva = struct.unpack_from("<I", desc, 12)[0]
             if name_rva == 0:
                 break
             noff = rva_to_off(name_rva)
-            names.append(data[noff:data.index(b"\0", noff)].decode("ascii", "replace"))
+            names.append(
+                data[noff : data.index(b"\0", noff)].decode("ascii", "replace")
+            )
             off += 20
         return names
     except (ValueError, struct.error, IndexError) as exc:
@@ -264,7 +278,9 @@ def _check_link_pe(plugins: Path, libs: Path) -> str:
     if not installed:
         raise SystemExit(f"no gdal DLL in {libs}")
     installed_lower = {lib.name.lower() for lib in installed}
-    drivers = [p for p in sorted(plugins.glob("ogr_Parquet.*")) if p.suffix.lower() == ".dll"]
+    drivers = [
+        p for p in sorted(plugins.glob("ogr_Parquet.*")) if p.suffix.lower() == ".dll"
+    ]
     if not drivers:
         raise SystemExit(f"no ogr_Parquet.dll in {plugins}")
     plugin_imports = _pe_imports(drivers[0])

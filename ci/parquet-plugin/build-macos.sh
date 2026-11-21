@@ -46,8 +46,9 @@ SPEC="pyramids-core${CORE_VERSION:+==$CORE_VERSION}"
     --platform "$PLAT" --python-version "${PYTAG#cp}" --implementation cp --abi "$PYTAG" \
     -d "$WORK/corewheel" "$SPEC" >/dev/null || die "could not download $SPEC for $PLAT"
 rm -rf "$WORK/core" && mkdir -p "$WORK/core"
+core_whl=("$WORK"/corewheel/pyramids_core-*.whl)  # exactly one; a glob avoids ls (SC2012)
 "$PY" -c "import sys,zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" \
-    "$(ls "$WORK"/corewheel/pyramids_core-*.whl | head -1)" "$WORK/core"
+    "${core_whl[0]}" "$WORK/core"
 CORE_GDAL="$(find "$WORK/core" -name 'libgdal*.dylib' -print -quit)"
 [ -n "$CORE_GDAL" ] || die "no libgdal*.dylib in the core macOS wheel"
 CORE_INSTALL_NAME="$(otool -D "$CORE_GDAL" | tail -1)"
