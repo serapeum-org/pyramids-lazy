@@ -20,15 +20,17 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Runs the pre-commit hooks in CI: ruff (lint + format), the file/format checks, pydocstyle,
-  # beautysh and shellcheck — plus mypy, which needs the pixi `dev` env (typed deps + an importable
-  # package), so this job installs that env and the mypy hook runs here. One runner, no matrix
-  # (formatting/linting/typing are identical on every OS and Python version).
+  # Runs the pre-commit hooks in CI: ruff (lint + format), the file/format/security checks,
+  # beautysh, shellcheck, bandit, checkov — plus mypy, which needs the pixi `dev` env (typed deps +
+  # an importable package), so this job installs that env and the mypy hook runs here. One runner,
+  # no matrix (formatting/linting/typing are identical on every OS and Python version).
   #
-  # SKIP drops the local hooks CI runs elsewhere or that can't run here: pytest-check and
-  # notebook-check are the tests.yml matrix's job (running them here would duplicate it and pin to
-  # one Python); doctest runs in the `static` job below. The commit-msg-stage hooks never run under
-  # `pre-commit run --all-files` (it runs the commit stage only), so they need no SKIP.
+  # SKIP drops the hooks CI runs elsewhere or that can't run here: pytest-check and notebook-check
+  # are the tests.yml matrix's job (running them here would duplicate it and pin to one Python);
+  # doctest runs in the `static` job below; no-commit-to-branch is a local commit guard that would
+  # misfire in CI (which legitimately runs on main); gitleaks scans only staged changes (empty after
+  # a CI checkout), so the dedicated `gitleaks` job below scans the whole tree instead; and
+  # pixi-lock-check re-solves against live channels, so it stays a local hook, not a CI gate.
   pre-commit:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -68,7 +70,7 @@ jobs:
         # end-of-file-fixer, ...) would change, so a contributor sees the fix to apply.
         run: pre-commit run --all-files --show-diff-on-failure --color=always
         env:
-          SKIP: pytest-check,doctest,notebook-check
+          SKIP: no-commit-to-branch,gitleaks,pytest-check,doctest,notebook-check,pixi-lock-check
 
   # Src doctests. Need the full `dev` pixi env (typed deps and an importable package) but
   # are not platform- or Python-version-sensitive, so one runner covers them. (mypy runs in

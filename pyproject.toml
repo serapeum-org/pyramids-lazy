@@ -214,6 +214,11 @@ convention = "google"
 add_ignore = "D403"
 match = '(?!test_).*\.py'
 
+[tool.bandit]
+# ci/ etc. are non-shipped build tooling run with trusted fixed commands.
+exclude_dirs = ["ci", "tests", "examples", "scripts", "planning", "docs"]
+skips = ["B101"]
+
 [tool.coverage.run]
 # Branch coverage, measured wherever the suite runs (the pixi tasks and the pre-commit
 # pytest-check hook alike), not just line coverage.
