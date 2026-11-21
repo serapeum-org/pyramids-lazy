@@ -32,7 +32,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         # Full-stack (dev + the [parquet] vector extra) across every supported Python.
-        environment: [py311, py312, py313, py314, py315]
+        environment: [py311, py312, py313, py314]
         # The no-[parquet] shape (on 3.11, where the backend-discovery bug was specific) runs as one
         # extra leg on ubuntu — enough to cover the parquet-less resolution without running it across
         # the whole matrix. Lazy-specific; pyramids-core has no equivalent.

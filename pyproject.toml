@@ -124,10 +124,12 @@ platforms = [
     { platform = "osx-arm64", macos = "14.0" },
 ]
 
-# Interpreter floor/ceiling for the default (version-less) feature. <3.16 admits the py315 test
-# env; conda-forge now ships cp315 builds of the stack (incl. nompi h5py), so 3.15 resolves.
+# Interpreter floor/ceiling for the default (version-less) feature. <3.15 keeps every env off 3.15:
+# the netcdf/zarr stack has no cp315 PyPI wheels yet (h5py and numcodecs are sdist-only on PyPI, and
+# numcodecs arrives as a PyPI-transitive dep of zarr that a conda override does not displace), so a
+# 3.15 env cannot install. Revisit when h5py + numcodecs ship cp315 wheels on PyPI.
 [tool.pixi.dependencies]
-python = ">=3.11,<3.16"
+python = ">=3.11,<3.15"
 
 # Interpreter pins, one feature per supported Python so CI can run a per-version matrix. 3.11 is the
 # floor, where runtime_checkable isinstance behaves differently (hasattr vs getattr_static) — the
@@ -142,8 +144,6 @@ python = "3.12.*"
 python = { version = "3.13.*", build = "*_cp313" }
 [tool.pixi.feature.py314.dependencies]
 python = { version = "3.14.*", build = "*_cp314" }
-[tool.pixi.feature.py315.dependencies]
-python = { version = "3.15.*", build = "*_cp315" }
 
 [tool.pixi.pypi-dependencies]
 pyramids-lazy = { path = ".", editable = true }
@@ -160,7 +160,6 @@ py311 = { features = ["dev", "parquet", "py311", "interop", "viz"], solve-group 
 py312 = { features = ["dev", "parquet", "py312", "interop", "viz"], solve-group = "py312" }
 py313 = { features = ["dev", "parquet", "py313", "interop", "viz"], solve-group = "py313" }
 py314 = { features = ["dev", "parquet", "py314", "interop", "viz"], solve-group = "py314" }
-py315 = { features = ["dev", "parquet", "py315", "interop", "viz"], solve-group = "py315" }
 docs = { features = ["dev", "docs"], solve-group = "docs" }
 
 [tool.pixi.feature.dev.tasks]
