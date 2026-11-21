@@ -53,14 +53,21 @@ Import-Module (Join-Path $vsPath "Common7\Tools\Microsoft.VisualStudio.DevShell.
 Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64"
 $gdalLib = "$Work/gdal.lib"
 $def = "$Work/gdal.def"
-"EXPORTS" | Set-Content $def
+# The LIBRARY line must name core's ACTUAL DLL (gdal-<hash>.dll). Without it, lib.exe derives the
+# imported DLL name from /out ("gdal.dll"), so the plugin's import table would reference gdal.dll
+# -- a name core does not ship (it vendors gdal-<hash>.dll) -- and the driver would fail to load
+# at runtime with that module missing, which only a runtime verify catches. Naming it here makes
+# the plugin import exactly the module core loads in-process.
+Set-Content $def "LIBRARY $($coreGdal.Name)"
+Add-Content $def "EXPORTS"
 # dumpbin /exports lines look like: "    1    0 0000ABCD  SymbolName" -- take the 4th column.
 & dumpbin /nologo /exports $coreGdal.FullName |
     Select-String -Pattern '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\S+)' |
     ForEach-Object { $_.Matches[0].Groups[1].Value } | Add-Content $def
 & lib /nologo "/def:$def" "/out:$gdalLib" /machine:x64
 if ($LASTEXITCODE -ne 0) { throw "could not build an import lib from $($coreGdal.Name)" }
-Write-Host "generated import lib: $gdalLib ($((Get-Content $def).Count - 1) symbols)"
+# Two header lines now precede the symbols (LIBRARY + EXPORTS).
+Write-Host "generated import lib: $gdalLib -> $($coreGdal.Name) ($((Get-Content $def).Count - 2) symbols)"
 
 Write-Host "=== 2. GDAL $gdalVersion sources + cpl_config.h from conda win-64 libgdal-core ==="
 curl.exe -fsSL -o gdal.tar.gz "https://download.osgeo.org/gdal/$gdalVersion/gdal-$gdalVersion.tar.gz"

@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import os
+import struct
 import subprocess
 import sys
 import tempfile
@@ -168,6 +169,124 @@ def _check_link_macho(plugins: Path, libs: Path) -> str:
     return sorted(installed_names)[0]
 
 
+def _pe_imports(path: Path) -> list[str]:
+    """Read a PE object's imported DLL names from its import directory.
+
+    The Windows analogue of :func:`_parsed_needed` / :func:`_macho_deps`, parsed in pure Python so
+    the check needs no Visual Studio tooling (``dumpbin``) on PATH. Walks DOS header -> PE header
+    -> optional header -> data directory 1 (imports), mapping each descriptor's Name RVA to a file
+    offset through the section table.
+
+    Args:
+        path: The PE object (``.dll``) to read.
+
+    Returns:
+        list[str]: Its imported DLL names, in order, possibly empty.
+
+    Raises:
+        SystemExit: If it is not a PE object or the headers cannot be parsed -- reported as a
+            diagnosis, like every other packaging fault here.
+    """
+    data = path.read_bytes()
+    try:
+        if data[:2] != b"MZ":
+            raise ValueError(f"not a PE object (magic {data[:2]!r})")
+        pe_off = struct.unpack_from("<I", data, 0x3C)[0]
+        if data[pe_off:pe_off + 4] != b"PE\0\0":
+            raise ValueError("no PE signature")
+        coff = pe_off + 4
+        num_sections = struct.unpack_from("<H", data, coff + 2)[0]
+        opt_size = struct.unpack_from("<H", data, coff + 16)[0]
+        opt_off = coff + 20
+        magic = struct.unpack_from("<H", data, opt_off)[0]
+        if magic == 0x20B:
+            dd_off = opt_off + 112  # PE32+
+        elif magic == 0x10B:
+            dd_off = opt_off + 96  # PE32
+        else:
+            raise ValueError(f"unknown optional header magic {magic:#x}")
+        import_rva = struct.unpack_from("<I", data, dd_off + 8)[0]  # data dir index 1 = imports
+        if import_rva == 0:
+            return []
+        sec_off = opt_off + opt_size
+        sections = []
+        for i in range(num_sections):
+            base = sec_off + i * 40
+            vsize = struct.unpack_from("<I", data, base + 8)[0]
+            vaddr = struct.unpack_from("<I", data, base + 12)[0]
+            raw = struct.unpack_from("<I", data, base + 20)[0]
+            sections.append((vaddr, vsize, raw))
+
+        def rva_to_off(rva: int) -> int:
+            for vaddr, vsize, raw in sections:
+                if vaddr <= rva < vaddr + max(vsize, 1):
+                    return raw + (rva - vaddr)
+            raise ValueError(f"RVA {rva:#x} is in no section")
+
+        names = []
+        off = rva_to_off(import_rva)
+        while True:
+            desc = data[off:off + 20]
+            if len(desc) < 20 or desc == b"\0" * 20:
+                break
+            name_rva = struct.unpack_from("<I", desc, 12)[0]
+            if name_rva == 0:
+                break
+            noff = rva_to_off(name_rva)
+            names.append(data[noff:data.index(b"\0", noff)].decode("ascii", "replace"))
+            off += 20
+        return names
+    except (ValueError, struct.error, IndexError) as exc:
+        raise SystemExit(f"{path.name} is not a readable PE object: {exc}") from exc
+
+
+def _check_link_pe(plugins: Path, libs: Path) -> str:
+    """Windows counterpart of :func:`check_link`, read from the PE import table.
+
+    Same two assertions as the ELF path, translated to PE: the plugin must import core's hashed
+    ``gdal-<hash>.dll`` (the soname match becomes a file-name match, case-insensitive), and nothing
+    staged in the wheel may import a Python DLL. The hashed name changes between core releases, so
+    this is exactly the mismatch neither artefact can catch alone on Windows.
+
+    Args:
+        plugins: The installed ``gdalplugins`` directory.
+        libs: The core wheel's vendored library directory (``pyramids_core.libs``).
+
+    Returns:
+        str: The file name of the installed gdal DLL the plugin was proved against.
+
+    Raises:
+        SystemExit: If the core carries no gdal DLL, the plugin directory holds no
+            ``ogr_Parquet.dll``, the plugin imports a gdal DLL the installed core does not provide,
+            or a staged object imports a ``python3*.dll``.
+    """
+    installed = sorted(libs.glob("gdal*.dll")) + sorted(libs.glob("libgdal*.dll"))
+    if not installed:
+        raise SystemExit(f"no gdal DLL in {libs}")
+    installed_lower = {lib.name.lower() for lib in installed}
+    drivers = [p for p in sorted(plugins.glob("ogr_Parquet.*")) if p.suffix.lower() == ".dll"]
+    if not drivers:
+        raise SystemExit(f"no ogr_Parquet.dll in {plugins}")
+    plugin_imports = _pe_imports(drivers[0])
+    gdal_imports = [dep for dep in plugin_imports if "gdal" in dep.lower()]
+
+    print(f"  installed gdal DLL  : {', '.join(sorted(lib.name for lib in installed))}")
+    print(f"  plugin gdal import  : {', '.join(gdal_imports) or '(none)'}")
+    if not any(dep.lower() in installed_lower for dep in gdal_imports):
+        raise SystemExit(
+            f"plugin imports {gdal_imports!r} but the installed core provides "
+            f"{sorted(lib.name for lib in installed)!r} -- this wheel was built against a "
+            "different core build"
+        )
+    for obj in sorted(plugins.glob("*.dll")):
+        for dep in _pe_imports(obj):
+            low = dep.lower()
+            if low.startswith("python3") and low.endswith(".dll"):
+                raise SystemExit(f"{obj.name} imports {dep}; py3-none tag is a lie")
+    print("  link check          : OK")
+    return sorted(lib.name for lib in installed)[0]
+
+
 def check_link(plugins: Path) -> str:
     """Assertion 1 + 2: the plugin links the installed libgdal, and no interpreter.
 
@@ -196,6 +315,10 @@ def check_link(plugins: Path) -> str:
         # macOS carries no DT_SONAME; the ELF parser rejects Mach-O outright. Assert the same
         # two things (links the installed libgdal, links no interpreter) from otool instead.
         return _check_link_macho(plugins, libs)
+    if sys.platform.startswith("win"):
+        # Windows PE is neither ELF nor Mach-O; assert the same two things from the plugin's
+        # import table (which names core's hashed gdal-<hash>.dll) instead.
+        return _check_link_pe(plugins, libs)
     installed = sorted(libs.glob("libgdal*.so*")) + sorted(libs.glob("libgdal*.dylib"))
     if not installed:
         raise SystemExit(f"no libgdal in {libs}")
