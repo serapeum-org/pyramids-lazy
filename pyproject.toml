@@ -22,10 +22,8 @@ classifiers = [
     "Intended Audience :: Developers",
 ]
 
-# No GDAL dependency here, deliberately. The native wheel carries the OGR-Parquet driver + its
-# Arrow runtime in `pyramids_lazy/gdalplugins/` and links pyramids-core's vendored libgdal by
-# soname at load time (via `GDAL_DRIVER_PATH`); it does NOT ship or declare GDAL itself.
-# Declaring GDAL would risk a second, ABI-mismatched libgdal on the path (constraint C2).
+# No GDAL here: the plugin inherits pyramids-core's vendored GDAL (constraint C2). Declaring GDAL
+# would risk a second, ABI-mismatched libgdal on the path.
 dependencies = [
     # 0.81.0 is the release that routes the dataset lazy ops through the compute-backend seam and
     # re-exports the reduce_axis / _SUPPORTED_OPS / _NAN_TABLE primitives this backend imports
@@ -50,14 +48,6 @@ parquet = ["pyarrow>=10.0.0", "dask-geopandas>=0.5.0"]
 [project.entry-points."pyramids.compute_backend"]
 lazy = "pyramids_lazy.backend:backend"
 
-# core's GDAL bootstrap resolves this group with importlib.metadata (no import of this
-# package), appends `<module>/gdalplugins` to GDAL_DRIVER_PATH, and so finds the bundled
-# ogr_Parquet driver. Present in every wheel; only the native (platform) wheels actually
-# contain gdalplugins/, so on a pure source install the directory is simply absent and GDAL
-# finds no extra driver.
-[project.entry-points."pyramids.gdal_plugin_path"]
-parquet = "pyramids_lazy"
-
 [project.urls]
 Homepage = "https://github.com/serapeum-org/pyramids-lazy"
 Repository = "https://github.com/serapeum-org/pyramids-lazy"
@@ -69,14 +59,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-# The native wheels carry the compiled driver + Arrow runtime + the vendored-component licence
-# files, staged into src/pyramids_lazy/gdalplugins/ by ci/parquet-plugin/build.sh before the
-# build. Absent on a pure source checkout (the glob simply matches nothing), present in the
-# platform wheels. include-package-data stays off so the sdist does not accidentally try to
-# ship built binaries.
-[tool.setuptools.package-data]
-pyramids_lazy = ["gdalplugins/*"]
 
 [dependency-groups]
 dev = [
@@ -106,6 +88,17 @@ dev = [
     # testpaths, so the normal test tasks never collect it.
     "pytest-benchmark>=5.1.0",
 ]
+# Test-only peer dep for the chunked to_xarray / from_xarray interop tests relocated from
+# pyramids-core (they build a dask-backed xarray round-trip). Kept in its OWN group — deliberately
+# not folded into `dev` — and mapped to the same-named `interop` pixi feature, mirroring
+# pyramids-core's `interop` group. The feature is added to every test env below.
+interop = ["xarray>=2023.1.0"]
+# pyramids-core's `viz` extra (cleopatra -> matplotlib) for the two example notebooks relocated from
+# pyramids-core (`lazy-and-dask-explained`, `08-y-axis-orientation`): they exercise the lazy backend
+# AND plot via pyramids' `.plot()` (which routes through cleopatra). Kept in its OWN group so the
+# backend itself never declares a plotting stack; mapped to the same-named `viz` pixi feature and
+# added only to the envs that execute the `notebooks` task below.
+viz = ["pyramids-core[viz]>=0.81.0"]
 # The MkDocs + mike documentation stack. Resolved by the `docs` pixi environment and the
 # github-pages-mkdocs workflow; mirrors pyramids-mesh. The site lives at `mkdocs.yml` + `docs/`.
 docs = [
@@ -120,58 +113,6 @@ docs = [
     "mkdocs-table-reader-plugin>=3.1.0",
     "mkdocs-mermaid2-plugin>=1.2.1",
 ]
-
-[tool.cibuildwheel]
-# ONE CPython per platform, on purpose. The payload (ogr_Parquet + Arrow) links no libpython,
-# so the wheel is py3-none-<platform> (one wheel serves every interpreter -- see setup.py). A
-# per-ABI matrix like core's would build identical wheels cp311..cp315; we only need one.
-build = ["cp312-*"]
-# musllinux is built by a separate job that overrides this skip (as in core), because its
-# generated cpl_config.h has no conda-forge source and needs its own handling.
-skip = ["*pp*", "*musllinux*", "cp31*t-*"]
-archs = ["auto64"]
-build-verbosity = 1
-test-skip = "*"
-
-[tool.cibuildwheel.linux]
-manylinux-x86_64-image = "manylinux_2_28"
-manylinux-aarch64-image = "manylinux_2_28"
-# before-all compiles ogr_Parquet + a minimal Arrow against the libgdal inside a downloaded
-# pyramids-core wheel and stages the plugin into the package tree; build.sh self-vendors the
-# Arrow libs (RPATH $ORIGIN) and strips. So repair does NOT re-vendor -- auditwheel would try to
-# pull in core's libgdal (the second-libgdal hazard). It only upgrades the platform tag from the
-# bare linux_<arch> setuptools emits to manylinux_2_28_<arch>, which the manylinux_2_28 build
-# container guarantees by construction.
-before-all = ["bash ci/parquet-plugin/cibw-before-all-linux.sh"]
-repair-wheel-command = [
-    "bash ci/parquet-plugin/cibw-retag.sh {wheel} {dest_dir} manylinux_2_28_${AUDITWHEEL_ARCH}",
-]
-
-
-[tool.cibuildwheel.macos]
-# build-macos.sh compiles ogr_Parquet.so + a minimal Arrow against the libgdal in core's macOS
-# wheel and SELF-VENDORS the Arrow dylibs beside the plugin (@loader_path rpath), the Mach-O
-# analogue of build.sh's $ORIGIN staging; core's libgdal stays external (loaded from the installed
-# pyramids-core). So repair does NOT run delocate -- like the Linux retag, it just places the
-# wheel: delocate would re-vendor the already-staged Arrow dylibs with a wheel-archive-relative
-# path that misses once installed, and setup.py already forces the macosx_11_0_<arch> tag.
-before-all = ["bash ci/parquet-plugin/build-macos.sh"]
-repair-wheel-command = [
-    "bash ci/parquet-plugin/cibw-repair-macos.sh {wheel} {dest_dir} {delocate_archs}",
-]
-
-
-[tool.cibuildwheel.windows]
-# NEW and CI-iterated: build-windows.ps1 compiles ogr_Parquet.dll + Arrow against the libgdal in
-# core's win_amd64 wheel. delvewheel vendors the Arrow DLLs but EXCLUDES core's libgdal (hashed
-# name, resolved from the installed pyramids-core). The hashed-DLL name changing between core
-# releases and the duckdb.dll dependency are the known rough edges here.
-before-all = ["powershell -File ci/parquet-plugin/build-windows.ps1"]
-before-build = ["python -m pip install delvewheel wheel"]
-repair-wheel-command = [
-    "delvewheel repair --exclude libgdal --add-path src/pyramids_lazy/gdalplugins -w {dest_dir} {wheel}",
-]
-
 
 [tool.pixi.workspace]
 channels = ["conda-forge"]
@@ -213,13 +154,13 @@ pyramids-lazy = { path = ".", editable = true }
 # env hid (it shares py311's solve-group as the parquet-less subset). `dev` is the local
 # newest-float convenience env; `docs` adds the MkDocs stack in its own solve-group so the docs
 # libraries never perturb the test locks.
-dev = { features = ["dev", "parquet"], solve-group = "default" }
-base = { features = ["dev", "py311"], solve-group = "py311" }
-py311 = { features = ["dev", "parquet", "py311"], solve-group = "py311" }
-py312 = { features = ["dev", "parquet", "py312"], solve-group = "py312" }
-py313 = { features = ["dev", "parquet", "py313"], solve-group = "py313" }
-py314 = { features = ["dev", "parquet", "py314"], solve-group = "py314" }
-py315 = { features = ["dev", "parquet", "py315"], solve-group = "py315" }
+dev = { features = ["dev", "parquet", "interop", "viz"], solve-group = "default" }
+base = { features = ["dev", "py311", "interop", "viz"], solve-group = "py311" }
+py311 = { features = ["dev", "parquet", "py311", "interop", "viz"], solve-group = "py311" }
+py312 = { features = ["dev", "parquet", "py312", "interop", "viz"], solve-group = "py312" }
+py313 = { features = ["dev", "parquet", "py313", "interop", "viz"], solve-group = "py313" }
+py314 = { features = ["dev", "parquet", "py314", "interop", "viz"], solve-group = "py314" }
+py315 = { features = ["dev", "parquet", "py315", "interop", "viz"], solve-group = "py315" }
 docs = { features = ["dev", "docs"], solve-group = "docs" }
 
 [tool.pixi.feature.dev.tasks]
@@ -260,6 +201,9 @@ markers = [
     "parquet: tests requiring the [parquet] extra (pyarrow)",
     "parquet_lazy: tests requiring dask-geopandas",
     "live: live network test against a real external service",
+    "e2e: end-to-end tests (pickle/subprocess/zarr round-trips) relocated from pyramids-core",
+    "slow: slow tests (e.g. a real distributed cluster round-trip)",
+    "plot: lazy-plot tests relocated from pyramids-core (need cleopatra; skip when absent)",
 ]
 
 [tool.pydocstyle]
