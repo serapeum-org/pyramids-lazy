@@ -125,7 +125,18 @@ PLUGIN_NAME="$(basename "$PLUGIN_DYLIB")"
 cp "$GDAL_SRC/LICENSE.TXT" "$PKG_PLUGINS/GDAL-LICENSE.txt"
 cp "$WORK/apache-arrow-${ARROW_VERSION}/LICENSE.txt" "$PKG_PLUGINS/Arrow-LICENSE.txt"
 cp "$WORK/apache-arrow-${ARROW_VERSION}/NOTICE.txt" "$PKG_PLUGINS/Arrow-NOTICE.txt"
-# @rpath so the loader finds the delocated Arrow dylibs beside the plugin, and core's libgdal
-# from the installed pyramids-core (delocate leaves libgdal external via --exclude).
-install_name_tool -add_rpath "@loader_path" "$PKG_PLUGINS/$PLUGIN_NAME" || true
-echo "staged $(basename "$PLUGIN_DYLIB") into $PKG_PLUGINS"
+# delocate (the cibuildwheel repair) vendors the Arrow dylibs into the wheel. It needs to be
+# able to LOCATE them: the plugin links them as @rpath/libarrow*.dylib, so point an rpath at the
+# Arrow build prefix (still on disk in this job) for delocate to resolve and copy them from.
+install_name_tool -add_rpath "$ARROW_PREFIX/lib" "$PKG_PLUGINS/$PLUGIN_NAME"
+# Core's libgdal stays EXTERNAL -- loaded at runtime from the installed pyramids-core, not
+# bundled. The plugin linked it by core's own install_name (an absolute path that will not
+# exist on the user's machine); rewrite that to a path relative to the plugin so it resolves:
+# <site-packages>/pyramids_lazy/gdalplugins/ -> ../../<core dylib dir>/libgdal. delocate then
+# leaves it alone (--exclude libgdal) and --ignore-missing-dependencies accepts it unresolved
+# at repair time (pyramids-core is not in this wheel).
+CORE_GDAL_BASENAME="$(basename "$CORE_GDAL")"
+CORE_REL_DIR="$(dirname "${CORE_GDAL#"$WORK"/core/}")"
+LIBGDAL_REF="@loader_path/../../$CORE_REL_DIR/$CORE_GDAL_BASENAME"
+install_name_tool -change "$CORE_INSTALL_NAME" "$LIBGDAL_REF" "$PKG_PLUGINS/$PLUGIN_NAME"
+echo "staged $PLUGIN_NAME; libgdal -> $LIBGDAL_REF"
