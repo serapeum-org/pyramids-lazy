@@ -48,6 +48,14 @@ parquet = ["pyarrow>=10.0.0", "dask-geopandas>=0.5.0"]
 [project.entry-points."pyramids.compute_backend"]
 lazy = "pyramids_lazy.backend:backend"
 
+# core's GDAL bootstrap resolves this group with importlib.metadata (no import of this
+# package), appends `<module>/gdalplugins` to GDAL_DRIVER_PATH, and so finds the bundled
+# ogr_Parquet driver. Present in every wheel; only the native (platform) wheels actually
+# contain gdalplugins/, so on a pure source install the directory is simply absent and GDAL
+# finds no extra driver.
+[project.entry-points."pyramids.gdal_plugin_path"]
+parquet = "pyramids_lazy"
+
 [project.urls]
 Homepage = "https://github.com/serapeum-org/pyramids-lazy"
 Repository = "https://github.com/serapeum-org/pyramids-lazy"
