@@ -115,7 +115,9 @@ requires_pyarrow = requires_parquet
 # Only the `[parquet]` extra appears here. `lazy` and `netcdf_lazy` are deliberately
 # absent: their dependencies are hard, so auto-applying a skip for them could only ever
 # hide a broken install behind a green "skipped" line. They remain registered markers
-# for `-m` selection.
+# for `-m` selection. `interop` (xarray) is likewise NOT auto-skipped: its tests are
+# tagged `@pytest.mark.interop`, run in the pixi `interop` env (xarray present), and are
+# deselected with `-m "not interop"` in the bare-wheel gate -- never silently skipped.
 EXTRA_MARKERS: dict[str, pytest.MarkDecorator] = {
     "parquet": requires_parquet,
     "parquet_lazy": requires_parquet_lazy,

@@ -281,6 +281,7 @@ markers = [
     "netcdf_lazy: tests requiring kerchunk + h5py",
     "parquet: tests requiring the [parquet] extra (pyarrow)",
     "parquet_lazy: tests requiring dask-geopandas",
+    "interop: xarray-interop tests; run in the interop env, deselected with -m 'not interop' where xarray is absent",
     "live: live network test against a real external service",
     "e2e: end-to-end tests (pickle/subprocess/zarr round-trips) relocated from pyramids-core",
     "slow: slow tests (e.g. a real distributed cluster round-trip)",
