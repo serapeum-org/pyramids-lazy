@@ -50,7 +50,6 @@ HAS_ZARR = _has("zarr")
 HAS_KERCHUNK = _has("kerchunk")
 HAS_H5PY = _has("h5py")
 HAS_PYARROW = _has("pyarrow")
-HAS_XARRAY = _has("xarray")
 
 
 # Per-extra installed? flag. Values are True when EVERY underlying
@@ -88,15 +87,6 @@ requires_parquet_lazy = pytest.mark.skipif(
     reason="dask-geopandas (pyramids-lazy[parquet]) not installed",
 )
 
-# `interop` is the other genuinely optional set: `xarray` lives in the test-only `interop`
-# dependency-group, not in `[project] dependencies`, so `pip install pyramids-lazy` does NOT
-# bring it. The pixi test envs add the `interop` feature (xarray present → these tests run),
-# but the pure-wheel gate installs only the wheel + published runtime deps, so there xarray is
-# absent and the xarray-interop tests must skip rather than raise OptionalPackageDoesNotExist.
-requires_interop = pytest.mark.skipif(
-    not HAS_XARRAY, reason="xarray (pyramids-lazy[interop]) not installed"
-)
-
 
 # `dask.array` is part of the hard `dask` dependency, so this is a category marker too.
 # It used to carry its own skipif to distinguish "needs dask.array but not zarr"; that
@@ -122,12 +112,13 @@ requires_pyarrow = requires_parquet
 # `tests/conftest.py`. A test annotated with `@pytest.mark.<name>` auto-gains the
 # matching skip when its extra is not installed.
 #
-# Only the genuinely optional extras appear here -- `parquet` (pyarrow / dask-geopandas) and
-# `interop` (xarray). `lazy` and `netcdf_lazy` are deliberately absent: their dependencies are
-# hard, so auto-applying a skip for them could only ever hide a broken install behind a green
-# "skipped" line. They remain registered markers for `-m` selection.
+# Only the `[parquet]` extra appears here. `lazy` and `netcdf_lazy` are deliberately
+# absent: their dependencies are hard, so auto-applying a skip for them could only ever
+# hide a broken install behind a green "skipped" line. They remain registered markers
+# for `-m` selection. `interop` (xarray) is likewise NOT auto-skipped: its tests are
+# tagged `@pytest.mark.interop`, run in the pixi `interop` env (xarray present), and are
+# deselected with `-m "not interop"` in the bare-wheel gate -- never silently skipped.
 EXTRA_MARKERS: dict[str, pytest.MarkDecorator] = {
     "parquet": requires_parquet,
     "parquet_lazy": requires_parquet_lazy,
-    "interop": requires_interop,
 }

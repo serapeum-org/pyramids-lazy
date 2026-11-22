@@ -20,7 +20,10 @@ from pyramids.netcdf.netcdf import NetCDF
 
 from tests.netcdf.conftest import make_3d_nc
 
-pytestmark = pytest.mark.lazy
+# `interop` tags these xarray tests so they run in the pixi `interop` env (xarray present) and are
+# deselected with `-m "not interop"` in the bare-wheel gate; the module-level importorskip above is
+# the collection guard for the hard `xarray` import. `lazy` keeps them in the dask/zarr category.
+pytestmark = [pytest.mark.lazy, pytest.mark.interop]
 
 GEOG_3D_NC = "tests/data/netcdf/cf__5v__1d4-3d1__geog__y-desc.nc"
 CF_PATH = "tests/data/netcdf/cf__5v__1d4-4d1__y-asc.nc"

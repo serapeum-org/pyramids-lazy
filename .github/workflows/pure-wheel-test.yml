@@ -114,7 +114,11 @@ jobs:
       - name: Run tests (not live)
         # -o pythonpath= clears the `pythonpath = [".", "src"]` setting so the tests import the
         # INSTALLED wheel, not the source tree. live tests need network and are deselected.
-        run: pytest -vvv -sv -o pythonpath= -m "not live" tests/
+        # interop tests need xarray, which lives in the test-only `interop` dependency-group and
+        # is NOT a published runtime dep of the wheel, so it is absent in this bare-wheel env.
+        # They are deselected here (not skipped) and run with xarray present in tests.yml's pixi
+        # `interop` env -- a missing-dep test must run where the dep exists, never silently skip.
+        run: pytest -vvv -sv -o pythonpath= -m "not live and not interop" tests/
 
   test-wheel-extras:
     needs: build-wheel
@@ -166,4 +170,6 @@ jobs:
 
       - name: Run the suite with the [${{ matrix.extra.name }}] extra present
         shell: bash
-        run: pytest -vvv -sv -o pythonpath= -m "not live" tests/ || [ $? -eq 5 ]
+        # interop tests need xarray (the test-only `interop` group), which this extra does not
+        # install, so they are deselected here too and run in tests.yml's pixi `interop` env.
+        run: pytest -vvv -sv -o pythonpath= -m "not live and not interop" tests/ || [ $? -eq 5 ]
