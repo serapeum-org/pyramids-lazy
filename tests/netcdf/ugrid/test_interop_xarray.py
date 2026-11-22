@@ -60,8 +60,9 @@ def _mesh_with_two_variables() -> tuple[Mesh2d, dict[str, MeshVariable]]:
     return mesh, {"depth": static, "level": temporal}
 
 
+@pytest.mark.interop
 class TestZarrRoundTrip:
-    """The Zarr round trip, skipped without ``pyramids-lazy``."""
+    """The Zarr round trip; its ``to_zarr`` / ``from_zarr`` path needs xarray (the ``[interop]`` extra)."""
 
     def test_to_zarr_from_zarr(self, tmp_path):
         """A mesh and its variables round-trip through a Zarr store on disk."""
