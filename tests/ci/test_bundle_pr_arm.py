@@ -25,6 +25,7 @@ substituted from a simulated event context, which is the one part this test has 
 from __future__ import annotations
 
 import doctest
+import os
 import re
 import shutil
 import subprocess
@@ -194,8 +195,16 @@ def _substitute(script: str, context: dict[str, str]) -> str:
     return _EXPRESSION.sub(_value, script)
 
 
-def _resolve_ref(context: dict[str, str], cwd: Path) -> str:
-    """Run the real resolve step for a simulated event and return the ref it writes.
+def _run_resolve(
+    context: dict[str, str], cwd: Path
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    """Run the real resolve step for a simulated event and return the process and its outputs.
+
+    Returns the process rather than asserting on it, so a test can distinguish the step failing
+    (the behaviour under test) from the harness failing. The environment is inherited with only
+    `GITHUB_OUTPUT` overridden: an earlier version passed `PATH=/usr/bin:/bin` and nothing else,
+    which made an unresolvable `cat` or a non-Git `bash` on Windows indistinguishable from the
+    step's own error, and dropped `SystemRoot`/`HOME` for no benefit.
 
     Args:
         context: The expression context for the event (see :func:`_substitute`).
@@ -203,28 +212,47 @@ def _resolve_ref(context: dict[str, str], cwd: Path) -> str:
             relative to it.
 
     Returns:
-        str: The value the step appends to `GITHUB_OUTPUT` as `ref=`.
-
-    Raises:
-        AssertionError: If the step fails, or writes no `ref=` line.
+        tuple: The finished process, and the `ref=` lines it appended to `GITHUB_OUTPUT`.
     """
     assert _BASH is not None
     output = cwd / "github_output.txt"
     output.touch()
+    env = {**os.environ, "GITHUB_OUTPUT": output.as_posix()}
     result = subprocess.run(
         [_BASH, "-c", _substitute(_resolve_script(), context)],
         capture_output=True,
         text=True,
         check=False,
         cwd=cwd,
-        env={"GITHUB_OUTPUT": output.as_posix(), "PATH": "/usr/bin:/bin"},
+        env=env,
     )
-    assert result.returncode == 0, f"resolve step failed: {result.stderr}"
     written = [
         line
         for line in output.read_text(encoding="utf-8").splitlines()
         if line.startswith("ref=")
     ]
+    return result, written
+
+
+def _resolve_ref(context: dict[str, str], cwd: Path) -> str:
+    """Run the resolve step for an event it must handle and return the ref it writes.
+
+    Args:
+        context: The expression context for the event (see :func:`_substitute`).
+        cwd: Directory to run in.
+
+    Returns:
+        str: The value the step appends to `GITHUB_OUTPUT` as `ref=`.
+
+    Raises:
+        AssertionError: If the step exits non-zero, or writes no `ref=` line.
+
+    See Also:
+        _run_resolve: Use that directly when the step is expected to fail.
+    """
+    result, written = _run_resolve(context, cwd)
+
+    assert result.returncode == 0, f"resolve step failed: {result.stderr}"
     assert written, f"the step wrote no ref= line (stdout: {result.stdout})"
     return written[-1].removeprefix("ref=")
 
@@ -696,9 +724,21 @@ class TestTheResolveStepFailsLoudlyRatherThanResolvingNothing:
             A `workflow_run` event where `.release-ref/release-ref.txt` was never downloaded. An
             empty `REF` would make every build job check out the default branch and publish wheels
             built from the wrong tree.
+
+            Asserts `cat`'s own message, not the harness's assertion text: an earlier version
+            matched only `"resolve step failed"`, which any non-zero exit satisfies -- so a
+            missing `cat` or the wrong `bash` would have passed this test for the wrong reason
+            while the positive release test failed.
         """
-        with pytest.raises(AssertionError, match="resolve step failed"):
-            _resolve_ref({"github.event_name": "workflow_run"}, tmp_path)
+        result, written = _run_resolve({"github.event_name": "workflow_run"}, tmp_path)
+
+        assert result.returncode != 0, (
+            f"the step should have failed (stdout: {result.stdout})"
+        )
+        assert "No such file or directory" in result.stderr, result.stderr
+        assert not [line for line in written if line != "ref="], (
+            f"a failing step must write no usable ref, got {written}"
+        )
 
     def test_an_unrecognised_event_falls_back_to_the_triggering_ref(self, tmp_path):
         """The `*)` arm: a future trigger resolves to its own ref rather than to nothing.
