@@ -20,20 +20,26 @@ name: Bundle PyPI Wheels
 permissions:
   contents: read
 
-# Triggers mirror pyramids-core's bundle-pypi-wheels.yml: build on every push to main and
-# after a release, with a dormant pull_request arm and manual dispatch. The `release` job
-# publishes the built sdist + wheels to the GitHub release and PyPI on a successful
-# github-release (workflow_run); a plain push builds + verifies only (the release job skips).
+# Triggers mirror pyramids-core's bundle-pypi-wheels.yml: build on every push to main, on a PR
+# that touches the build, after a release, and on manual dispatch. The `release` job publishes the
+# built sdist + wheels to the GitHub release and PyPI on a successful github-release
+# (workflow_run); a plain push or pull request builds + verifies only (the release job skips).
 on:
   push:
     branches: [main]
-  # Dormant, as in core: flip on to build the native wheels on a PR touching the build.
-  # pull_request:
-  #   branches: [main]
-  #   paths:
-  #     - "ci/parquet-plugin/**"
-  #     - "setup.py"
-  #     - ".github/workflows/bundle-pypi-wheels.yml"
+  # The native wheel cannot be re-created on demand -- it is a compiled OGR-Parquet driver linked
+  # against the libgdal inside a published core wheel, built by three separate per-platform scripts
+  # -- so verify.py has to run while a change can still be revised cheaply. It used to run for the
+  # first time on the push to main: run 44936415149 (PR #43's merge commit) failed four build legs
+  # and `verify windows AMD64` there, and PR #48 existed only to repair it. The `paths` filter keeps
+  # the ~95 job-minutes off a PR that cannot change the artifact. Nothing in this workflow is
+  # cached, so a PR pays what the measured push run paid -- there is no warm entry for it to miss.
+  pull_request:
+    branches: [main]
+    paths:
+      - "ci/parquet-plugin/**"
+      - "setup.py"
+      - ".github/workflows/bundle-pypi-wheels.yml"
   workflow_run:
     workflows: ["github-release"]
     types: [completed]
@@ -90,8 +96,8 @@ jobs:
     timeout-minutes: 5
     permissions:
       actions: read
-    # core's workflow_run guard: only build for a dispatch/push, or a SUCCESSFUL same-repo
-    # github-release. Downstream jobs `needs: resolve-ref`, so they skip when this skips.
+    # core's workflow_run guard: only build for a dispatch/push/pull_request, or a SUCCESSFUL
+    # same-repo github-release. Downstream jobs `needs: resolve-ref`, so they skip when this skips.
     if: >-
       github.event_name != 'workflow_run' ||
       (github.event.workflow_run.conclusion == 'success' &&
@@ -119,6 +125,12 @@ jobs:
           case "${{ github.event_name }}" in
             workflow_run) REF="$(cat .release-ref/release-ref.txt)" ;;
             workflow_dispatch) REF="${{ inputs.branch || github.ref_name }}" ;;
+            # On a PR, github.ref_name is the UNQUALIFIED "<pr_number>/merge". actions/checkout
+            # treats an unqualified ref as branch-or-tag (getCheckoutInfo in src/ref-helper.ts):
+            # neither refs/heads/<n>/merge nor a tag of that name exists, so it fails with
+            # "A branch or tag with the name '<n>/merge' could not be found" -- every build job
+            # dies at step one. Qualify it to the merge ref the PR event actually points at.
+            pull_request) REF="refs/pull/${{ github.event.pull_request.number }}/merge" ;;
             *) REF="${{ github.ref_name }}" ;;
           esac
           echo "resolved ref: ${REF}"
@@ -404,8 +416,9 @@ jobs:
     timeout-minutes: 15
     # Publish only after a SUCCESSFUL same-repo github-release (the canonical path). A manual
     # dispatch with dry_run_release runs the gather + composition gate and then STOPS before any
-    # upload/publish -- how the release plumbing is exercised without cutting a release. A plain
-    # push to main never satisfies this `if`, so it builds + verifies but publishes nothing.
+    # upload/publish -- how the release plumbing is exercised without cutting a release. Neither a
+    # plain push to main nor a pull request satisfies this `if`: both build + verify and publish
+    # nothing, so opening a PR against the build can never upload a wheel.
     if: >-
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
