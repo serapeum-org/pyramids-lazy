@@ -50,6 +50,42 @@ _ON_KEY = True
 
 _EXPRESSION = re.compile(r"\$\{\{(.+?)\}\}")
 
+# A `case` arm header: one or more glob/word patterns, optionally quoted, joined by `|`, then
+# `)`. The charset deliberately excludes `=`, `"` and `$`, so a body line such as
+# `REF="$(cat .release-ref/release-ref.txt)"` cannot be mistaken for an arm.
+_ARM_HEADER = re.compile(
+    r"^\s*((?:'?[A-Za-z0-9_*?.\-]+'?)(?:\s*\|\s*'?[A-Za-z0-9_*?.\-]+'?)*)\)",
+    re.MULTILINE,
+)
+
+# Every event the resolve step must handle: the context that drives it and the ref it must
+# produce. `test_every_modelled_event_resolves_its_ref` iterates this, and the arm-coverage gate
+# derives its expected arm set from these keys -- so an arm cannot be added to the step without
+# either being driven here or failing the gate. `schedule` is not a trigger; it stands in for
+# whatever future event reaches the catch-all `*` arm.
+_CATCH_ALL_EVENTS = {"schedule"}
+
+_EVENT_CASES: dict[str, tuple[dict[str, str], str]] = {
+    "workflow_run": ({"github.event_name": "workflow_run"}, "release/auto-1-1"),
+    "workflow_dispatch": (
+        {
+            "github.event_name": "workflow_dispatch",
+            "inputs.branch": "ci/54-bundle-wheels-pr-arm",
+            "github.ref_name": "main",
+        },
+        "ci/54-bundle-wheels-pr-arm",
+    ),
+    "pull_request": (
+        {
+            "github.event_name": "pull_request",
+            "github.ref_name": "54/merge",
+            "github.event.pull_request.number": "54",
+        },
+        "refs/pull/54/merge",
+    ),
+    "schedule": ({"github.event_name": "schedule", "github.ref_name": "main"}, "main"),
+}
+
 
 def _workflow() -> dict:
     """Return the parsed bundle workflow.
@@ -207,21 +243,55 @@ def _checkout_can_resolve(ref: str) -> bool:
     return ref.upper().startswith("REFS/")
 
 
-def _case_arms() -> set[str]:
-    """Return the event patterns the resolve step's `case` block branches on.
-
-    Serves as the coverage gate for a shell block no coverage tool can see: an arm added without
-    a test is caught by :class:`TestEveryBranchOfTheResolveStepIsExercised`.
+def _case_span() -> str:
+    """Return the text between the resolve step's `case ... in` and its `esac`.
 
     Returns:
-        set[str]: One entry per arm, `*` included.
+        str: The arm block only, so a `)` elsewhere in the step cannot be read as an arm.
+
+    Raises:
+        AssertionError: If the step has no `case ... in` / `esac` pair.
     """
-    arms = set()
-    for line in _resolve_script().splitlines():
-        match = re.match(r"^([A-Za-z_*][A-Za-z0-9_*]*)\)\s", line.strip())
-        if match:
-            arms.add(match.group(1))
-    return arms
+    span = re.search(r"case\b.*?\bin\n(.*?)\n\s*esac\b", _resolve_script(), re.DOTALL)
+    assert span is not None, "the resolve step has no `case ... in` / `esac` block"
+    return span.group(1)
+
+
+def _case_arms() -> set[str]:
+    """Return every event pattern the resolve step's `case` block branches on.
+
+    Parses the `case ... esac` span rather than scanning the whole step, and accepts the arm
+    styles `case` allows but this step does not currently use -- a pattern on its own line with
+    its body beneath, an alternation (`a|b)`), and a quoted pattern -- because the earlier
+    one-line-only regex returned the same four names for all of those and let a new arm pass
+    unnoticed. The arm count is cross-checked against the `;;` terminators so a parse that reads
+    too few arms fails instead of agreeing with the expected set.
+
+    Returns:
+        set[str]: One entry per pattern, alternations split and quotes stripped, `*` included.
+
+    Raises:
+        AssertionError: If the number of arm headers found does not match the `;;` count.
+
+    Examples:
+        - The step's four arms, read off the live workflow:
+            ```python
+            >>> sorted(_case_arms())
+            ['*', 'pull_request', 'workflow_dispatch', 'workflow_run']
+
+            ```
+    """
+    span = _case_span()
+    headers = _ARM_HEADER.findall(span)
+    assert len(headers) == span.count(";;"), (
+        f"parsed {len(headers)} case arms but found {span.count(';;')} `;;` terminators; "
+        "the arm regex no longer matches the step's style"
+    )
+    return {
+        pattern.strip().strip("'\"")
+        for header in headers
+        for pattern in header.split("|")
+    }
 
 
 def _paths_filter_selects(path: str) -> bool:
@@ -538,13 +608,42 @@ class TestEveryBranchOfTheResolveStepIsExercised:
     """Branch coverage for shell embedded in YAML, which no coverage tool reports on."""
 
     def test_the_tests_drive_every_case_arm(self):
-        """Fails when an arm is added to the `case` block without a test driving it."""
-        assert _case_arms() == {
-            "workflow_run",
-            "workflow_dispatch",
-            "pull_request",
-            "*",
+        """Every arm in the step is one `_EVENT_CASES` drives, and vice versa.
+
+        Test scenario:
+            The expected set is derived from `_EVENT_CASES`, the same table
+            `test_every_modelled_event_resolves_its_ref` iterates -- not a literal written out
+            beside it. Adding an arm to the step therefore cannot be satisfied by editing a
+            number in this test: the event has to be added to `_EVENT_CASES`, which immediately
+            makes the driving test run it and assert its ref.
+        """
+        driven = {
+            "*" if event in _CATCH_ALL_EVENTS else event for event in _EVENT_CASES
         }
+
+        assert _case_arms() == driven
+
+    @pytest.mark.parametrize("event", sorted(_EVENT_CASES))
+    def test_every_modelled_event_resolves_its_ref(self, event, tmp_path):
+        """Drive each event in `_EVENT_CASES` through the real step and check the ref it writes.
+
+        Args:
+            event: The `github.event_name` key from `_EVENT_CASES`.
+            tmp_path: Working directory for the step, from pytest.
+
+        Test scenario:
+            This is what makes the gate above mean something: every arm the step declares is
+            executed here, so an untested arm is impossible rather than merely discouraged. The
+            `workflow_run` case gets the `release-ref` artifact the real job downloads.
+        """
+        context, expected = _EVENT_CASES[event]
+        if event == "workflow_run":
+            (tmp_path / ".release-ref").mkdir()
+            (tmp_path / ".release-ref" / "release-ref.txt").write_text(
+                f"{expected}\n", encoding="utf-8"
+            )
+
+        assert _resolve_ref(context, tmp_path) == expected
 
     @pytest.mark.parametrize("number", ["1", "54", "1234"])
     def test_the_pull_request_arm_qualifies_any_pr_number(self, number, tmp_path):
