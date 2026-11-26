@@ -50,6 +50,10 @@ _ON_KEY = True
 
 _EXPRESSION = re.compile(r"\$\{\{(.+?)\}\}")
 
+# The only expression grammar `_substitute` models: a dotted context path, or several joined by
+# `||`. Anything richer (a `&&` conditional, a comparison, `format(...)`) must fail loudly.
+_MODELLED_EXPRESSION = re.compile(r"[\w.]+(?:\s*\|\|\s*[\w.]+)*")
+
 # A `case` arm header: one or more glob/word patterns, optionally quoted, joined by `|`, then
 # `)`. The charset deliberately excludes `=`, `"` and `$`, so a body line such as
 # `REF="$(cat .release-ref/release-ref.txt)"` cannot be mistaken for an arm.
@@ -126,7 +130,16 @@ def _substitute(script: str, context: dict[str, str]) -> str:
 
     Models the two expression forms the step uses: a bare context lookup, and `a || b` falling
     through to the first non-empty value. A key absent from `context` renders empty, which is what
-    GitHub does for a context property the current event does not carry.
+    GitHub does for a context property the current event does not carry. Falsiness here is
+    emptiness only -- GitHub's documented falsy list is `false, 0, -0, "", '', null`, so for the
+    string-valued contexts this step reads, `""` is the only falsy value either side treats as
+    such.
+
+    Any other expression form -- a `&&`/`||` conditional, a comparison, a function call such as
+    `format(...)` -- RAISES rather than being approximated. The previous version split on `||` and
+    looked each operand up as a key, so a conditional silently resolved to its fallback and a
+    `format(...)` call to the empty string, which would have made this model a fiction the first
+    time someone rewrote an arm.
 
     Args:
         script: Shell carrying `${{ }}` expressions.
@@ -134,6 +147,9 @@ def _substitute(script: str, context: dict[str, str]) -> str:
 
     Returns:
         str: The script with every expression replaced.
+
+    Raises:
+        AssertionError: If an expression is not a bare lookup or a `||` chain of bare lookups.
 
     Examples:
         - A single context lookup is replaced in place:
@@ -163,7 +179,13 @@ def _substitute(script: str, context: dict[str, str]) -> str:
     """
 
     def _value(match: re.Match[str]) -> str:
-        for operand in (part.strip() for part in match.group(1).split("||")):
+        body = match.group(1).strip()
+        assert _MODELLED_EXPRESSION.fullmatch(body), (
+            f"unmodelled GitHub expression {body!r}: this helper models only a bare context "
+            "lookup and a `||` chain of them. Extend it deliberately rather than letting it "
+            "guess."
+        )
+        for operand in (part.strip() for part in body.split("||")):
             resolved = context.get(operand, "")
             if resolved:
                 return resolved
@@ -298,15 +320,25 @@ def _paths_filter_selects(path: str) -> bool:
     """Whether a PR changing `path` alone would start the workflow.
 
     Models the `on.pull_request.paths` filter: a `<dir>/**` pattern matches anything beneath that
-    directory, any other pattern is a literal path. The real filter supports the full glob
-    grammar; only these two forms are used here, so this stays a faithful model of what is
-    written rather than a reimplementation of GitHub's matcher.
+    directory, any other pattern is a literal path. Those are the only two forms the live filter
+    uses, so this stays a model of what is written rather than a reimplementation of GitHub's
+    matcher -- and it now RAISES on any pattern outside those two forms instead of falling through
+    to literal equality.
+
+    That guard is the point. A `!pattern` negation removes paths an earlier pattern matched, and
+    the old fall-through treated it as a literal that matched nothing -- so a filter of
+    `["ci/parquet-plugin/**", "!ci/parquet-plugin/verify.py"]` was modelled as still building
+    `verify.py` while GitHub would not have run the workflow at all. Negation is the one direction
+    in which a bad filter stayed green here; every other divergence already failed loudly.
 
     Args:
         path: A repository-relative path, as a changed-file entry.
 
     Returns:
         bool: True when at least one pattern selects the path.
+
+    Raises:
+        AssertionError: If the filter contains a pattern this model cannot represent.
 
     Examples:
         - A build script beneath a `<dir>/**` pattern is selected:
@@ -328,13 +360,27 @@ def _paths_filter_selects(path: str) -> bool:
 
             ```
     """
+    selected = False
     for pattern in _triggers()["pull_request"]["paths"]:
+        assert not pattern.startswith(("!", "+")), (
+            f"unmodelled paths pattern {pattern!r}: negation changes what earlier patterns "
+            "selected, which this model does not represent. Extend it before using it to "
+            "justify the filter."
+        )
         if pattern.endswith("/**"):
+            assert "*" not in pattern[: -len("/**")], (
+                f"unmodelled paths pattern {pattern!r}: only a trailing `/**` is modelled"
+            )
             if path.startswith(pattern[: -len("**")]):
-                return True
-        elif path == pattern:
-            return True
-    return False
+                selected = True
+        else:
+            assert not set("*?[") & set(pattern), (
+                f"unmodelled paths pattern {pattern!r}: a glob that is not a trailing `/**` is "
+                "not modelled"
+            )
+            if path == pattern:
+                selected = True
+    return selected
 
 
 class TestThePullRequestArmIsLive:
@@ -566,6 +612,74 @@ class TestThePathsFilterSelectsOnlyBuildTouchingPullRequests:
             cibuildwheel and the packaging, so it belongs with the positive cases above.
         """
         assert not _paths_filter_selects(path), f"{path} cannot change the wheel"
+
+
+class TestTheModelsRefuseWhatTheyCannotRepresent:
+    """A model that quietly approximates is worse than one that stops."""
+
+    def test_an_expression_form_the_step_does_not_use_is_rejected(self):
+        """A conditional silently resolved to its fallback before this guard existed.
+
+        Test scenario:
+            `${{ A == 'x' && github.ref || github.run_id }}` previously returned the `run_id`
+            fallback regardless of the condition, and `format(...)` returned the empty string.
+        """
+        with pytest.raises(AssertionError, match="unmodelled GitHub expression"):
+            _substitute(
+                "${{ github.event_name == 'pull_request' && github.ref || github.run_id }}",
+                {"github.ref": "refs/pull/54/merge", "github.run_id": "999"},
+            )
+
+    def test_a_function_call_expression_is_rejected(self):
+        """`format(...)` is a plausible rewrite of the new arm, and was modelled as empty."""
+        with pytest.raises(AssertionError, match="unmodelled GitHub expression"):
+            _substitute(
+                "${{ format('refs/pull/{0}/merge', github.event.pull_request.number) }}",
+                {"github.event.pull_request.number": "54"},
+            )
+
+    def test_the_live_step_only_uses_modelled_expressions(self):
+        """The guard above is only useful if the step itself stays inside the modelled grammar."""
+        for body in _EXPRESSION.findall(_resolve_script()):
+            assert _MODELLED_EXPRESSION.fullmatch(body.strip()), body
+
+    def test_a_negated_paths_pattern_is_rejected(self, monkeypatch):
+        """Negation is the one filter change that stayed green under the old model.
+
+        Args:
+            monkeypatch: Replaces the live filter with one carrying a `!` pattern.
+
+        Test scenario:
+            `["ci/parquet-plugin/**", "!ci/parquet-plugin/verify.py"]` would stop `verify.py`
+            changes from building, yet the old model still reported it as selected.
+        """
+        monkeypatch.setattr(
+            sys.modules[__name__],
+            "_triggers",
+            lambda: {
+                "pull_request": {
+                    "paths": ["ci/parquet-plugin/**", "!ci/parquet-plugin/verify.py"]
+                }
+            },
+        )
+
+        with pytest.raises(AssertionError, match="unmodelled paths pattern"):
+            _paths_filter_selects("ci/parquet-plugin/verify.py")
+
+    def test_a_non_trailing_glob_is_rejected(self, monkeypatch):
+        """`ci/*/build.sh` is a legal filter and not something this model represents.
+
+        Args:
+            monkeypatch: Replaces the live filter with one carrying an interior glob.
+        """
+        monkeypatch.setattr(
+            sys.modules[__name__],
+            "_triggers",
+            lambda: {"pull_request": {"paths": ["ci/*/build.sh"]}},
+        )
+
+        with pytest.raises(AssertionError, match="unmodelled paths pattern"):
+            _paths_filter_selects("ci/parquet-plugin/build.sh")
 
 
 @requires_bash
