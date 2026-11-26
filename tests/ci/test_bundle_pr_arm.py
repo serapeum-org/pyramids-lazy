@@ -24,9 +24,11 @@ substituted from a simulated event context, which is the one part this test has 
 
 from __future__ import annotations
 
+import doctest
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -96,6 +98,32 @@ def _substitute(script: str, context: dict[str, str]) -> str:
 
     Returns:
         str: The script with every expression replaced.
+
+    Examples:
+        - A single context lookup is replaced in place:
+            ```python
+            >>> _substitute('REF="${{ github.ref_name }}"', {"github.ref_name": "main"})
+            'REF="main"'
+
+            ```
+        - `a || b` falls through to the first non-empty operand:
+            ```python
+            >>> _substitute(
+            ...     "${{ inputs.branch || github.ref_name }}",
+            ...     {"inputs.branch": "", "github.ref_name": "main"},
+            ... )
+            'main'
+
+            ```
+        - A property the event does not carry renders empty, as GitHub does:
+            ```python
+            >>> _substitute("[${{ github.event.pull_request.number }}]", {})
+            '[]'
+
+            ```
+
+    See Also:
+        _resolve_ref: Runs the substituted script through a real bash.
     """
 
     def _value(match: re.Match[str]) -> str:
@@ -154,6 +182,27 @@ def _checkout_can_resolve(ref: str) -> bool:
 
     Returns:
         bool: True when the ref is fully qualified.
+
+    Examples:
+        - The qualified merge ref this workflow now builds from:
+            ```python
+            >>> _checkout_can_resolve("refs/pull/54/merge")
+            True
+
+            ```
+        - The unqualified form `github.ref_name` yields on a pull request:
+            ```python
+            >>> _checkout_can_resolve("54/merge")
+            False
+
+            ```
+        - A branch name is unqualified too; checkout accepts it only because
+          `origin/main` exists, which this predicate deliberately does not model:
+            ```python
+            >>> _checkout_can_resolve("main")
+            False
+
+            ```
     """
     return ref.upper().startswith("REFS/")
 
@@ -188,6 +237,26 @@ def _paths_filter_selects(path: str) -> bool:
 
     Returns:
         bool: True when at least one pattern selects the path.
+
+    Examples:
+        - A build script beneath a `<dir>/**` pattern is selected:
+            ```python
+            >>> _paths_filter_selects("ci/parquet-plugin/build.sh")
+            True
+
+            ```
+        - A literal pattern selects that exact path:
+            ```python
+            >>> _paths_filter_selects("setup.py")
+            True
+
+            ```
+        - Library code cannot change the wheel, so it pays nothing:
+            ```python
+            >>> _paths_filter_selects("src/pyramids_lazy/_zarr.py")
+            False
+
+            ```
     """
     for pattern in _triggers()["pull_request"]["paths"]:
         if pattern.endswith("/**"):
@@ -242,6 +311,9 @@ class TestTheResolvedRefIsCheckoutable:
     def test_a_pull_request_resolves_to_a_fully_qualified_merge_ref(self, tmp_path):
         """The regression this guards: `github.ref_name` alone is `54/merge`, which checkout rejects.
 
+        Args:
+            tmp_path: Working directory for the step, from pytest.
+
         Test scenario:
             A `pull_request` event on PR 54, where `github.ref_name` is `54/merge` and
             `github.event.pull_request.number` is `54`.
@@ -262,7 +334,11 @@ class TestTheResolvedRefIsCheckoutable:
         )
 
     def test_a_push_still_resolves_to_the_branch_name(self, tmp_path):
-        """Unqualified is correct here: `origin/main` exists, so checkout resolves it."""
+        """Unqualified is correct here: `origin/main` exists, so checkout resolves it.
+
+        Args:
+            tmp_path: Working directory for the step, from pytest.
+        """
         resolved = _resolve_ref(
             {"github.event_name": "push", "github.ref_name": "main"},
             tmp_path,
@@ -271,7 +347,11 @@ class TestTheResolvedRefIsCheckoutable:
         assert resolved == "main"
 
     def test_a_dispatch_prefers_the_requested_branch(self, tmp_path):
-        """`inputs.branch || github.ref_name` -- the manual pre-merge build path."""
+        """`inputs.branch || github.ref_name` -- the manual pre-merge build path.
+
+        Args:
+            tmp_path: Working directory for the step, from pytest.
+        """
         resolved = _resolve_ref(
             {
                 "github.event_name": "workflow_dispatch",
@@ -284,7 +364,11 @@ class TestTheResolvedRefIsCheckoutable:
         assert resolved == "ci/54-bundle-wheels-pr-arm"
 
     def test_a_dispatch_without_a_branch_falls_back_to_the_selected_ref(self, tmp_path):
-        """Blank input means "the ref chosen in the UI"."""
+        """Blank input means "the ref chosen in the UI".
+
+        Args:
+            tmp_path: Working directory for the step, from pytest.
+        """
         resolved = _resolve_ref(
             {"github.event_name": "workflow_dispatch", "github.ref_name": "main"},
             tmp_path,
@@ -293,7 +377,11 @@ class TestTheResolvedRefIsCheckoutable:
         assert resolved == "main"
 
     def test_a_release_still_resolves_to_the_uploaded_release_ref(self, tmp_path):
-        """The bump lives on the release branch, not on `head_branch`; that artifact is the only source."""
+        """The bump lives on the release branch, not `head_branch`; that artifact is its only source.
+
+        Args:
+            tmp_path: Working directory for the step, from pytest.
+        """
         (tmp_path / ".release-ref").mkdir()
         (tmp_path / ".release-ref" / "release-ref.txt").write_text(
             "release/auto-1-1\n", encoding="utf-8"
@@ -413,6 +501,9 @@ class TestTheResolveStepFailsLoudlyRatherThanResolvingNothing:
     def test_a_release_with_no_uploaded_ref_fails_the_step(self, tmp_path):
         """`set -euo pipefail` must turn a missing artifact into a red job, not an empty ref.
 
+        Args:
+            tmp_path: Working directory for the step, holding no `.release-ref` directory.
+
         Test scenario:
             A `workflow_run` event where `.release-ref/release-ref.txt` was never downloaded. An
             empty `REF` would make every build job check out the default branch and publish wheels
@@ -423,6 +514,9 @@ class TestTheResolveStepFailsLoudlyRatherThanResolvingNothing:
 
     def test_an_unrecognised_event_falls_back_to_the_triggering_ref(self, tmp_path):
         """The `*)` arm: a future trigger resolves to its own ref rather than to nothing.
+
+        Args:
+            tmp_path: Working directory for the step, from pytest.
 
         Test scenario:
             A hypothetical `schedule` event -- not currently a trigger, per
@@ -467,6 +561,29 @@ class TestEveryBranchOfTheResolveStepIsExercised:
 
         assert resolved == f"refs/pull/{number}/merge"
         assert _checkout_can_resolve(resolved)
+
+
+class TestTheHelperExamplesStayExecutable:
+    """`lint.yml`'s `static` job runs doctests over `src` only, never over `tests`.
+
+    The `>>>` examples on the helpers above would therefore rot unnoticed -- the exact failure the
+    repo added that job to prevent. Running them here puts them under the suite CI does run.
+    """
+
+    def test_every_docstring_example_in_this_module_passes(self):
+        """Execute the module's own doctests and fail on the first rotted example.
+
+        Test scenario:
+            Collects every `>>>` example in this module (the examples on `_substitute`,
+            `_checkout_can_resolve` and `_paths_filter_selects`) and requires both that some were
+            found -- so the guard cannot pass by collecting nothing -- and that all of them pass.
+        """
+        failures, attempted = doctest.testmod(
+            sys.modules[__name__], verbose=False, report=False
+        )
+
+        assert attempted > 0, "no doctest examples were collected from this module"
+        assert failures == 0, f"{failures} of {attempted} doctest examples failed"
 
 
 class TestTheBuildJobsWireTheResolvedRef:
