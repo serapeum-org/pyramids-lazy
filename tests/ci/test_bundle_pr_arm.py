@@ -158,6 +158,46 @@ def _checkout_can_resolve(ref: str) -> bool:
     return ref.upper().startswith("REFS/")
 
 
+def _case_arms() -> set[str]:
+    """Return the event patterns the resolve step's `case` block branches on.
+
+    Serves as the coverage gate for a shell block no coverage tool can see: an arm added without
+    a test is caught by :class:`TestEveryBranchOfTheResolveStepIsExercised`.
+
+    Returns:
+        set[str]: One entry per arm, `*` included.
+    """
+    arms = set()
+    for line in _resolve_script().splitlines():
+        match = re.match(r"^([A-Za-z_*][A-Za-z0-9_*]*)\)\s", line.strip())
+        if match:
+            arms.add(match.group(1))
+    return arms
+
+
+def _paths_filter_selects(path: str) -> bool:
+    """Whether a PR changing `path` alone would start the workflow.
+
+    Models the `on.pull_request.paths` filter: a `<dir>/**` pattern matches anything beneath that
+    directory, any other pattern is a literal path. The real filter supports the full glob
+    grammar; only these two forms are used here, so this stays a faithful model of what is
+    written rather than a reimplementation of GitHub's matcher.
+
+    Args:
+        path: A repository-relative path, as a changed-file entry.
+
+    Returns:
+        bool: True when at least one pattern selects the path.
+    """
+    for pattern in _triggers()["pull_request"]["paths"]:
+        if pattern.endswith("/**"):
+            if path.startswith(pattern[: -len("**")]):
+                return True
+        elif path == pattern:
+            return True
+    return False
+
+
 class TestThePullRequestArmIsLive:
     """The trigger itself -- the thing issue #54 reported dormant."""
 
@@ -180,6 +220,19 @@ class TestThePullRequestArmIsLive:
     def test_pushes_to_main_still_build(self):
         """The arm is additive: a merge must keep building and verifying, as before."""
         assert _triggers()["push"]["branches"] == ["main"]
+
+    def test_no_other_event_starts_the_workflow(self):
+        """95 job-minutes a run: a stray `schedule` or `pull_request_target` would be costly.
+
+        `pull_request_target` would also run a fork PR's build scripts with this repo's secrets,
+        so its absence is a security property, not only a cost one.
+        """
+        assert set(_triggers()) == {
+            "push",
+            "pull_request",
+            "workflow_run",
+            "workflow_dispatch",
+        }
 
 
 @requires_bash
@@ -295,3 +348,146 @@ class TestSupersededPullRequestRunsAreCancelled:
             concurrency["cancel-in-progress"]
             == "${{ github.event_name == 'pull_request' }}"
         )
+
+
+class TestThePathsFilterSelectsOnlyBuildTouchingPullRequests:
+    """The filter is the whole cost control: it decides which PRs pay for a wheel build."""
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "ci/parquet-plugin/build.sh",
+            "ci/parquet-plugin/build-macos.sh",
+            "ci/parquet-plugin/build-windows.ps1",
+            "ci/parquet-plugin/lib.sh",
+            "ci/parquet-plugin/soname.py",
+            "ci/parquet-plugin/fetch_cpl_config.py",
+            "ci/parquet-plugin/verify.py",
+            "setup.py",
+            ".github/workflows/bundle-pypi-wheels.yml",
+        ],
+    )
+    def test_a_file_that_decides_the_wheel_starts_the_build(self, path):
+        """Every input the published artifact is built from must be covered.
+
+        Args:
+            path: A changed file that can alter the wheel or how it is verified.
+
+        Test scenario:
+            The six build scripts named in issue #54, plus `verify.py`, `setup.py` (which forces
+            the `py3-none-<plat>` tag) and the workflow itself.
+        """
+        assert _paths_filter_selects(path), (
+            f"{path} changes the wheel but would not build it"
+        )
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "src/pyramids_lazy/_zarr.py",
+            "tests/ci/test_bundle_pr_arm.py",
+            "docs/index.md",
+            "README.md",
+            "pyproject.toml",
+            ".github/workflows/tests.yml",
+        ],
+    )
+    def test_an_unrelated_file_does_not(self, path):
+        """A PR that cannot change the artifact must not pay 95 job-minutes.
+
+        Args:
+            path: A changed file outside the native-build inputs.
+
+        Test scenario:
+            Library code, this test, docs, and a sibling workflow. `pyproject.toml` is in core's
+            filter but deliberately not here -- this wheel's contents come from `setup.py` and the
+            `ci/` scripts, and `pyproject.toml` churns on every release bump.
+        """
+        assert not _paths_filter_selects(path), f"{path} cannot change the wheel"
+
+
+@requires_bash
+class TestTheResolveStepFailsLoudlyRatherThanResolvingNothing:
+    """An empty ref is the dangerous outcome: checkout would silently take the default branch."""
+
+    def test_a_release_with_no_uploaded_ref_fails_the_step(self, tmp_path):
+        """`set -euo pipefail` must turn a missing artifact into a red job, not an empty ref.
+
+        Test scenario:
+            A `workflow_run` event where `.release-ref/release-ref.txt` was never downloaded. An
+            empty `REF` would make every build job check out the default branch and publish wheels
+            built from the wrong tree.
+        """
+        with pytest.raises(AssertionError, match="resolve step failed"):
+            _resolve_ref({"github.event_name": "workflow_run"}, tmp_path)
+
+    def test_an_unrecognised_event_falls_back_to_the_triggering_ref(self, tmp_path):
+        """The `*)` arm: a future trigger resolves to its own ref rather than to nothing.
+
+        Test scenario:
+            A hypothetical `schedule` event -- not currently a trigger, per
+            `test_no_other_event_starts_the_workflow`.
+        """
+        resolved = _resolve_ref(
+            {"github.event_name": "schedule", "github.ref_name": "main"}, tmp_path
+        )
+
+        assert resolved == "main"
+
+
+@requires_bash
+class TestEveryBranchOfTheResolveStepIsExercised:
+    """Branch coverage for shell embedded in YAML, which no coverage tool reports on."""
+
+    def test_the_tests_drive_every_case_arm(self):
+        """Fails when an arm is added to the `case` block without a test driving it."""
+        assert _case_arms() == {
+            "workflow_run",
+            "workflow_dispatch",
+            "pull_request",
+            "*",
+        }
+
+    @pytest.mark.parametrize("number", ["1", "54", "1234"])
+    def test_the_pull_request_arm_qualifies_any_pr_number(self, number, tmp_path):
+        """The number is interpolated, so a multi-digit PR must qualify the same way.
+
+        Args:
+            number: The pull request number for the simulated event.
+            tmp_path: Working directory for the step.
+        """
+        resolved = _resolve_ref(
+            {
+                "github.event_name": "pull_request",
+                "github.ref_name": f"{number}/merge",
+                "github.event.pull_request.number": number,
+            },
+            tmp_path,
+        )
+
+        assert resolved == f"refs/pull/{number}/merge"
+        assert _checkout_can_resolve(resolved)
+
+
+class TestTheBuildJobsWireTheResolvedRef:
+    """A job checking out `needs.resolve-ref.outputs.ref` must declare the dependency.
+
+    An undeclared `needs` renders the expression empty rather than failing, and checkout then
+    falls back to `github.ref` -- right on a push or a PR, wrong on the release path, where the
+    version bump lives on the release branch rather than on `head_branch`.
+    """
+
+    @pytest.mark.parametrize(
+        "job",
+        ["build-linux-wheels", "build-macos-wheels", "build-windows-wheels", "sdist"],
+    )
+    def test_each_build_job_depends_on_resolve_ref(self, job):
+        """Pin the wiring for every job that builds a published artifact.
+
+        Args:
+            job: A job that builds an artifact from the resolved ref.
+        """
+        needs = _workflow()["jobs"][job]["needs"]
+        declared = [needs] if isinstance(needs, str) else needs
+
+        assert "resolve-ref" in declared
