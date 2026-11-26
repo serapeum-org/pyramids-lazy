@@ -281,6 +281,7 @@ class TestThePullRequestArmIsLive:
     def test_it_is_filtered_to_the_paths_that_decide_the_wheel(self):
         """The filter is what keeps ~95 job-minutes off a PR that cannot change the artifact."""
         assert _triggers()["pull_request"]["paths"] == [
+            "pyproject.toml",
             "ci/parquet-plugin/**",
             "setup.py",
             ".github/workflows/bundle-pypi-wheels.yml",
@@ -452,6 +453,7 @@ class TestThePathsFilterSelectsOnlyBuildTouchingPullRequests:
             "ci/parquet-plugin/fetch_cpl_config.py",
             "ci/parquet-plugin/verify.py",
             "setup.py",
+            "pyproject.toml",
             ".github/workflows/bundle-pypi-wheels.yml",
         ],
     )
@@ -463,7 +465,9 @@ class TestThePathsFilterSelectsOnlyBuildTouchingPullRequests:
 
         Test scenario:
             The six build scripts named in issue #54, plus `verify.py`, `setup.py` (which forces
-            the `py3-none-<plat>` tag) and the workflow itself.
+            the `py3-none-<plat>` tag), `pyproject.toml` (which holds `[tool.cibuildwheel]`'s
+            `before-all` / `repair-wheel-command` entries and the `package-data` line that puts
+            the driver in the wheel) and the workflow itself.
         """
         assert _paths_filter_selects(path), (
             f"{path} changes the wheel but would not build it"
@@ -476,7 +480,6 @@ class TestThePathsFilterSelectsOnlyBuildTouchingPullRequests:
             "tests/ci/test_bundle_pr_arm.py",
             "docs/index.md",
             "README.md",
-            "pyproject.toml",
             ".github/workflows/tests.yml",
         ],
     )
@@ -487,9 +490,10 @@ class TestThePathsFilterSelectsOnlyBuildTouchingPullRequests:
             path: A changed file outside the native-build inputs.
 
         Test scenario:
-            Library code, this test, docs, and a sibling workflow. `pyproject.toml` is in core's
-            filter but deliberately not here -- this wheel's contents come from `setup.py` and the
-            `ci/` scripts, and `pyproject.toml` churns on every release bump.
+            Library code, this test, docs, and a sibling workflow. None of these reaches the
+            native build: `src/` is pure Python the wheel carries either way, and `tests.yml` is a
+            different pipeline. `pyproject.toml` is deliberately NOT in this list -- it configures
+            cibuildwheel and the packaging, so it belongs with the positive cases above.
         """
         assert not _paths_filter_selects(path), f"{path} cannot change the wheel"
 

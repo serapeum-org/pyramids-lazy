@@ -37,6 +37,14 @@ on:
   pull_request:
     branches: [main]
     paths:
+      # pyproject.toml is in here for the same reason it is in core's filter: it holds the whole
+      # [tool.cibuildwheel] block -- the per-platform `before-all` entries that invoke these very
+      # build scripts, the `repair-wheel-command`s, the manylinux images, `build`/`skip`/`archs` --
+      # and [tool.setuptools.package-data], the one line that puts the compiled driver into the
+      # wheel at all. Editing any of those changes the published artifact without touching `ci/`.
+      # The cost is that a `cz bump` release PR, which edits [project].version, also builds; that
+      # is one extra run per release, and it builds exactly what is about to be published.
+      - "pyproject.toml"
       - "ci/parquet-plugin/**"
       - "setup.py"
       - ".github/workflows/bundle-pypi-wheels.yml"
