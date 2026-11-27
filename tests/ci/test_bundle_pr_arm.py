@@ -18,8 +18,17 @@ Two things therefore have to hold, and neither is visible from reading the trigg
   the trigger on without a `pull_request` arm in the `case` block fails every build job at step one.
 
 The ref logic is driven through a real `bash` with the workflow's own `run:` script, rather than
-reimplemented here: a reimplementation only proves it agrees with itself. The `${{ }}` expressions are
-substituted from a simulated event context, which is the one part this test has to model.
+reimplemented here: a reimplementation only proves it agrees with itself. Four things are
+nevertheless modelled, and each refuses input it cannot represent rather than guessing:
+`_substitute` (GitHub expressions), `_paths_filter_selects` (the `paths` glob),
+`_case_arms` (the `case` arm styles) and `_checkout_can_resolve` (checkout's ref resolution).
+
+The GitHub-side facts the simulated contexts encode come from the published docs, not from
+inspection of a live payload: `github.ref_name` is `<pr_number>/merge` for a pull request that was
+not merged, and `github.ref` is `refs/pull/<pr_number>/merge`
+(docs.github.com/en/actions/reference/workflows-and-actions/contexts); the falsy values in an
+expression are `false, 0, -0, "", '', null`
+(docs.github.com/en/actions/reference/workflows-and-actions/expressions).
 """
 
 from __future__ import annotations
@@ -260,8 +269,14 @@ def _resolve_ref(context: dict[str, str], cwd: Path) -> str:
 def _checkout_can_resolve(ref: str) -> bool:
     """Whether `actions/checkout` can resolve `ref` without a same-named branch or tag.
 
-    Mirrors `getCheckoutInfo` in checkout's `src/ref-helper.ts`: a ref starting with `refs/` is
+    Follows `getCheckoutInfo` in checkout's `src/ref-helper.ts`: a ref starting with `refs/` is
     taken as fully qualified, anything else has to exist as `origin/<ref>` or as a tag.
+
+    The comparison is case-sensitive, which `getCheckoutInfo` itself is not -- it upper-cases the
+    ref before testing the prefix. That divergence is deliberate: git refs *are* case-sensitive,
+    so `Refs/pull/54/merge` would take checkout's qualified-ref branch and then fail to fetch. The
+    question this predicate answers is whether the job works, not which branch of checkout's
+    parser it lands in.
 
     Args:
         ref: The value passed to the action's `ref:` input.
@@ -289,8 +304,15 @@ def _checkout_can_resolve(ref: str) -> bool:
             False
 
             ```
+        - Case matters, because git refs are case-sensitive even though checkout's
+          prefix test is not:
+            ```python
+            >>> _checkout_can_resolve("Refs/pull/54/merge")
+            False
+
+            ```
     """
-    return ref.upper().startswith("REFS/")
+    return ref.startswith("refs/")
 
 
 def _case_span() -> str:
@@ -478,6 +500,26 @@ class TestTheResolvedRefIsCheckoutable:
             "an unqualified merge ref fails every build job at checkout"
         )
 
+    @pytest.mark.parametrize("number", ["1", "1234"])
+    def test_any_pr_number_is_qualified_the_same_way(self, number, tmp_path):
+        """The number is interpolated, so a 1- or 4-digit PR must qualify like the 54 above.
+
+        Args:
+            number: The pull request number for the simulated event.
+            tmp_path: Working directory for the step, from pytest.
+        """
+        resolved = _resolve_ref(
+            {
+                "github.event_name": "pull_request",
+                "github.ref_name": f"{number}/merge",
+                "github.event.pull_request.number": number,
+            },
+            tmp_path,
+        )
+
+        assert resolved == f"refs/pull/{number}/merge"
+        assert _checkout_can_resolve(resolved)
+
     def test_a_push_still_resolves_to_the_branch_name(self, tmp_path):
         """Unqualified is correct here: `origin/main` exists, so checkout resolves it.
 
@@ -541,15 +583,21 @@ class TestAPullRequestCannotPublish:
     """A PR now triggers the workflow, so the publish gate carries real weight."""
 
     def test_the_release_job_requires_a_release_run_or_a_dry_run_dispatch(self):
-        """`pull_request` satisfies neither branch of the `if`, so nothing is uploaded from a PR."""
+        """`pull_request` satisfies neither branch of the `if`, so nothing is uploaded from a PR.
+
+        Test scenario:
+            Compares the whole normalised condition, not substrings. A substring check stays green
+            when a third disjunct is added -- including one a pull request could satisfy -- which
+            is the only way this gate can quietly stop holding.
+        """
         condition = " ".join(_workflow()["jobs"]["release"]["if"].split())
 
-        assert "github.event_name == 'workflow_run'" in condition
-        assert (
-            "github.event_name == 'workflow_dispatch' && inputs.dry_run_release"
-            in condition
+        assert condition == (
+            "(github.event_name == 'workflow_run' && "
+            "github.event.workflow_run.conclusion == 'success' && "
+            "github.event.workflow_run.head_repository.full_name == github.repository) || "
+            "(github.event_name == 'workflow_dispatch' && inputs.dry_run_release)"
         )
-        assert "pull_request" not in condition
 
     def test_the_release_job_needs_every_build_and_verify_job(self):
         """A red verify must stop a publish, not merely colour the run."""
@@ -798,26 +846,6 @@ class TestEveryBranchOfTheResolveStepIsExercised:
             )
 
         assert _resolve_ref(context, tmp_path) == expected
-
-    @pytest.mark.parametrize("number", ["1", "54", "1234"])
-    def test_the_pull_request_arm_qualifies_any_pr_number(self, number, tmp_path):
-        """The number is interpolated, so a multi-digit PR must qualify the same way.
-
-        Args:
-            number: The pull request number for the simulated event.
-            tmp_path: Working directory for the step.
-        """
-        resolved = _resolve_ref(
-            {
-                "github.event_name": "pull_request",
-                "github.ref_name": f"{number}/merge",
-                "github.event.pull_request.number": number,
-            },
-            tmp_path,
-        )
-
-        assert resolved == f"refs/pull/{number}/merge"
-        assert _checkout_can_resolve(resolved)
 
 
 class TestTheHelperExamplesStayExecutable:

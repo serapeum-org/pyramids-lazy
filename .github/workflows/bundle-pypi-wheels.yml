@@ -104,8 +104,11 @@ jobs:
     timeout-minutes: 5
     permissions:
       actions: read
-    # core's workflow_run guard: only build for a dispatch/push/pull_request, or a SUCCESSFUL
-    # same-repo github-release. Downstream jobs `needs: resolve-ref`, so they skip when this skips.
+    # core's workflow_run guard: a workflow_run event builds only if it came from a SUCCESSFUL
+    # same-repo github-release; EVERY other event (push, pull_request, workflow_dispatch -- and
+    # any trigger added later) passes. Downstream jobs `needs: resolve-ref`, so they skip when
+    # this skips. The `case` block below is what decides the ref per event, and it has a `*` arm
+    # for exactly that reason.
     if: >-
       github.event_name != 'workflow_run' ||
       (github.event.workflow_run.conclusion == 'success' &&
