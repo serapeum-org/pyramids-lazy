@@ -94,6 +94,9 @@ jobs:
         # expands an expression into the script *before* bash parses it, so an interpolated value is
         # read as shell source rather than as data. Matches Digital-Earth's copy of this step.
         run: |
+          set -euo pipefail
+          # Without `set -e` a failing `gh api` left PERMISSION empty and the check below reported
+          # "not a repository admin", sending the operator after a permissions problem they do not have.
           PERMISSION=$(gh api "repos/$REPOSITORY/collaborators/$ACTOR/permission" --jq '.permission')
           echo "Permission level for $ACTOR: $PERMISSION"
           if [ "$PERMISSION" != "admin" ]; then
@@ -125,7 +128,8 @@ jobs:
           # Reject main up front. main's ruleset requires a PR, so the bump push would be refused
           # mid-release, after the branch/tag work has already started. Fail here instead.
           if [ "$GIVEN_BRANCH" = "main" ]; then
-            echo "::error::Cannot release on 'main' (its ruleset rejects the bump push). Leave release-branch empty to auto-create one."
+            echo "::error::Cannot release on 'main': its ruleset rejects the bump push."
+            echo "::error::Leave release-branch empty and one will be created for you."
             exit 1
           fi
 
@@ -141,7 +145,7 @@ jobs:
             # passed exactly the typos it was added to catch. `--exit-code origin refs/heads/<name>`
             # distinguishes correctly: 0 found, 2 absent.
             set +e
-            git ls-remote --exit-code origin "refs/heads/$GIVEN_BRANCH" >/dev/null 2>&1
+            LS_ERR="$(git ls-remote --exit-code origin "refs/heads/$GIVEN_BRANCH" 2>&1 >/dev/null)"
             RC=$?
             set -e
             case "$RC" in
@@ -149,7 +153,9 @@ jobs:
               2) echo "::error::release-branch '$GIVEN_BRANCH' does not exist on origin"; exit 1 ;;
               # Any other code is a transport/auth failure, not a missing branch. Reporting it as
               # "does not exist" sends the operator hunting for the wrong problem.
-              *) echo "::error::could not reach origin to verify '$GIVEN_BRANCH' (git ls-remote exit $RC)"; exit 1 ;;
+              *) printf 'git ls-remote failed (exit %s): %s\n' "$RC" "$LS_ERR"
+                 echo "::error::could not reach origin to verify '$GIVEN_BRANCH' (ls-remote exit $RC; see log above)"
+                 exit 1 ;;
             esac
             echo "Using the given release branch: $GIVEN_BRANCH"
             BRANCH="$GIVEN_BRANCH"
@@ -203,6 +209,49 @@ jobs:
           package-manager-version: v0.84.2
           install-groups: "dev"
 
+      # Assert the bump actually landed before anything downstream trusts HEAD. The shared action
+      # has a recovery path that retries the bump with `cz bump --files-only`, which writes the
+      # version files and changelog but creates NO commit and NO tag, warns, and still exits 0. On
+      # that path HEAD is the PRE-BUMP tip, so recording it would hand the consumer the PREVIOUS
+      # version, which PyPI then rejects with HTTP 400 for already existing. (That 400 has happened
+      # here, in run 43886118127 on 2026-11-16, but by a different route -- a stale checkout, fixed
+      # in #34. The --files-only path reaches the same place with nothing to stop it.)
+      - name: Verify the bump commit and tag landed
+        run: |
+          set -euo pipefail
+          # No emptiness check on rev-parse: under `set -e` a failure aborts the step, so a guard
+          # here could never print.
+          HEAD_SHA="$(git rev-parse HEAD)"
+
+          # Read the version the tree now declares. Accept either quote style, and fail loudly
+          # rather than carrying an empty value into the comparison below.
+          VERSION="$(grep -m1 -E '^[[:space:]]*version[[:space:]]*=' pyproject.toml \
+            | sed -E 's/^[^=]*=[[:space:]]*//; s/^["'"'"']//; s/["'"'"'].*$//')"
+          if [ -z "$VERSION" ]; then
+            echo "::error::could not read the version from pyproject.toml;"
+            echo "::error::refusing to record a release ref"
+            exit 1
+          fi
+
+          # `git tag --points-at`, not `git describe --exact-match`: describe returns ONE arbitrary
+          # tag when several point at HEAD. The action amends the bump commit during its lockfile
+          # fold and force-moves the tag onto the amended commit, so after a healthy run the tag for
+          # $VERSION is among these. tag_format is bare "$version" in this repo, so the tag name is
+          # the version itself -- a prefixed tag_format would need the prefix applied here.
+          TAGS="$(git tag --points-at HEAD)"
+          if [ -z "$TAGS" ]; then
+            echo "::error::HEAD ($HEAD_SHA) carries no tag: the version bump did not land."
+            echo "::error::See the action's --files-only recovery path. Refusing to record a ref."
+            exit 1
+          fi
+          if ! printf '%s\n' "$TAGS" | grep -qx -- "$VERSION"; then
+            echo "tags on HEAD: $(printf '%s' "$TAGS" | tr '\n' ' ')"
+            echo "::error::no tag matching version $VERSION points at HEAD; refusing to record a ref"
+            exit 1
+          fi
+
+          echo "verified: HEAD $HEAD_SHA is tagged $VERSION (tags on HEAD: $(printf '%s' "$TAGS" | tr '\n' ' '))"
+
       # Hand the released commit to bundle-pypi-wheels.yml — the only workflow that reads this
       # artifact. (pypi-release.yml is a dispatch-only emergency sdist fallback and never reads it.)
       # bundle-pypi-wheels is triggered by `workflow_run`, whose payload carries no custom data and
@@ -220,44 +269,6 @@ jobs:
       # with no re-bump. A plain workflow_dispatch of that workflow will NOT publish: its release job
       # requires `workflow_run` (or dry_run_release, which stops before uploading). Once the artifact
       # has expired, a fresh release dispatch is needed, which cuts the NEXT version.
-      # Assert the bump actually landed before anything downstream trusts HEAD. The shared action
-      # has a recovery path that retries the bump with `cz bump --files-only`, which writes the
-      # version files and changelog but creates NO commit and NO tag, warns, and still exits 0. On
-      # that path HEAD is the PRE-BUMP tip, so recording it would publish the previous version --
-      # which is how 0.1.1 was re-uploaded to PyPI and rejected with HTTP 400. Fail here instead.
-      - name: Verify the bump commit and tag landed
-        run: |
-          set -euo pipefail
-          # No emptiness check on rev-parse: under `set -e` a failure aborts the step, so a guard
-          # here could never print.
-          HEAD_SHA="$(git rev-parse HEAD)"
-
-          # Read the version the tree now declares. Accept either quote style, and fail loudly
-          # rather than carrying an empty value into the comparison below.
-          VERSION="$(sed -nE '0,/^[[:space:]]*version[[:space:]]*=/s/^[[:space:]]*version[[:space:]]*=[[:space:]]*["'"'"']([^"'"'"']+)["'"'"'].*/\1/p' pyproject.toml)"
-          if [ -z "$VERSION" ]; then
-            echo "::error::could not read [project] version from pyproject.toml; refusing to record a release ref"
-            exit 1
-          fi
-
-          # `git tag --points-at`, not `git describe --exact-match`: describe returns ONE arbitrary
-          # tag when several point at HEAD. The action amends the bump commit during its lockfile
-          # fold and force-moves the tag onto the amended commit, so after a healthy run the tag for
-          # $VERSION is among these. tag_format is bare "$version" in this repo, so the tag name is
-          # the version itself -- a prefixed tag_format would need the prefix applied here.
-          TAGS="$(git tag --points-at HEAD)"
-          if [ -z "$TAGS" ]; then
-            echo "::error::HEAD ($HEAD_SHA) carries no tag -- the version bump did not land (see the action's --files-only recovery path). Refusing to record a release ref."
-            exit 1
-          fi
-          if ! printf '%s\n' "$TAGS" | grep -qx -- "$VERSION"; then
-            echo "tags on HEAD: $(printf '%s' "$TAGS" | tr '\n' ' ')"
-            echo "::error::no tag matching the pyproject version ($VERSION) points at HEAD; refusing to record a release ref"
-            exit 1
-          fi
-
-          echo "verified: HEAD $HEAD_SHA is tagged $VERSION (tags on HEAD: $(printf '%s' "$TAGS" | tr '\n' ' '))"
-
       - name: Record the released commit for the downstream consumer
         run: |
           set -euo pipefail
@@ -272,7 +283,7 @@ jobs:
           printf '%s\n' "$REF" > release-ref.txt
           echo "recorded release ref: $REF"
 
-      - name: Upload the release ref for pypi-release
+      - name: Upload the release ref for bundle-pypi-wheels
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-ref
@@ -284,7 +295,7 @@ jobs:
       # Open the release PR into main. Auto-merge is DISABLED: main is governed by a ruleset that
       # allows squash-only merges and requires a review, so the workflow cannot land a merge commit
       # unattended. The PR is opened here and MERGED MANUALLY at the end. Re-enable the merge loop
-      # below once the release model is reworked (see planning/release-tag-after-merge-proposal.md).
+      # below once the release model is reworked (see #29 for the route decision).
       - name: Open the release PR into main (merge manually)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -310,11 +321,16 @@ jobs:
           if [ "$OPEN_PRS" -gt 0 ]; then
             echo "An open PR for ${HEAD_BRANCH} already exists."
           else
+            BODY="$(printf '%s\n\n%s\n%s\n%s\n' \
+              "Automated release PR. The tag was cut on \`$HEAD_BRANCH\`; merge it into main MANUALLY." \
+              "NOTE: main allows squash merges only, and the squash rewrites the commit SHA, so the" \
+              "tag will NOT be an ancestor of main once this lands. That is the known, expected" \
+              "outcome today -- see #29 for the fix. Do not wait for a merge-commit option.")"
             gh pr create \
               --base main \
               --head "$HEAD_BRANCH" \
               --title "$TITLE" \
-              --body "Automated release PR. The tag was cut on \`$HEAD_BRANCH\`; merge it into main MANUALLY. NOTE: main allows squash merges only, and the squash rewrites the commit SHA, so the tag will NOT be an ancestor of main once this lands. That is the known, expected outcome today — see #29 for the fix. Do not hold this PR waiting for a merge-commit option."
+              --body "$BODY"
           fi
 
           echo "Release PR for ${HEAD_BRANCH} is open; merge it manually into main."
@@ -345,7 +361,7 @@ jobs:
       # PR, so leaving it enabled would delete the branch out from under the open PR). The repo's
       # delete_branch_on_merge removes the branch after the manual merge instead.
       # - name: Delete the merged release branch
-      #   if: ${{ success() && needs.prepare.outputs.branch != 'main' }}
+      #   if: ${{ success() }}
       #   env:
       #     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       #   run: |
