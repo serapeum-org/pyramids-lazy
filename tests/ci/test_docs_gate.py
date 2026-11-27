@@ -31,19 +31,10 @@ So the tests here pin the parts that would make the gate silently stop working:
   directory `--site-dir` writes to. Either half moving alone keeps the run green while uploading
   nothing, which is the same silent-success failure mode as the missing gate itself;
 - the gate's own checkout, which is the exposed surface because a pull request reaches that job.
-  It takes `ref: ${{ github.event.workflow_run.head_branch || github.ref }}` -- the same expression
-  `deploy-release` uses -- so the release path validates the tree that actually publishes rather
-  than the default branch GitHub hands a `workflow_run`. Naming a ref from the event is what moved
-  the fork safety into the expression and into the job's `if:`: the `||` falls through to
-  `github.ref` on a pull request (the merge commit, never the fork's head), and a fork's
-  `workflow_run` is refused by `github.event.workflow_run.head_repository.fork == false`, the same
-  guard `deploy-release` carries. `persist-credentials: false` keeps the ambient token out of the
-  one worktree a pull request controls.
-
-The helpers get their own classes at the end. They are the module's blind spot: every assertion
-above reads the workflow *through* them, so a helper that quietly returns nothing -- an unparsed
-`needs` shape, a step list it never looked at -- reports a missing field or an unwired job rather
-than failing where the fault is.
+  It names no `ref:`, which is what keeps fork-controlled code out by construction rather than by
+  expression: on a `pull_request` checkout's default is the merge commit, never the fork's head.
+  `persist-credentials: false` keeps the ambient token out of the one worktree a pull request
+  controls.
 
 Deliberately no `>>>` examples: CI's doctest gate is `pytest --doctest-modules src`, which never
 reaches `tests/`, and this module runs no `doctest.testmod` on itself the way `tests/ci/test_bash.py`
@@ -463,80 +454,6 @@ class TestTheBuiltSiteReachesReviewersWithoutBeingPublished:
         )
 
 
-class TestTheGateValidatesTheTreeThatShips:
-    """`needs: build-strict` is only a gate if both jobs check out the same commit.
-
-    For a `workflow_run` event GitHub sets `GITHUB_REF`/`GITHUB_SHA` to the DEFAULT BRANCH, not to
-    the triggering run's head. `deploy-release` therefore checks out
-    `github.event.workflow_run.head_branch` on purpose -- `github-release` pushes the
-    version/changelog/lockfile commit onto that branch *after* the run's `head_sha` is captured, so
-    the branch tip is the tree that ships. A gate with no `ref:` would build the default branch
-    instead, which is a different tree, and `docs/change-log.md` -- a nav page generated from commit
-    messages at bump time -- is part of exactly what differs.
-
-    So the gate takes the same ref expression. On a pull request the `workflow_run` half renders
-    empty and it falls through to `github.ref`, which is the merge commit: unchanged PR behaviour,
-    and still never the fork's head.
-    """
-
-    def test_the_gate_checks_out_the_same_ref_expression_as_the_release_deploy(self):
-        """Both must resolve to the release branch on the `workflow_run` path.
-
-        Test scenario:
-            A mismatch here is invisible -- the run is green, the gate "passed", and the published
-            site was never the one that was validated.
-        """
-        gate = _step_using("build-strict", "actions/checkout")["with"]["ref"]
-        deploy = _step_using("deploy-release", "actions/checkout")["with"]["ref"]
-
-        assert " ".join(gate.split()) == " ".join(deploy.split()), (
-            "the gate and the release deploy would check out different trees"
-        )
-
-    def test_that_ref_prefers_the_triggering_branch_over_the_default_one(self):
-        """Pins the `head_branch || github.ref` shape, not merely that some `ref:` exists.
-
-        Test scenario:
-            The preceding test only compares the two jobs' expressions to each other, so editing
-            both to the same wrong value -- `github.ref` alone, or the operands swapped -- would
-            satisfy it. This reads the gate's expression alone and requires both operands in the
-            order that makes `head_branch` win when it is non-empty: reversed, `github.ref` is
-            always truthy and the `workflow_run` branch could never be reached.
-        """
-        gate = " ".join(
-            _step_using("build-strict", "actions/checkout")["with"]["ref"].split()
-        )
-
-        assert "github.event.workflow_run.head_branch" in gate
-        assert "github.ref" in gate
-        assert gate.index("workflow_run.head_branch") < gate.index("|| github.ref")
-
-    def test_a_forked_workflow_run_cannot_reach_the_gate(self):
-        """Taking a ref from the event means the fork guard has to move here too.
-
-        Test scenario:
-            With no `ref:`, checkout's defaults kept fork code out by construction. Now that the
-            gate checks out a branch named by the event, a `workflow_run` from a fork must be
-            refused the same way `deploy-release` refuses one -- otherwise this job would build
-            (and `mkdocstrings` would import) fork-controlled code.
-        """
-        condition = " ".join(_job("build-strict")["if"].split())
-
-        assert "github.event.workflow_run.head_repository.fork == false" in condition
-        assert "github.event.workflow_run.conclusion == 'success'" in condition
-
-    def test_every_other_event_still_reaches_the_gate(self):
-        """The guard must exclude only `workflow_run`, or the gate stops gating PRs.
-
-        Test scenario:
-            The condition is written as `event_name != 'workflow_run' || (...)`, so a push, a pull
-            request and a release all short-circuit to true on the first operand.
-        """
-        condition = " ".join(_job("build-strict")["if"].split())
-
-        assert condition.startswith("github.event_name != 'workflow_run' ||"), condition
-
-
 class TestTheGateCannotRunForkControlledCode:
     """A pull request reaches `build-strict`, which makes its checkout the exposed surface."""
 
@@ -557,28 +474,22 @@ class TestTheGateCannotRunForkControlledCode:
             f"{checkout['with']}"
         )
 
-    def test_a_pull_request_still_builds_the_merge_commit(self):
-        """On a pull request the `ref:` must fall through to `github.ref`, never the fork's head.
+    def test_the_checkout_takes_no_explicit_ref(self):
+        """Omitting `ref:` is what makes a pull request build the merge commit.
 
         Test scenario:
-            This job used to carry no `ref:` at all, and that omission was what kept fork code
-            out: checkout's `pull_request` default is `refs/pull/<n>/merge`. It now names a ref so
-            the release path validates the tree that ships, which means the PR safety has to come
-            from the expression instead -- `github.event.workflow_run.head_branch` renders empty
-            on a pull request, so the `||` falls through to `github.ref`, the same merge commit as
-            before. What must never appear is `github.head_ref` or
-            `github.event.pull_request.head.sha`: either would build the fork's own tip in the one
-            job a fork can reach.
+            On a `pull_request` event checkout's default is `refs/pull/<n>/merge`, not the fork's
+            head, so the gate builds the code as it would land. Naming any ref here -- even the
+            `workflow_run.head_branch || github.ref` expression `deploy-release` uses -- moves that
+            safety out of checkout's defaults and into an expression, which is a bigger promise
+            than this job needs: on a workflow_run the default branch is already the tree
+            `deploy-release` resolves to, so a ref buys nothing and costs the guarantee.
         """
-        ref = " ".join(
-            _step_using("build-strict", "actions/checkout")["with"]["ref"].split()
-        )
+        checkout = _step_using("build-strict", "actions/checkout")
 
-        assert "github.head_ref" not in ref, ref
-        assert "pull_request.head" not in ref, ref
-        assert ref.endswith("|| github.ref }}"), (
-            "the gate's ref no longer falls through to github.ref, so a pull request may not "
-            f"build the merge commit: {ref}"
+        assert "ref" not in checkout["with"], (
+            "the gate's checkout names an explicit ref, so a pull request no longer builds the "
+            f"merge commit by construction: ref={checkout['with'].get('ref')!r}"
         )
 
 
