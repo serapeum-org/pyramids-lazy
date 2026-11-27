@@ -2,7 +2,8 @@ name: Deploy MkDocs
 
 # MkDocs build + deploy workflow: the warnings-as-errors `build-strict` gate, the main-branch site
 # and the versioned release docs (mike). `build-strict` runs on every event including pull
-# requests, and both deploys depend on it. PR-preview *deploys* (mesh's deploy-pr job) stay
+# requests (a workflow_run only from this repository, never a fork), and both deploys depend on
+# it. PR-preview *deploys* (mesh's deploy-pr job) stay
 # omitted, so a pull request builds the site and uploads it as an artifact but never publishes to
 # gh-pages -- a per-PR deploy would commit a whole site to the shared branch on every push.
 #
@@ -44,18 +45,34 @@ jobs:
   build-strict:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Mirrors deploy-release's guard, and for the same reason: this job checks out a branch named
+    # by the event (see `ref:` below), so a workflow_run from a fork must not reach it -- mkdocs
+    # imports the package through mkdocstrings, which is code execution. Every other event
+    # short-circuits on the first operand, so a push, a pull request and a release all run the
+    # gate as before.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success'
+       && github.event.workflow_run.head_repository.fork == false)
     # This workflow grants contents+pages write at the top level for the deploy jobs. A pull
     # request reaches THIS job, so it drops to read-only: it needs nothing else, and the deploys
     # hold ACTIONS_DEPLOY_TOKEN.
     permissions:
       contents: read
     steps:
-      # No explicit ref: on a pull_request, checkout's default is the merge commit rather than the
-      # fork's head, so fork-controlled code never runs in this job.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
+          # The SAME expression deploy-release uses, so the gate validates the tree that actually
+          # publishes. For a workflow_run, GITHUB_REF is the DEFAULT BRANCH -- not the triggering
+          # run's head -- while github-release pushes the version/changelog/lockfile commit onto
+          # `head_branch` after that run's head_sha is captured. Without this the gate built main's
+          # docs while deploy-release published the release branch's, and `docs/change-log.md` (a
+          # nav page generated from commit messages at bump time) is part of what differs.
+          # On a pull_request the first operand renders empty and this falls through to github.ref,
+          # i.e. the merge commit -- unchanged PR behaviour, and never the fork's head.
+          ref: ${{ github.event.workflow_run.head_branch || github.ref }}
 
       # The same pixi `docs` environment the deploy jobs install (`install-groups: 'docs'`), so the
       # gate and the deploy cannot drift onto different dependency sets.
