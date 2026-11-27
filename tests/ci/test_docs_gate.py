@@ -221,9 +221,9 @@ class TestAPullRequestCannotDeploy:
         condition = " ".join(_job(job_id)["if"].split())
 
         assert "pull_request" not in condition
-        assert re.search(r"github\.event_name == '(push|release|workflow_run)'", condition), (
-            condition
-        )
+        assert re.search(
+            r"github\.event_name == '(push|release|workflow_run)'", condition
+        ), condition
 
     def test_the_fork_guard_on_the_release_deploy_survives(self):
         """The workflow_run path must still refuse a fork's head repository."""
