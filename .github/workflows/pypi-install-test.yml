@@ -4,10 +4,12 @@ name: PyPI Install Test
 # end user does, across the OS/Python matrix. This is the only job that exercises the real published
 # artifact + its real published dependency closure as resolved by a plain `pip install`; every other
 # wheel job installs a locally-built wheel. It is scheduled (not a release gate) so it also serves as
-# a standing tripwire for Python 3.15: that leg is expected to FAIL today because the published
-# wheels + sdist cap Requires-Python at <3.15 (see setup.py) and pyramids-core / h5py / numcodecs
-# ship no cp315 wheels yet -- it is marked non-gating and will flip green on its own the week upstream
-# publishes those wheels and the cap is lifted. Not a release gate: it runs after the fact, so it can
+# a standing tripwire for Python 3.15: that leg is expected to FAIL today. The reason TODAY is simply
+# that pyramids-core / h5py / numcodecs ship no cp315 wheels on PyPI yet, so pip cannot resolve the
+# stack (the currently published 0.2.0 still carries the old static >=3.11,<4 -- the <3.15 cap this
+# repo now stamps only takes effect from the next release). Once a capped release is published the cap
+# refuses 3.15 as well; either way the leg is non-gating and will flip green on its own the week those
+# upstream cp315 wheels exist and the cap is lifted. Not a release gate: it runs after the fact, so it can
 # never block a release, and a failure means the live PyPI package is broken for users.
 
 permissions:
@@ -39,8 +41,9 @@ jobs:
           - { os: ubuntu-latest, python-version: "3.12", experimental: false }
           - { os: ubuntu-latest, python-version: "3.13", experimental: false }
           - { os: ubuntu-latest, python-version: "3.14", experimental: false }
-          # Expected-red tripwire: the published artifacts cap at <3.15, so pip must refuse here until
-          # upstream ships cp315 wheels and the cap is lifted. Non-gating via `experimental`.
+          # Expected-red tripwire: today pip cannot resolve the stack here because upstream ships no
+          # cp315 wheels yet (and, from the next release on, the <3.15 cap refuses it too). Flips green
+          # once those wheels exist and the cap is lifted. Non-gating via `experimental`.
           - { os: ubuntu-latest, python-version: "3.15", experimental: true }
           - { os: macos-15, python-version: "3.12", experimental: false }
           - { os: windows-2022, python-version: "3.12", experimental: false }
