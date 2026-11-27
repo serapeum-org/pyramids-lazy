@@ -61,8 +61,18 @@ _ON_KEY = True
 _EXPRESSION = re.compile(r"\$\{\{(.+?)\}\}")
 
 # The only expression grammar `_substitute` models: a dotted context path, or several joined by
-# `||`. Anything richer (a `&&` conditional, a comparison, `format(...)`) must fail loudly.
-_MODELLED_EXPRESSION = re.compile(r"[\w.]+(?:\s*\|\|\s*[\w.]+)*")
+# `||`. Anything richer (a `&&` conditional, a comparison, `format(...)`) must fail loudly. Each
+# operand needs at least one `.` so a bare literal cannot slip through: `[\w.]+` also matched
+# `true`, `123` and `'main'`-style defaults, which `_substitute` then rendered as the empty string
+# via `context.get("true", "")` -- the same guess-instead-of-refuse failure this guard exists to
+# stop. Every expression the live step carries is a dotted path, so nothing is lost.
+_MODELLED_EXPRESSION = re.compile(r"\w+(?:\.\w+)+(?:\s*\|\|\s*\w+(?:\.\w+)+)*")
+
+# Every character GitHub's filter-pattern syntax treats specially, plus the `!` prefix. A pattern
+# carrying any of them is outside what `_paths_filter_selects` models, so it is refused rather than
+# answered. `?` is "zero or one of the preceding character", `+` is "one or more" and is POSTFIX --
+# so a `startswith("+")` check could never have caught it -- and `[]` is a character class.
+_PATHS_GLOB_CHARS = frozenset("*?+[]")
 
 # A `case` arm header: one or more glob/word patterns, optionally single-quoted, joined by `|`,
 # then `)`. The charset deliberately excludes `=`, `"` and `$`, so a body line such as
@@ -74,6 +84,11 @@ _MODELLED_EXPRESSION = re.compile(r"[\w.]+(?:\s*\|\|\s*[\w.]+)*")
 # -- but the message it raises names the terminator count and this regex, not the arm that was
 # just edited. Restyle with single quotes, or widen the charset here and re-check that the
 # `REF="$(...)"` body line still cannot match.
+# A `;;` that ends a line, i.e. an arm terminator rather than the same two characters inside a
+# body string. `;&` and `;;&` fall-throughs are deliberately not counted: they are not used here,
+# and the count disagreeing with the header count is the loud failure this is for.
+_ARM_TERMINATOR = re.compile(r";;\s*$", re.MULTILINE)
+
 _ARM_HEADER = re.compile(
     r"^\s*((?:'?[A-Za-z0-9_*?.\-]+'?)(?:\s*\|\s*'?[A-Za-z0-9_*?.\-]+'?)*)\)",
     re.MULTILINE,
@@ -347,11 +362,15 @@ def _checkout_can_resolve(ref: str) -> bool:
     Follows `getCheckoutInfo` in checkout's `src/ref-helper.ts`: a ref starting with `refs/` is
     taken as fully qualified, anything else has to exist as `origin/<ref>` or as a tag.
 
-    The comparison is case-sensitive, which `getCheckoutInfo` itself is not -- it upper-cases the
-    ref before testing the prefix. That divergence is deliberate: git refs *are* case-sensitive,
-    so `Refs/pull/54/merge` would take checkout's qualified-ref branch and then fail to fetch. The
-    question this predicate answers is whether the job works, not which branch of checkout's
-    parser it lands in.
+    What it models is exactly that qualified/unqualified split, with one deliberate tightening: the
+    comparison is case-sensitive, which `getCheckoutInfo` is not (it upper-cases the ref first).
+    Git refs are case-sensitive, so treating `Refs/pull/54/merge` as qualified would be generous.
+
+    It does NOT model whether the job ultimately succeeds. `refs/notes/x`,
+    `refs/remotes/origin/main` and even `refs/` all answer True here and would reach checkout's
+    bare-`REFS/` branch and then fail to fetch. None of them can reach this helper: the only values
+    the step produces are `refs/pull/<n>/merge`, a branch name, and the release-ref artifact's
+    contents.
 
     Args:
         ref: The value passed to the action's `ref:` input.
@@ -437,9 +456,12 @@ def _case_arms() -> set[str]:
     """
     span = _case_span()
     headers = _ARM_HEADER.findall(span)
-    assert len(headers) == span.count(";;"), (
-        f"parsed {len(headers)} case arms but found {span.count(';;')} `;;` terminators; "
-        "the arm regex no longer matches the step's style"
+    terminators = len(_ARM_TERMINATOR.findall(span))
+    assert len(headers) == terminators, (
+        f"parsed {len(headers)} case arms but found {terminators} arm terminators; the arm regex "
+        "or the terminator style no longer matches the step. Counting `;;` only at end of line "
+        "keeps a body string such as `REF=\"${A};;${B}\"` from inflating this, but a `;&` "
+        "fall-through terminator would deflate it."
     )
     return {
         pattern.strip().strip("'\"")
@@ -451,17 +473,23 @@ def _case_arms() -> set[str]:
 def _paths_filter_selects(path: str) -> bool:
     """Whether a PR changing `path` alone would start the workflow.
 
-    Models the `on.pull_request.paths` filter: a `<dir>/**` pattern matches anything beneath that
-    directory, any other pattern is a literal path. Those are the only two forms the live filter
-    uses, so this stays a model of what is written rather than a reimplementation of GitHub's
-    matcher -- and it now RAISES on any pattern outside those two forms instead of falling through
-    to literal equality.
+    Models the `on.pull_request.paths` filter: a trailing `<dir>/**` pattern matches anything
+    beneath that directory, any other pattern is a literal path. Those are the only two forms the
+    live filter uses, so this stays a model of what is written rather than a reimplementation of
+    GitHub's matcher -- and it RAISES on anything outside those two forms rather than answering.
 
-    That guard is the point. A `!pattern` negation removes paths an earlier pattern matched, and
-    the old fall-through treated it as a literal that matched nothing -- so a filter of
-    `["ci/parquet-plugin/**", "!ci/parquet-plugin/verify.py"]` was modelled as still building
-    `verify.py` while GitHub would not have run the workflow at all. Negation is the one direction
-    in which a bad filter stayed green here; every other divergence already failed loudly.
+    That guard is the point, and getting it half right was worse than not having it. The first
+    version refused only a leading `!`, and then only `*` on the `/**` branch and `*?[` on the
+    literal branch, so `ci/plugin?/**`, `ci/plugin[ab]/**`, `ci/par+quet-plugin/**` and `setup.p+y`
+    all returned `False` where GitHub would have selected the path -- reporting "this PR will not
+    build" for a filter under which it would. The whole pattern is now checked against
+    `_PATHS_GLOB_CHARS` before the `/**` split, so one shared guard covers both branches and every
+    special character, `+` included (it is postfix, so the old prefix test could never catch it).
+
+    A `!pattern` negation is refused for a different reason: it removes paths an earlier pattern
+    matched, which is a relationship between patterns this model has no way to represent. Before
+    the guard, `["ci/parquet-plugin/**", "!ci/parquet-plugin/verify.py"]` was modelled as still
+    building `verify.py` while GitHub would not have run the workflow at all.
 
     Args:
         path: A repository-relative path, as a changed-file entry.
@@ -494,24 +522,22 @@ def _paths_filter_selects(path: str) -> bool:
     """
     selected = False
     for pattern in _triggers()["pull_request"]["paths"]:
-        assert not pattern.startswith(("!", "+")), (
+        assert not pattern.startswith("!"), (
             f"unmodelled paths pattern {pattern!r}: negation changes what earlier patterns "
             "selected, which this model does not represent. Extend it before using it to "
             "justify the filter."
         )
+        body = pattern[: -len("/**")] if pattern.endswith("/**") else pattern
+        assert not _PATHS_GLOB_CHARS & set(body), (
+            f"unmodelled paths pattern {pattern!r}: the only glob this models is a trailing "
+            f"`/**`, and {sorted(_PATHS_GLOB_CHARS & set(body))} is not that. Extend it before "
+            "using it to justify the filter."
+        )
         if pattern.endswith("/**"):
-            assert "*" not in pattern[: -len("/**")], (
-                f"unmodelled paths pattern {pattern!r}: only a trailing `/**` is modelled"
-            )
             if path.startswith(pattern[: -len("**")]):
                 selected = True
-        else:
-            assert not set("*?[") & set(pattern), (
-                f"unmodelled paths pattern {pattern!r}: a glob that is not a trailing `/**` is "
-                "not modelled"
-            )
-            if path == pattern:
-                selected = True
+        elif path == pattern:
+            selected = True
     return selected
 
 
@@ -839,6 +865,22 @@ class TestTheModelsRefuseWhatTheyCannotRepresent:
                 {"github.ref": "refs/pull/54/merge", "github.run_id": "999"},
             )
 
+    @pytest.mark.parametrize("literal", ["true", "123", "main"])
+    def test_a_bare_literal_operand_is_rejected(self, literal):
+        """A literal default renders as `''` through `context.get`, where GitHub renders the value.
+
+        Args:
+            literal: An operand that is not a dotted context path.
+
+        Test scenario:
+            `${{ inputs.branch || 'main' }}` is the plausible rewrite: the old grammar accepted the
+            literal and resolved it to the empty string rather than refusing it.
+        """
+        with pytest.raises(AssertionError, match="unmodelled GitHub expression"):
+            _substitute(
+                "${{ inputs.branch || " + literal + " }}", {"inputs.branch": ""}
+            )
+
     def test_a_function_call_expression_is_rejected(self):
         """`format(...)` is a plausible rewrite of the new arm, and was modelled as empty.
 
@@ -892,6 +934,37 @@ class TestTheModelsRefuseWhatTheyCannotRepresent:
         with pytest.raises(AssertionError, match="unmodelled paths pattern"):
             _paths_filter_selects("ci/parquet-plugin/verify.py")
 
+    @pytest.mark.parametrize(
+        "pattern, path",
+        [
+            ("ci/plugin?/**", "ci/plugin/x"),
+            ("ci/plugin[ab]/**", "ci/plugina/x"),
+            ("ci/par+quet-plugin/**", "ci/parquet-plugin/x"),
+            ("setup.p+y", "setup.py"),
+        ],
+    )
+    def test_every_glob_special_character_is_rejected(self, pattern, path, monkeypatch):
+        """`?`, `[]` and the POSTFIX `+` were all answered `False` where GitHub would select.
+
+        Args:
+            pattern: A `paths` entry using a GitHub glob special this model cannot represent.
+            path: A changed file GitHub's matcher would select under that pattern.
+            monkeypatch: Replaces the live filter with the one-pattern filter under test.
+
+        Test scenario:
+            The dangerous direction: each of these reported "this PR will not build" for a filter
+            under which GitHub *would* build, so widening the filter with one of them read as a
+            cost saving that was not real.
+        """
+        monkeypatch.setattr(
+            sys.modules[__name__],
+            "_triggers",
+            lambda: {"pull_request": {"paths": [pattern]}},
+        )
+
+        with pytest.raises(AssertionError, match="unmodelled paths pattern"):
+            _paths_filter_selects(path)
+
     def test_a_non_trailing_glob_is_rejected(self, monkeypatch):
         """`ci/*/build.sh` is a legal filter and not something this model represents.
 
@@ -922,12 +995,12 @@ class TestTheModelsRefuseWhatTheyCannotRepresent:
             monkeypatch: Replaces the live filter with `ci/*/plugin/**`.
 
         Test scenario:
-            `test_a_non_trailing_glob_is_rejected` above exercises the guard on the
-            *literal* branch, because `ci/*/build.sh` does not end in `/**`. This takes
-            the `/**` branch instead, where the prefix is otherwise compared with
-            `str.startswith` -- so `ci/*/plugin/` would match only a path containing a
-            literal asterisk, and every path GitHub selects would be reported as not
-            building.
+            One shared guard now checks the whole pattern, with a trailing `/**` stripped
+            first, so this and `test_a_non_trailing_glob_is_rejected` reach it by the two
+            different pattern shapes rather than through two separate asserts. This shape
+            is the one that would otherwise slip past: the prefix is compared with
+            `str.startswith`, so `ci/*/plugin/` would match only a path containing a
+            literal asterisk and every path GitHub selects would read as not building.
         """
         monkeypatch.setattr(
             sys.modules[__name__],
@@ -935,7 +1008,7 @@ class TestTheModelsRefuseWhatTheyCannotRepresent:
             lambda: {"pull_request": {"paths": ["ci/*/plugin/**"]}},
         )
 
-        with pytest.raises(AssertionError, match="only a trailing"):
+        with pytest.raises(AssertionError, match=r"unmodelled paths pattern.*\['\*'\]"):
             _paths_filter_selects("ci/parquet-plugin/plugin/build.sh")
 
 
