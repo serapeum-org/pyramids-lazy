@@ -436,15 +436,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest, artifact: wheels-linux-x86_64, python-version: "3.11", extra: "" }
-          - { os: ubuntu-latest, artifact: wheels-linux-x86_64, python-version: "3.12", extra: "" }
+          # onlybinary is "--only-binary=:all:" on the bare legs (the published-wheel contract: every
+          # runtime dep must resolve from a wheel, as pure-wheel-test's core job asserts) but empty on
+          # the [parquet] leg, matching pure-wheel-test's extras job, which installs the extra WITHOUT
+          # --only-binary so a transitive sdist-only dep of pyarrow/dask-geopandas cannot block this
+          # release gate (both jobs gate the release; keeping the same contract avoids the asymmetry).
+          - { os: ubuntu-latest, artifact: wheels-linux-x86_64, python-version: "3.11", extra: "", onlybinary: "--only-binary=:all:" }
+          - { os: ubuntu-latest, artifact: wheels-linux-x86_64, python-version: "3.12", extra: "", onlybinary: "--only-binary=:all:" }
           # One leg installs the [parquet] extra so the OGR-Parquet suite runs through the bundled
           # driver end to end (the extra provides pyarrow to write the fixture); 3.13 matches the
           # pure-wheel-test extras leg, where the pyarrow/dask-geopandas wheels are known-present.
-          - { os: ubuntu-latest, artifact: wheels-linux-x86_64, python-version: "3.13", extra: "[parquet]" }
-          - { os: ubuntu-latest, artifact: wheels-linux-x86_64, python-version: "3.14", extra: "" }
-          - { os: macos-15, artifact: wheels-macos-arm64, python-version: "3.12", extra: "" }
-          - { os: windows-2022, artifact: wheels-windows-AMD64, python-version: "3.12", extra: "" }
+          - { os: ubuntu-latest, artifact: wheels-linux-x86_64, python-version: "3.13", extra: "[parquet]", onlybinary: "" }
+          - { os: ubuntu-latest, artifact: wheels-linux-x86_64, python-version: "3.14", extra: "", onlybinary: "--only-binary=:all:" }
+          - { os: macos-15, artifact: wheels-macos-arm64, python-version: "3.12", extra: "", onlybinary: "--only-binary=:all:" }
+          - { os: windows-2022, artifact: wheels-windows-AMD64, python-version: "3.12", extra: "", onlybinary: "--only-binary=:all:" }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -457,8 +462,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install the native wheel as a pip user would, then run the suite
-        # --only-binary=:all: keeps it a true pure-pip install: every runtime dep (pyramids-core,
-        # dask, zarr, kerchunk, h5py, ...) must resolve from a published wheel on this OS/Python.
+        # matrix.onlybinary is --only-binary=:all: on the bare legs (every runtime dep -- pyramids-core,
+        # dask, zarr, kerchunk, h5py, ... -- must resolve from a published wheel on this OS/Python) and
+        # empty on the [parquet] leg, matching pure-wheel-test's extras job (see the matrix comment).
         # -o pythonpath= clears pyproject's `pythonpath = [".", "src"]` so tests import the INSTALLED
         # wheel, not the source tree. interop (xarray) is a test-only dep absent from the wheel, and
         # live needs the network -- both deselected (they run in tests.yml's pixi interop env).
@@ -466,7 +472,7 @@ jobs:
         run: |
           set -euo pipefail
           WHEEL=$(ls wheelhouse/*.whl)
-          pip install "${WHEEL}${{ matrix.extra }}" --only-binary=:all:
+          pip install "${WHEEL}${{ matrix.extra }}" ${{ matrix.onlybinary }}
           pip install pytest pytest-env pytest-mock --only-binary=:all:
           python -c "import pyramids_lazy; print('installed', pyramids_lazy.__version__)"
           pytest -vvv -o pythonpath= -m "not live and not interop" tests/
@@ -521,7 +527,7 @@ jobs:
           print("read_parquet works on the pure backend:", len(FeatureCollection.read_parquet(path)), "features")
           try:
               list(FeatureCollection.iter_features(path))
-          except Exception as exc:  # noqa: BLE401 - any raise satisfies the contract
+          except Exception as exc:  # any raise satisfies the contract (no OGR driver -> must not succeed)
               print("iter_features correctly raised without the OGR driver:",
                     type(exc).__name__, "-", str(exc)[:200])
           else:
