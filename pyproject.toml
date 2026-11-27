@@ -286,6 +286,7 @@ markers = [
     "e2e: end-to-end tests (pickle/subprocess/zarr round-trips) relocated from pyramids-core",
     "slow: slow tests (e.g. a real distributed cluster round-trip)",
     "plot: lazy-plot tests relocated from pyramids-core (need cleopatra; skip when absent)",
+    "bash: drives a real bash (the CI-script tests); FAILS where bash is absent, so deselect it with -m 'not bash'",
 ]
 
 [tool.pydocstyle]
