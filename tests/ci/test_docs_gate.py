@@ -109,6 +109,28 @@ def _job(job_id: str) -> dict:
     return jobs[job_id]
 
 
+def _publishing_jobs() -> set[str]:
+    """Return every job that can publish, found from the workflow rather than from a list.
+
+    A job publishes if it runs the shared `mkdocs-deploy` action or is handed
+    `ACTIONS_DEPLOY_TOKEN`. Deriving the set is the whole point: `_DEPLOY_JOBS` is a literal, so
+    the gating and PR-unreachability tests only ever covered the two jobs that happened to be
+    written down. A reviewer verified the hole by adding a `publish-pr-preview` job with
+    `if: github.event_name == 'pull_request'` and `deploy-token: ${{ secrets.ACTIONS_DEPLOY_TOKEN }}`
+    -- the suite stayed green at 34 passed. Anything that can push to `gh-pages` has to be found
+    automatically or the guard is advisory.
+
+    Returns:
+        set[str]: Job ids that reach the deploy action or the deploy token.
+    """
+    publishing = set()
+    for job_id, job in _workflow()["jobs"].items():
+        blob = yaml.safe_dump(job)
+        if "mkdocs-deploy@" in blob or "ACTIONS_DEPLOY_TOKEN" in blob:
+            publishing.add(job_id)
+    return publishing
+
+
 def _declared_needs(job_id: str) -> list[str]:
     """Return a job's `needs` as a list, whether written as a string or a sequence.
 
@@ -293,6 +315,49 @@ class TestTheStrictBuildIsReal:
 
 class TestEveryDeployIsGatedOnIt:
     """The difference between a PR check and a gate: the deploys have to wait for it."""
+
+    def test_the_derived_set_is_the_two_jobs_that_exist(self):
+        """Guards the guard: an empty derivation would make every test below vacuous.
+
+        Test scenario:
+            If `_publishing_jobs` ever stops recognising how a job publishes -- the action is
+            renamed, the token is passed by another name -- it returns a smaller set and the
+            parametrized tests silently cover less. This pins it against the hard-coded pair.
+        """
+        assert _publishing_jobs() == set(_DEPLOY_JOBS)
+
+    @pytest.mark.parametrize("job_id", sorted(_publishing_jobs()))
+    def test_every_publishing_job_waits_for_the_strict_build(self, job_id):
+        """Derived from the workflow, so a publishing job added later is covered too.
+
+        Args:
+            job_id: A job that reaches the deploy action or the deploy token.
+        """
+        assert "build-strict" in _declared_needs(job_id), (
+            f"`{job_id}` can publish without the gate approving the site"
+        )
+
+    @pytest.mark.parametrize("job_id", sorted(_publishing_jobs()))
+    def test_no_publishing_job_is_reachable_from_a_pull_request(self, job_id):
+        """The hole H1 named: a PR-reachable job holding the deploy token passed green.
+
+        Args:
+            job_id: A job that reaches the deploy action or the deploy token.
+
+        Test scenario:
+            Each publishing job's `if:` must demand an event a pull request cannot be. Derived
+            rather than listed, so adding `publish-pr-preview` with
+            `if: github.event_name == 'pull_request'` now fails here instead of passing.
+        """
+        condition = " ".join(_job(job_id).get("if", "").split())
+
+        assert condition, (
+            f"`{job_id}` publishes with no `if:` at all, so every event reaches it"
+        )
+        assert "pull_request" not in condition, condition
+        assert re.search(
+            r"github\.event_name == '(push|release|workflow_run)'", condition
+        ), condition
 
     @pytest.mark.parametrize("job_id", _DEPLOY_JOBS)
     def test_the_deploy_waits_for_the_strict_build(self, job_id):
