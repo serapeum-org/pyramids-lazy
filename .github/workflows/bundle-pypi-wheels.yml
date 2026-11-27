@@ -20,20 +20,51 @@ name: Bundle PyPI Wheels
 permissions:
   contents: read
 
-# Triggers mirror pyramids-core's bundle-pypi-wheels.yml: build on every push to main and
-# after a release, with a dormant pull_request arm and manual dispatch. The `release` job
-# publishes the built sdist + wheels to the GitHub release and PyPI on a successful
-# github-release (workflow_run); a plain push builds + verifies only (the release job skips).
+# Triggers mirror pyramids-core's bundle-pypi-wheels.yml: build on every push to main, on a PR
+# that touches the build, after a release, and on manual dispatch. The `release` job publishes the
+# built sdist + wheels to the GitHub release and PyPI on a successful github-release
+# (workflow_run); a plain push or pull request builds + verifies only (the release job skips).
 on:
   push:
     branches: [main]
-  # Dormant, as in core: flip on to build the native wheels on a PR touching the build.
-  # pull_request:
-  #   branches: [main]
-  #   paths:
-  #     - "ci/parquet-plugin/**"
-  #     - "setup.py"
-  #     - ".github/workflows/bundle-pypi-wheels.yml"
+  # The native wheel cannot be re-created on demand -- it is a compiled OGR-Parquet driver linked
+  # against the libgdal inside a published core wheel, built by three separate per-platform scripts
+  # -- so verify.py has to run while a change can still be revised cheaply. It used to run for the
+  # first time on the push to main: run 44936415149 (PR #43's merge commit) failed four build legs
+  # and `verify windows AMD64` there, and PR #48 existed only to repair it. The `paths` filter keeps
+  # the ~86 job-minutes off a PR that cannot change the artifact. Nothing in this workflow is
+  # cached, so a PR pays what a push pays -- there is no warm entry for it to miss. (86 is this
+  # branch's own measured pull_request run, 45890484216; the earlier push run 45063994353 was 95,
+  # the difference being Windows run-to-run variance, 28m vs 36m.)
+  pull_request:
+    branches: [main]
+    paths:
+      # Everything that decides what the native wheel contains or whether its driver loads:
+      #
+      # - pyproject.toml, for the same reason it is in core's filter: the whole
+      #   [tool.cibuildwheel] block lives there -- the per-platform `before-all` entries that
+      #   invoke these very build scripts, the `repair-wheel-command`s, the manylinux images,
+      #   `build`/`skip`/`archs` -- plus [tool.setuptools.package-data], the one line that puts
+      #   the compiled driver into the wheel at all.
+      # - src/pyramids_lazy/__init__.py, which is NOT just library code: on Windows it prepends
+      #   the installed gdalplugins/ directory to PATH (and calls add_dll_directory), and that is
+      #   the only thing that lets GDAL resolve the plugin's self-vendored Arrow DLLs, since
+      #   Windows has no $ORIGIN. Break that block and the wheel installs and then fails to load
+      #   the driver; `verify windows AMD64` is the only check that catches it, and it is one of
+      #   the legs that went red on main in run 44936415149. Linux and macOS bake the directory
+      #   into the plugin via rpath, so they would not notice.
+      #
+      # Cost, measured rather than assumed: 19 of the 40 commits before this change touched
+      # pyproject.toml and 7 touched __init__.py, so roughly half of human PRs now pay a 15-job
+      # run (86 job-minutes on this branch's own pull_request run, 45890484216). The automated
+      # `cz bump` release PR does NOT: it is opened with secrets.GITHUB_TOKEN, and a
+      # GITHUB_TOKEN-created pull request starts no workflow runs (PR #39 reports no checks at
+      # all). The release wheels are built by the workflow_run arm after github-release instead.
+      - "pyproject.toml"
+      - "src/pyramids_lazy/__init__.py"
+      - "ci/parquet-plugin/**"
+      - "setup.py"
+      - ".github/workflows/bundle-pypi-wheels.yml"
   workflow_run:
     workflows: ["github-release"]
     types: [completed]
@@ -90,8 +121,11 @@ jobs:
     timeout-minutes: 5
     permissions:
       actions: read
-    # core's workflow_run guard: only build for a dispatch/push, or a SUCCESSFUL same-repo
-    # github-release. Downstream jobs `needs: resolve-ref`, so they skip when this skips.
+    # core's workflow_run guard: a workflow_run event builds only if it came from a SUCCESSFUL
+    # same-repo github-release; EVERY other event (push, pull_request, workflow_dispatch -- and
+    # any trigger added later) passes. Downstream jobs `needs: resolve-ref`, so they skip when
+    # this skips. The `case` block below is what decides the ref per event, and it has a `*` arm
+    # for exactly that reason.
     if: >-
       github.event_name != 'workflow_run' ||
       (github.event.workflow_run.conclusion == 'success' &&
@@ -123,6 +157,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           INPUT_BRANCH: ${{ inputs.branch }}
           FALLBACK_REF: ${{ github.ref_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           case "$EVENT_NAME" in
@@ -139,6 +174,12 @@ jobs:
               fi
               ;;
             workflow_dispatch) REF="${INPUT_BRANCH:-$FALLBACK_REF}" ;;
+            # On a PR, github.ref_name is the UNQUALIFIED "<pr_number>/merge". actions/checkout
+            # treats an unqualified ref as branch-or-tag (getCheckoutInfo in src/ref-helper.ts):
+            # neither refs/heads/<n>/merge nor a tag of that name exists, so it fails with
+            # "A branch or tag with the name '<n>/merge' could not be found" -- every build job
+            # dies at step one. Qualify it to the merge ref the PR event actually points at.
+            pull_request) REF="refs/pull/${PR_NUMBER}/merge" ;;
             *) REF="$FALLBACK_REF" ;;
           esac
           echo "resolved ref: ${REF}"
@@ -266,9 +307,18 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # Every verify job checks out `needs.resolve-ref.outputs.ref` and so declares resolve-ref,
+  # even though build-linux-wheels already depends on it: an undeclared need renders the
+  # expression EMPTY rather than failing, and checkout then falls back to github.ref. That is
+  # the same ref on a push or a pull request, but on the release path github.ref is the default
+  # branch while the wheel is built from the release/auto-* branch carrying the version bump --
+  # so verify.py WOULD HAVE RUN from a different tree than the wheel it was verifying. Latent, not
+  # historical: this workflow has never run on a workflow_run event (every run so far is a push,
+  # a pull_request or a workflow_dispatch), and 0.1.0/0.1.1/0.2.0 all predate it, so no published
+  # wheel was verified against the wrong tree. The first release through this arm would have been.
   verify-debian12:
     name: verify debian12 (glibc)
-    needs: build-linux-wheels
+    needs: [resolve-ref, build-linux-wheels]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
@@ -291,7 +341,7 @@ jobs:
 
   verify-rocky9:
     name: verify rocky9 (glibc)
-    needs: build-linux-wheels
+    needs: [resolve-ref, build-linux-wheels]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
@@ -314,7 +364,7 @@ jobs:
 
   verify-rocky9-aarch64:
     name: verify rocky9 aarch64 (glibc)
-    needs: build-linux-wheels
+    needs: [resolve-ref, build-linux-wheels]
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     container:
@@ -337,7 +387,7 @@ jobs:
 
   verify-macos:
     name: verify macos ${{ matrix.arch }}
-    needs: build-macos-wheels
+    needs: [resolve-ref, build-macos-wheels]
     runs-on: ${{ matrix.runs-on }}
     timeout-minutes: 30
     strategy:
@@ -367,7 +417,7 @@ jobs:
 
   verify-windows:
     name: verify windows AMD64
-    needs: build-windows-wheels
+    needs: [resolve-ref, build-windows-wheels]
     runs-on: windows-2022
     timeout-minutes: 30
     steps:
@@ -390,8 +440,11 @@ jobs:
 
   report:
     name: report
+    # resolve-ref is listed because the `if` below reads needs.resolve-ref.result: an
+    # undeclared need renders null, `null != 'skipped'` is true, and the guard would be a
+    # no-op dressed up as a condition.
     needs:
-      [build-linux-wheels, build-macos-wheels, build-windows-wheels, sdist]
+      [resolve-ref, build-linux-wheels, build-macos-wheels, build-windows-wheels, sdist]
     if: always() && needs.resolve-ref.result != 'skipped'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -424,8 +477,9 @@ jobs:
     timeout-minutes: 15
     # Publish only after a SUCCESSFUL same-repo github-release (the canonical path). A manual
     # dispatch with dry_run_release runs the gather + composition gate and then STOPS before any
-    # upload/publish -- how the release plumbing is exercised without cutting a release. A plain
-    # push to main never satisfies this `if`, so it builds + verifies but publishes nothing.
+    # upload/publish -- how the release plumbing is exercised without cutting a release. Neither a
+    # plain push to main nor a pull request satisfies this `if`: both build + verify and publish
+    # nothing, so opening a PR against the build can never upload a wheel.
     if: >-
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
