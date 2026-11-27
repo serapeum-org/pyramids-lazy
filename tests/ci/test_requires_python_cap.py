@@ -20,6 +20,10 @@ machinery pip uses to decide whether to install, so a drift such as ``<3.16`` or
 for the reason it would fail a user. The specifiers are read from the source tree, not from a built
 wheel, because the dev/CI pixi env ships no ``setuptools`` and an isolated ``python -m build`` would
 need the network -- which the repo's offline-test convention forbids.
+
+This guard retires with the cap: when the ``<3.15`` ceiling is dropped from ``setup.py`` (once the cp315
+wheels exist upstream), the published and default specifiers become identical and both admit 3.15, so the
+exclusion tests here fail by design -- delete this file as part of lifting the cap, not before.
 """
 
 from __future__ import annotations
@@ -52,6 +56,26 @@ def _project_table() -> dict:
     return tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]
 
 
+def _assigns_name(node: ast.AST, name: str) -> bool:
+    """Whether ``node`` assigns to a module-level variable called ``name``.
+
+    Accepts both a plain assignment (``x = ...``) and an annotated one (``x: str = ...``) so a
+    harmless type annotation added to ``setup.py`` later does not make the guard miss the cap.
+
+    Args:
+        node: Any AST node.
+        name: The target variable name to match.
+
+    Returns:
+        bool: True when ``node`` is an assignment whose target is exactly ``name``.
+    """
+    if isinstance(node, ast.Assign):
+        return any(isinstance(t, ast.Name) and t.id == name for t in node.targets)
+    if isinstance(node, ast.AnnAssign):
+        return isinstance(node.target, ast.Name) and node.target.id == name
+    return False
+
+
 def _requires_python_branches() -> tuple[str, str]:
     """Return ``setup.py``'s ``(published, default)`` ``requires-python`` specifiers.
 
@@ -68,8 +92,7 @@ def _requires_python_branches() -> tuple[str, str]:
     """
     tree = ast.parse(SETUP_PY.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
-        targets = node.targets if isinstance(node, ast.Assign) else []
-        if not any(isinstance(t, ast.Name) and t.id == "_REQUIRES_PYTHON" for t in targets):
+        if not _assigns_name(node, "_REQUIRES_PYTHON"):
             continue
         value = node.value
         assert isinstance(value, ast.IfExp), (
@@ -95,20 +118,20 @@ def _publish_env_var() -> str:
     """
     tree = ast.parse(SETUP_PY.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
-        targets = node.targets if isinstance(node, ast.Assign) else []
-        if not any(isinstance(t, ast.Name) and t.id == "_PUBLISH" for t in targets):
+        if not _assigns_name(node, "_PUBLISH"):
             continue
         for call in ast.walk(node.value):
-            is_environ_get = (
+            # Accept both os.environ.get("X") and os.getenv("X"), the two equivalent spellings.
+            reads_env = (
                 isinstance(call, ast.Call)
                 and isinstance(call.func, ast.Attribute)
-                and call.func.attr == "get"
+                and call.func.attr in {"get", "getenv"}
                 and call.args
                 and isinstance(call.args[0], ast.Constant)
             )
-            if is_environ_get:
+            if reads_env:
                 return str(call.args[0].value)
-    raise AssertionError("setup.py's _PUBLISH flag does not read an os.environ.get(...) variable")
+    raise AssertionError("setup.py's _PUBLISH flag does not read an os.environ.get/os.getenv variable")
 
 
 class TestPyprojectDeclaresRequiresPythonDynamic:
