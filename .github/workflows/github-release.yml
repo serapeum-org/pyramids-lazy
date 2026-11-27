@@ -228,32 +228,49 @@ jobs:
       - name: Verify the bump commit and tag landed
         run: |
           set -euo pipefail
+          # No emptiness check on rev-parse: under `set -e` a failure aborts the step, so a guard
+          # here could never print.
           HEAD_SHA="$(git rev-parse HEAD)"
-          if [ -z "$HEAD_SHA" ]; then
-            echo "::error::could not resolve HEAD on the release branch"
+
+          # Read the version the tree now declares. Accept either quote style, and fail loudly
+          # rather than carrying an empty value into the comparison below.
+          VERSION="$(sed -nE '0,/^[[:space:]]*version[[:space:]]*=/s/^[[:space:]]*version[[:space:]]*=[[:space:]]*["'"'"']([^"'"'"']+)["'"'"'].*/\1/p' pyproject.toml)"
+          if [ -z "$VERSION" ]; then
+            echo "::error::could not read [project] version from pyproject.toml; refusing to record a release ref"
             exit 1
           fi
 
-          # HEAD must be exactly tagged. The action amends the bump commit during its lockfile fold
-          # and force-moves the tag onto the amended commit, so after a successful run the two agree.
-          TAG="$(git describe --tags --exact-match HEAD 2>/dev/null || true)"
-          if [ -z "$TAG" ]; then
+          # `git tag --points-at`, not `git describe --exact-match`: describe returns ONE arbitrary
+          # tag when several point at HEAD. The action amends the bump commit during its lockfile
+          # fold and force-moves the tag onto the amended commit, so after a healthy run the tag for
+          # $VERSION is among these. tag_format is bare "$version" in this repo, so the tag name is
+          # the version itself -- a prefixed tag_format would need the prefix applied here.
+          TAGS="$(git tag --points-at HEAD)"
+          if [ -z "$TAGS" ]; then
             echo "::error::HEAD ($HEAD_SHA) carries no tag -- the version bump did not land (see the action's --files-only recovery path). Refusing to record a release ref."
             exit 1
           fi
-
-          # The tag must also match the version the tree now declares, so a stale tag reachable from
-          # HEAD cannot be mistaken for this release's tag.
-          VERSION="$(grep -m1 -E '^version[[:space:]]*=' pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')"
-          if [ "$TAG" != "$VERSION" ]; then
-            echo "::error::tag ($TAG) does not match pyproject version ($VERSION); refusing to record a release ref"
+          if ! printf '%s\n' "$TAGS" | grep -qx -- "$VERSION"; then
+            echo "tags on HEAD: $(printf '%s' "$TAGS" | tr '\n' ' ')"
+            echo "::error::no tag matching the pyproject version ($VERSION) points at HEAD; refusing to record a release ref"
             exit 1
           fi
 
-          echo "verified: HEAD $HEAD_SHA is tagged $TAG and matches pyproject version $VERSION"
+          echo "verified: HEAD $HEAD_SHA is tagged $VERSION (tags on HEAD: $(printf '%s' "$TAGS" | tr '\n' ' '))"
 
       - name: Record the released commit for the downstream consumer
-        run: git rev-parse HEAD > release-ref.txt
+        run: |
+          set -euo pipefail
+          REF="$(git rev-parse HEAD)"
+          # Must be a bare 40-hex SHA. The consumer feeds this straight to `actions/checkout`, and a
+          # blank or multi-line value would both corrupt its $GITHUB_OUTPUT write and silently fall
+          # back to the default branch.
+          if ! printf '%s' "$REF" | grep -qE '^[0-9a-f]{40}$'; then
+            echo "::error::refusing to record a release ref that is not a 40-hex SHA: '$REF'"
+            exit 1
+          fi
+          printf '%s\n' "$REF" > release-ref.txt
+          echo "recorded release ref: $REF"
 
       - name: Upload the release ref for pypi-release
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

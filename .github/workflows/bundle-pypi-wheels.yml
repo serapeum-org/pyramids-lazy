@@ -127,10 +127,16 @@ jobs:
           set -euo pipefail
           case "$EVENT_NAME" in
             workflow_run)
-              REF="$(cat .release-ref/release-ref.txt)"
-              # An empty artifact would make checkout fall back to the default branch and publish
-              # main's version. Refuse instead.
-              [ -n "$REF" ] || { echo "::error::empty release ref -- refusing to build the default branch"; exit 1; }
+              # `tr -d` strips the trailing newline and any stray CR, so the value cannot inject a
+              # second line into $GITHUB_OUTPUT below.
+              REF="$(tr -d '\r\n' < .release-ref/release-ref.txt)"
+              # Must be a bare 40-hex SHA, not merely non-empty: whitespace or a branch name would
+              # make checkout resolve something other than the released commit, and an empty value
+              # falls back to the default branch and publishes main's version.
+              if ! printf '%s' "$REF" | grep -qE '^[0-9a-f]{40}$'; then
+                echo "::error::release ref is not a 40-hex SHA: '$REF' -- refusing to build"
+                exit 1
+              fi
               ;;
             workflow_dispatch) REF="${INPUT_BRANCH:-$FALLBACK_REF}" ;;
             *) REF="$FALLBACK_REF" ;;
