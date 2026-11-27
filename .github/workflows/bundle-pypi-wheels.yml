@@ -475,6 +475,10 @@ jobs:
           pip install "${WHEEL}${{ matrix.extra }}" ${{ matrix.onlybinary }}
           pip install pytest pytest-env pytest-mock --only-binary=:all:
           python -c "import pyramids_lazy; print('installed', pyramids_lazy.__version__)"
+          # Unlike pure-wheel-test's extras leg, this gate does NOT tolerate pytest exit 5
+          # (`|| [ $? -eq 5 ]`): it runs the full tests/ tree, which always collects non-live/
+          # non-interop tests, so exit 5 here means the installed wheel failed to collect and must
+          # fail the gate rather than be masked.
           pytest -vvv -o pythonpath= -m "not live and not interop" tests/
 
   verify-sdist-pure-backend:
@@ -482,8 +486,12 @@ jobs:
     # no bundled driver, the pure backend. conda-forge ships no musl/win-arm64 libgdal-core, so that
     # exact platform cannot pip-install the stack here; instead we force the pure path on glibc by
     # building pyramids-lazy from the real sdist artifact (--no-binary) while its deps stay wheels.
-    # Asserts the degraded contract: imports, carries NO gdalplugins/, and iter_features over a
-    # .parquet raises (no silent success) rather than loading a driver it does not have.
+    # Asserts the degraded contract: the sdist install imports, reads a GeoParquet via read_parquet
+    # (the pure pyarrow/geopandas path), and carries NO bundled gdalplugins/ -- the one thing that
+    # actually distinguishes it from the native wheel. (It deliberately does NOT assert anything about
+    # iter_features over parquet: per ci/parquet-plugin/verify.py, iter_features is pyogrio-backed on
+    # pyogrio's own vendored libgdal, which has no Parquet driver and so raises with OR without the
+    # bundled plugin -- that raise would prove nothing about the pure vs native difference.)
     name: verify sdist pure backend
     needs: [resolve-ref, sdist]
     runs-on: ubuntu-latest
@@ -511,6 +519,7 @@ jobs:
           import importlib.util, pathlib, tempfile, os
           spec = importlib.util.find_spec("pyramids_lazy")
           pkg = pathlib.Path(spec.origin).parent
+          # The discriminator between this pure sdist install and the native wheel: no bundled driver.
           assert not (pkg / "gdalplugins").exists(), f"pure sdist install must not carry gdalplugins/: {pkg}"
           import pyramids_lazy
           print("pure backend OK:", pyramids_lazy.__version__, "@", pkg, "(no gdalplugins/)")
@@ -524,14 +533,10 @@ jobs:
           gpd.GeoDataFrame(
               {"i": [0, 1, 2]}, geometry=[Point(x, x) for x in range(3)], crs="EPSG:4326"
           ).to_parquet(path)
-          print("read_parquet works on the pure backend:", len(FeatureCollection.read_parquet(path)), "features")
-          try:
-              list(FeatureCollection.iter_features(path))
-          except Exception as exc:  # any raise satisfies the contract (no OGR driver -> must not succeed)
-              print("iter_features correctly raised without the OGR driver:",
-                    type(exc).__name__, "-", str(exc)[:200])
-          else:
-              raise SystemExit("iter_features over parquet must NOT silently succeed without the OGR driver")
+          # read_parquet is the pure pyarrow/geopandas path and must work without any bundled driver.
+          feats = len(FeatureCollection.read_parquet(path))
+          assert feats == 3, f"read_parquet returned {feats} features, expected 3"
+          print("read_parquet works on the pure backend:", feats, "features")
           PY
 
   report:
