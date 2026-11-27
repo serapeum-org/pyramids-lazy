@@ -39,6 +39,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -881,6 +882,36 @@ class TestThePathsFilterSelectsOnlyBuildTouchingPullRequests:
         """
         assert not _paths_filter_selects(path), f"{path} cannot change the wheel"
 
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "ci/parquet-plugin-notes/build.sh",
+            "ci/parquet-plugin.bak/build.sh",
+            "ci/parquet-pluginx",
+        ],
+    )
+    def test_a_sibling_sharing_the_directory_prefix_is_not_selected(self, path):
+        """`ci/parquet-plugin/**` must match the directory, not everything starting with its name.
+
+        Args:
+            path: A path under a sibling whose name begins with `ci/parquet-plugin`.
+
+        Test scenario:
+            The `/**` branch compares `path.startswith(pattern[: -len("**")])`, i.e. against
+            `ci/parquet-plugin/` WITH the separator. Stripping `/**` instead of `**` -- the
+            obvious-looking tidy-up, since the pattern ends in `/**` -- leaves the prefix
+            `ci/parquet-plugin` and silently widens the filter to every sibling directory
+            sharing that name. Every path in `test_an_unrelated_file_does_not` is outside `ci/`
+            entirely, so nothing there notices; these three are the shapes that do.
+
+            The direction matters: this is the expensive one. GitHub would not run the workflow
+            for any of these, so a wrongly-widened prefix spends ~95 job-minutes on a PR that
+            cannot touch the wheel.
+        """
+        assert not _paths_filter_selects(path), (
+            f"{path} is outside ci/parquet-plugin/ and must not start a build"
+        )
+
 
 class TestTheModelsRefuseWhatTheyCannotRepresent:
     """A model that quietly approximates is worse than one that stops."""
@@ -898,7 +929,7 @@ class TestTheModelsRefuseWhatTheyCannotRepresent:
                 {"github.ref": "refs/pull/54/merge", "github.run_id": "999"},
             )
 
-    @pytest.mark.parametrize("literal", ["true", "123", "main"])
+    @pytest.mark.parametrize("literal", ["true", "123", "main", "'main'"])
     def test_a_bare_literal_operand_is_rejected(self, literal):
         """A literal default renders as `''` through `context.get`, where GitHub renders the value.
 
@@ -1073,6 +1104,112 @@ class TestTheModelsRefuseWhatTheyCannotRepresent:
 
         with pytest.raises(AssertionError, match=r"unmodelled paths pattern.*\['\*'\]"):
             _paths_filter_selects("ci/parquet-plugin/plugin/build.sh")
+
+
+class TestTheExpressionModelReadsTheSpellingsItAccepts:
+    """`_MODELLED_EXPRESSION` is written to tolerate spellings the live step does not use.
+
+    The grammar allows any whitespace around `||` and any number of operands, while the live
+    step carries exactly one `||` with a single space either side. So the tolerance is dead code
+    against the workflow as written -- and a tolerance nothing exercises is one that breaks the
+    first time the step is reformatted, which is the same trap `_case_arms`' arm styles were
+    widened to avoid.
+    """
+
+    @pytest.mark.parametrize(
+        "body, spelling",
+        [
+            ("inputs.branch||github.ref_name", "no spaces around the pipes"),
+            ("inputs.branch  ||  github.ref_name", "extra spaces around the pipes"),
+            (
+                "inputs.branch || inputs.tag || github.ref_name",
+                "a three-operand chain",
+            ),
+        ],
+    )
+    def test_a_pipe_chain_is_read_whatever_its_spacing_and_length(self, body, spelling):
+        """Each spelling must resolve through to the first non-empty operand.
+
+        Args:
+            body: The expression body, inside the `${{ }}` the test wraps it in.
+            spelling: How it is written, for the failure message.
+
+        Test scenario:
+            All three resolve to `github.ref_name`, so a pass proves both halves agree: the
+            regex admitted the body AND `body.split("||")` plus `strip()` recovered the
+            operands from it. Splitting on `" || "` rather than `"||"` would pass the regex and
+            then look up one long operand that is in no context, which renders as the empty
+            string -- the silent-empty-`REF` outcome, reached through the model rather than
+            through the step.
+        """
+        resolved = _substitute(
+            "${{ " + body + " }}",
+            {"inputs.branch": "", "inputs.tag": "", "github.ref_name": "main"},
+        )
+
+        assert resolved == "main", f"{spelling} resolved to {resolved!r}"
+
+
+class TestTheTrustedContextAllowlistCatchesAnUntrustedContext:
+    """The allowlist guard runs against the live step, which satisfies it -- so it never fired.
+
+    `test_only_trusted_contexts_are_interpolated_into_the_shell` is the security property that
+    enabling the `pull_request` trigger made load-bearing: a fork's PR can now start this
+    workflow, and the resolve step interpolates `${{ }}` straight into shell. As written it can
+    only ever pass, because the one input it reads is the live workflow -- so neither the
+    operand extraction nor the allowlist itself has been shown to reject anything.
+
+    Both tests here drive that guard with a substituted `_resolve_script`, i.e. they call the
+    assertion rather than re-implement it. Re-stating the allowlist locally would mean a second
+    copy to widen, and widening the real one -- adding `github.head_ref` to `trusted` -- is
+    precisely the change that must not pass unnoticed.
+    """
+
+    _GUARD = TestTheModelsRefuseWhatTheyCannotRepresent
+
+    def test_an_arm_reaching_for_the_fork_branch_name_is_reported(self, monkeypatch):
+        """`github.head_ref` is free text chosen by the PR author, and must never be interpolated.
+
+        Args:
+            monkeypatch: Replaces the step with one interpolating the fork's branch name.
+
+        Test scenario:
+            A branch named `$(curl ...)` or ``;id;`` reaches the step's shell verbatim through
+            `${{ github.head_ref }}`, which is command injection into a job holding this repo's
+            token. The guard's job is to fail on the context, not on the value, so the branch
+            name here is ordinary -- an attacker-shaped one would pass or fail for the wrong
+            reason.
+        """
+        monkeypatch.setattr(
+            sys.modules[__name__],
+            "_resolve_script",
+            lambda: 'REF="${{ github.head_ref }}"\n',
+        )
+
+        with pytest.raises(
+            AssertionError, match=r"untrusted context\(s\).*github\.head_ref"
+        ):
+            self._GUARD().test_only_trusted_contexts_are_interpolated_into_the_shell()
+
+    def test_a_step_reading_only_trusted_contexts_still_passes(self, monkeypatch):
+        """The guard must accept the four allowlisted contexts, or it is a blanket refusal.
+
+        Args:
+            monkeypatch: Replaces the step with one reading only allowlisted contexts.
+
+        Test scenario:
+            The other direction of the same `read <= trusted` comparison. An inverted or
+            mis-typed comparison (`trusted <= read`, or comparing against the wrong set) still
+            passes against the live step, whose four contexts happen to be exactly the
+            allowlist -- a subset drawn from it is what separates the two.
+        """
+        monkeypatch.setattr(
+            sys.modules[__name__],
+            "_resolve_script",
+            lambda: 'REF="${{ inputs.branch || github.ref_name }}"\n',
+        )
+
+        self._GUARD().test_only_trusted_contexts_are_interpolated_into_the_shell()
 
 
 @requires_bash
@@ -1366,6 +1503,64 @@ class TestTheArmParserReadsTheStylesItClaimsToAccept:
         )
 
 
+class TestTheArmTerminatorCountsOnlyEndOfLineSemicolons:
+    """`_ARM_TERMINATOR` replaced a raw `span.count(";;")`, and the cross-check depends on it.
+
+    That count is the only thing stopping `_case_arms` from returning a set it merely agrees
+    with: `test_the_tests_drive_every_case_arm` compares the parsed arms against `_EVENT_CASES`,
+    so a parse that silently reads too few arms has to be caught by something else. Counting the
+    raw substring made the count wrong in one direction and the regex makes it wrong in the
+    other, so both need a test -- the live step has four plain arms and exercises neither.
+    """
+
+    def test_a_body_string_carrying_two_semicolons_does_not_inflate_the_count(
+        self, monkeypatch
+    ):
+        """A `;;` inside an arm's BODY is not an arm terminator, and must not be counted.
+
+        Args:
+            monkeypatch: Replaces the step with a `case` block whose first arm's body contains
+                `;;` inside a double-quoted string.
+
+        Test scenario:
+            `REF="${A};;${B}"` is the shape that breaks a substring count: two arms, three
+            occurrences of `;;`, so `span.count(";;")` reports 3 against 2 headers and
+            `_case_arms` raises on a block it parsed perfectly well. The failure would read as
+            "the arm regex no longer matches the step" while pointing at nothing wrong, and the
+            natural fix -- loosening the cross-check -- is what would then let a genuinely
+            mis-parsed block through.
+        """
+        script = (
+            'case "${E}" in\n  workflow_run) REF="${A};;${B}" ;;\n  *) REF=b ;;\nesac\n'
+        )
+        monkeypatch.setattr(sys.modules[__name__], "_resolve_script", lambda: script)
+
+        assert _case_arms() == {"*", "workflow_run"}, (
+            "a `;;` inside a body string was counted as an arm terminator"
+        )
+
+    def test_a_fall_through_terminator_deflates_the_count_and_is_reported(
+        self, monkeypatch
+    ):
+        """`;&` is a legal terminator this does not count, so the mismatch must raise.
+
+        Args:
+            monkeypatch: Replaces the step with a `case` block whose first arm ends in `;&`.
+
+        Test scenario:
+            The headers-exceed-terminators direction of the cross-check, which nothing reached:
+            `test_an_arm_style_the_regex_cannot_read_fails_the_cross_check` drives the opposite
+            case (0 headers against 2 terminators). `;&` falls through to the next arm, so an
+            arm written that way changes which ref is produced -- raising is the documented
+            behaviour, and the message names the terminator count so the cause is readable.
+        """
+        script = 'case "${E}" in\n  push) REF=a ;&\n  *) REF=b ;;\nesac\n'
+        monkeypatch.setattr(sys.modules[__name__], "_resolve_script", lambda: script)
+
+        with pytest.raises(AssertionError, match="parsed 2 case arms but found 1"):
+            _case_arms()
+
+
 class TestTheHelperExamplesStayExecutable:
     """`lint.yml`'s `static` job runs doctests over `src` only, never over `tests`.
 
@@ -1595,4 +1790,130 @@ class TestDeclaredNeedsReadsEveryShapeTheWorkflowUses:
         )
         assert "resolve-ref" in needs, (
             f"{job_id} writes its needs as {shape} and must still list resolve-ref"
+        )
+
+
+def _request_for(marker: object) -> SimpleNamespace:
+    """Build the minimal `request` stand-in `_bash_must_be_present` reads.
+
+    The fixture touches exactly one thing on the request it is handed,
+    `request.node.get_closest_marker("bash")`, so a two-attribute namespace is a complete stand
+    in. Faking it is what makes the fixture's failure branch reachable at all: the real request
+    carries the markers of the test being set up, and a test cannot be both the subject and the
+    driver of its own gate.
+
+    Args:
+        marker: What `get_closest_marker("bash")` should return -- any truthy object to stand
+            for the marker being present, or None for a test that does not carry it. The
+            fixture only tests truthiness, never the object's contents.
+
+    Returns:
+        SimpleNamespace: A `request`-shaped object exposing `node.get_closest_marker`.
+
+    Examples:
+        - The `bash` marker is reported as present:
+            ```python
+            >>> _request_for("the mark").node.get_closest_marker("bash")
+            'the mark'
+
+            ```
+        - Every other marker is absent, so the gate cannot fire on an unrelated one:
+            ```python
+            >>> _request_for("the mark").node.get_closest_marker("live") is None
+            True
+
+            ```
+    """
+    return SimpleNamespace(
+        node=SimpleNamespace(
+            get_closest_marker=lambda name: marker if name == "bash" else None
+        )
+    )
+
+
+class TestTheBashGateFailsRatherThanSkipping:
+    """`_bash_must_be_present` is the whole reason this module has no `skipif`.
+
+    The repo's `CLAUDE.md` forbids folding a missing dependency into a skip count, and here that
+    rule has teeth: the 16 `@requires_bash` tests are the only ones that run the workflow's own
+    shell, so a machine without `bash` would otherwise report "16 skipped" beside a green line
+    while nothing about the resolve step had been checked.
+
+    The fixture's failing branch cannot be reached by running a test -- an autouse fixture is
+    set up before the test body, so monkeypatching `_BASH` from inside one is already too late.
+    It is called through `__wrapped__`, the original function pytest keeps on the fixture object,
+    because pytest refuses a direct call on the fixture itself.
+    """
+
+    def test_a_bash_marked_test_fails_when_no_bash_exists(self, monkeypatch):
+        """The gate must raise `Failed`, not `Skipped`, and must say how to opt out.
+
+        Args:
+            monkeypatch: Sets the module's `_BASH` to None, i.e. simulates a machine where
+                `find_bash()` found nothing usable.
+
+        Test scenario:
+            The one combination that must stop the run: a `bash`-marked test on a machine with
+            no usable `bash`. Asserts the outcome type as well as the message, because
+            `pytest.skip` is a one-word edit away and would turn this gate into exactly the
+            silent skip it exists to replace -- and the message is checked for `-m 'not bash'`
+            because an environment that genuinely has no `bash` needs to be told how to
+            deselect deliberately rather than left to guess.
+
+            The outcome is caught by hand rather than with `pytest.raises(pytest.fail.Exception)`
+            for that same reason: a `Skipped` raised here escapes `pytest.raises`, and pytest
+            then reports THIS test as skipped. The mutation would be reported as a skip by the
+            test written to catch it, which is as silent a pass as the one being guarded against.
+        """
+        monkeypatch.setattr(sys.modules[__name__], "_BASH", None)
+
+        outcome: BaseException | None = None
+        try:
+            _bash_must_be_present.__wrapped__(_request_for(pytest.mark.bash))
+        except (pytest.fail.Exception, pytest.skip.Exception) as raised:
+            outcome = raised
+
+        assert isinstance(outcome, pytest.fail.Exception), (
+            f"the gate must fail the run, never skip and never pass; it raised {outcome!r}"
+        )
+        assert not isinstance(outcome, pytest.skip.Exception), (
+            "the gate must fail the run, never skip -- a skip is what it replaced"
+        )
+
+        message = str(outcome)
+
+        assert "no usable bash found" in message, message
+        assert "-m 'not bash'" in message, (
+            f"the gate must name the deselection it expects, got: {message}"
+        )
+
+    @pytest.mark.parametrize(
+        "marker, bash, case",
+        [
+            (None, None, "an unmarked test on a machine with no bash"),
+            (None, "/usr/bin/bash", "an unmarked test where bash exists"),
+            (pytest.mark.bash, "/usr/bin/bash", "a bash-marked test where bash exists"),
+        ],
+    )
+    def test_it_lets_every_other_combination_through(
+        self, marker, bash, case, monkeypatch
+    ):
+        """The gate is autouse, so it runs for every test in the module and must not over-fire.
+
+        Args:
+            marker: What the simulated test carries, the `bash` marker or nothing.
+            bash: The simulated `find_bash()` result.
+            case: The combination in words, for the failure message.
+            monkeypatch: Sets the module's `_BASH` to the simulated result.
+
+        Test scenario:
+            The other three cells of the truth table. The first is the one that matters: the
+            YAML-only tests here -- the trigger, the `paths` filter, the `needs` wiring -- must
+            still run on a machine without `bash`, so dropping the marker test from the
+            condition would fail the whole module rather than the 16 tests that need a shell.
+        """
+        monkeypatch.setattr(sys.modules[__name__], "_BASH", bash)
+
+        assert _bash_must_be_present.__wrapped__(_request_for(marker)) is None, (
+            f"the gate must pass {case} through"
         )
