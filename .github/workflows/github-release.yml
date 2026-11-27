@@ -86,15 +86,20 @@ jobs:
       branch: ${{ steps.resolve.outputs.branch }}
     steps:
       - name: Check actor is a repository admin
+        # Every `${{ }}` below reaches the shell through `env`, never through the script body: GitHub
+        # expands an expression into the script *before* bash parses it, so an interpolated value is
+        # read as shell source rather than as data. Matches Digital-Earth's copy of this step.
         run: |
-          PERMISSION=$(gh api repos/${{ github.repository }}/collaborators/${{ github.actor }}/permission --jq '.permission')
-          echo "Permission level for ${{ github.actor }}: $PERMISSION"
+          PERMISSION=$(gh api "repos/$REPOSITORY/collaborators/$ACTOR/permission" --jq '.permission')
+          echo "Permission level for $ACTOR: $PERMISSION"
           if [ "$PERMISSION" != "admin" ]; then
-            echo "::error::${{ github.actor }} is not a repository admin. Only admins can trigger releases."
+            echo "::error::$ACTOR is not a repository admin. Only admins can trigger releases."
             exit 1
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
 
       - name: Verify the repo allows merge commits
         # The auto-merge later uses `gh pr merge --merge` (a MERGE COMMIT) specifically so the tagged
