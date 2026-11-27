@@ -354,15 +354,30 @@ jobs:
       #     BRANCH="${{ needs.prepare.outputs.branch }}"
       #     git push origin --delete "$BRANCH" || echo "branch ${BRANCH} already removed; nothing to delete"
 
-  # If the release fails anywhere after `prepare` pushed an AUTO-CREATED branch, delete that branch so
-  # failed attempts stop littering the remote (runs 43784168924 and 43905004962 both had to be cleaned
-  # up by hand). Guards: only `release/auto-*` branches, never an operator-supplied release-branch, and
-  # never one that already has an open PR. The tag and GitHub Release, if the failure came after they
-  # were cut, are left alone — deleting those is a judgement call, not a cleanup.
+  # Delete the branch `prepare` created when a release fails or is cancelled BEFORE the tag was cut,
+  # so failed attempts stop littering the remote (runs 43784168924 and 43905004962 both had to be
+  # cleaned up by hand). It deletes a branch only when all of these hold: this run created it
+  # (`prepare.outputs.created`), the bump was never tagged (`release.outputs.tagged`), and no open PR
+  # targets it. Once the tag exists the branch is kept, because the tag and GitHub Release are left
+  # in place on failure and that branch holds the only copy of the commit they point at.
   cleanup-on-failure:
-    needs: [prepare, pure-wheel-test, release]
-    if: ${{ failure() && needs.prepare.outputs.branch != '' }}
+    # `pure-wheel-test` is not listed: it is an ancestor through `release`, and `failure()` covers
+    # the whole dependency chain, so naming it again adds nothing.
+    needs: [prepare, release]
+    # Four conditions, each load-bearing:
+    #   failure() || cancelled()  -- failure() alone is false for a cancelled run, which used to
+    #                                leave the branch behind on every cancel.
+    #   created == 'true'         -- only ever delete a branch THIS run created.
+    #   tagged != 'true'          -- once the bump commit is tagged, that branch holds the only copy
+    #                                of it (the tag and Release are deliberately kept on failure), so
+    #                                deleting it would strand the tag and make the next dispatch
+    #                                recompute the same version and collide on the existing tag.
+    if: >-
+      ${{ (failure() || cancelled())
+          && needs.prepare.outputs.created == 'true'
+          && needs.release.outputs.tagged != 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: write
       pull-requests: read
@@ -374,9 +389,12 @@ jobs:
           BRANCH: ${{ needs.prepare.outputs.branch }}
         run: |
           set -euo pipefail
+          # Belt and braces. Ownership is already established by the job's
+          # `prepare.outputs.created == 'true'` condition; this only refuses to act on a name that
+          # does not look like one we mint, in case that output is ever wired up wrong.
           case "$BRANCH" in
             release/auto-*) ;;
-            *) echo "Not an auto-created branch ($BRANCH); leaving it."; exit 0 ;;
+            *) echo "Not an auto-created branch name ($BRANCH); leaving it."; exit 0 ;;
           esac
 
           # --repo is mandatory: this job has no checkout, and `gh` resolves the repository from
