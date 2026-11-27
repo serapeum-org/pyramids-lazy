@@ -39,15 +39,18 @@ def _is_wsl_launcher(candidate: Path) -> bool:
         bool: True for anything under a `System32` directory.
 
     Examples:
-        - The WSL launcher is rejected:
+        - The WSL launcher is rejected. Forward slashes on purpose: a backslash string is a
+          SINGLE path component on POSIX, so `.parts` holds one element, this answers False,
+          and a backslash example passes on Windows while failing every Linux and macOS leg
+          of the test matrix:
             ```python
-            >>> _is_wsl_launcher(Path(r"C:\\Windows\\System32\\bash.exe"))
+            >>> _is_wsl_launcher(Path("C:/Windows/System32/bash.exe"))
             True
 
             ```
         - Git Bash is not:
             ```python
-            >>> _is_wsl_launcher(Path(r"C:\\Program Files\\Git\\usr\\bin\\bash.exe"))
+            >>> _is_wsl_launcher(Path("C:/Program Files/Git/usr/bin/bash.exe"))
             False
 
             ```
