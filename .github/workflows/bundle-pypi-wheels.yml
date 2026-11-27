@@ -32,19 +32,36 @@ on:
   # -- so verify.py has to run while a change can still be revised cheaply. It used to run for the
   # first time on the push to main: run 44936415149 (PR #43's merge commit) failed four build legs
   # and `verify windows AMD64` there, and PR #48 existed only to repair it. The `paths` filter keeps
-  # the ~95 job-minutes off a PR that cannot change the artifact. Nothing in this workflow is
-  # cached, so a PR pays what the measured push run paid -- there is no warm entry for it to miss.
+  # the ~86 job-minutes off a PR that cannot change the artifact. Nothing in this workflow is
+  # cached, so a PR pays what a push pays -- there is no warm entry for it to miss. (86 is this
+  # branch's own measured pull_request run, 45890484216; the earlier push run 45063994353 was 95,
+  # the difference being Windows run-to-run variance, 28m vs 36m.)
   pull_request:
     branches: [main]
     paths:
-      # pyproject.toml is in here for the same reason it is in core's filter: it holds the whole
-      # [tool.cibuildwheel] block -- the per-platform `before-all` entries that invoke these very
-      # build scripts, the `repair-wheel-command`s, the manylinux images, `build`/`skip`/`archs` --
-      # and [tool.setuptools.package-data], the one line that puts the compiled driver into the
-      # wheel at all. Editing any of those changes the published artifact without touching `ci/`.
-      # The cost is that a `cz bump` release PR, which edits [project].version, also builds; that
-      # is one extra run per release, and it builds exactly what is about to be published.
+      # Everything that decides what the native wheel contains or whether its driver loads:
+      #
+      # - pyproject.toml, for the same reason it is in core's filter: the whole
+      #   [tool.cibuildwheel] block lives there -- the per-platform `before-all` entries that
+      #   invoke these very build scripts, the `repair-wheel-command`s, the manylinux images,
+      #   `build`/`skip`/`archs` -- plus [tool.setuptools.package-data], the one line that puts
+      #   the compiled driver into the wheel at all.
+      # - src/pyramids_lazy/__init__.py, which is NOT just library code: on Windows it prepends
+      #   the installed gdalplugins/ directory to PATH (and calls add_dll_directory), and that is
+      #   the only thing that lets GDAL resolve the plugin's self-vendored Arrow DLLs, since
+      #   Windows has no $ORIGIN. Break that block and the wheel installs and then fails to load
+      #   the driver; `verify windows AMD64` is the only check that catches it, and it is one of
+      #   the legs that went red on main in run 44936415149. Linux and macOS bake the directory
+      #   into the plugin via rpath, so they would not notice.
+      #
+      # Cost, measured rather than assumed: 19 of the 40 commits before this change touched
+      # pyproject.toml and 7 touched __init__.py, so roughly half of human PRs now pay a 15-job
+      # run (86 job-minutes on this branch's own pull_request run, 45890484216). The automated
+      # `cz bump` release PR does NOT: it is opened with secrets.GITHUB_TOKEN, and a
+      # GITHUB_TOKEN-created pull request starts no workflow runs (PR #39 reports no checks at
+      # all). The release wheels are built by the workflow_run arm after github-release instead.
       - "pyproject.toml"
+      - "src/pyramids_lazy/__init__.py"
       - "ci/parquet-plugin/**"
       - "setup.py"
       - ".github/workflows/bundle-pypi-wheels.yml"

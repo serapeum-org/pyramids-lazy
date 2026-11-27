@@ -530,6 +530,7 @@ class TestThePullRequestArmIsLive:
         """The filter is what keeps ~95 job-minutes off a PR that cannot change the artifact."""
         assert _triggers()["pull_request"]["paths"] == [
             "pyproject.toml",
+            "src/pyramids_lazy/__init__.py",
             "ci/parquet-plugin/**",
             "setup.py",
             ".github/workflows/bundle-pypi-wheels.yml",
@@ -773,6 +774,7 @@ class TestThePathsFilterSelectsOnlyBuildTouchingPullRequests:
             "ci/parquet-plugin/verify.py",
             "setup.py",
             "pyproject.toml",
+            "src/pyramids_lazy/__init__.py",
             ".github/workflows/bundle-pypi-wheels.yml",
         ],
     )
@@ -786,7 +788,9 @@ class TestThePathsFilterSelectsOnlyBuildTouchingPullRequests:
             The six build scripts named in issue #54, plus `verify.py`, `setup.py` (which forces
             the `py3-none-<plat>` tag), `pyproject.toml` (which holds `[tool.cibuildwheel]`'s
             `before-all` / `repair-wheel-command` entries and the `package-data` line that puts
-            the driver in the wheel) and the workflow itself.
+            the driver in the wheel), `src/pyramids_lazy/__init__.py` (whose Windows block
+            prepends the installed `gdalplugins/` directory to `PATH`, the only thing that lets
+            GDAL resolve the plugin's self-vendored Arrow DLLs) and the workflow itself.
         """
         assert _paths_filter_selects(path), (
             f"{path} changes the wheel but would not build it"
@@ -809,10 +813,12 @@ class TestThePathsFilterSelectsOnlyBuildTouchingPullRequests:
             path: A changed file outside the native-build inputs.
 
         Test scenario:
-            Library code, this test, docs, and a sibling workflow. None of these reaches the
-            native build: `src/` is pure Python the wheel carries either way, and `tests.yml` is a
-            different pipeline. `pyproject.toml` is deliberately NOT in this list -- it configures
-            cibuildwheel and the packaging, so it belongs with the positive cases above.
+            A library module, this test, docs, and a sibling workflow. None of these reaches
+            the native build. Note the exclusion is per file, not "`src/` is library code": the
+            package's `__init__.py` performs the Windows plugin registration and is therefore a
+            positive case above, while `_zarr.py` is pure Python the wheel carries either way.
+            `pyproject.toml` is likewise NOT in this list -- it configures cibuildwheel and the
+            packaging.
         """
         assert not _paths_filter_selects(path), f"{path} cannot change the wheel"
 
