@@ -134,6 +134,35 @@ def _publish_env_var() -> str:
     raise AssertionError("setup.py's _PUBLISH flag does not read an os.environ.get/os.getenv variable")
 
 
+class TestAssignsNameAcceptsBothAssignmentForms:
+    """`_assigns_name` must track the cap through a plain or an annotated assignment.
+
+    The live `setup.py` uses a plain `_REQUIRES_PYTHON = ...`, so without these the annotated-form
+    support added for resilience would be untested dead code -- the trap this repo widens AST
+    matchers to avoid.
+    """
+
+    def test_a_plain_assignment_is_matched(self):
+        """`x = ...` is the live form and must be recognised."""
+        node = ast.parse("_REQUIRES_PYTHON = 'a' if flag else 'b'").body[0]
+        assert _assigns_name(node, "_REQUIRES_PYTHON")
+
+    def test_an_annotated_assignment_is_matched(self):
+        """`x: str = ...` is a harmless refactor that must not read as "cap gone"."""
+        node = ast.parse("_REQUIRES_PYTHON: str = 'a' if flag else 'b'").body[0]
+        assert _assigns_name(node, "_REQUIRES_PYTHON")
+
+    def test_a_different_name_is_not_matched(self):
+        """Matching must be exact, not a substring, so an unrelated assignment is ignored."""
+        node = ast.parse("_OTHER = 1").body[0]
+        assert not _assigns_name(node, "_REQUIRES_PYTHON")
+
+    def test_a_non_assignment_node_is_not_matched(self):
+        """A bare expression statement is not an assignment and must return False."""
+        node = ast.parse("flag").body[0]
+        assert not _assigns_name(node, "_REQUIRES_PYTHON")
+
+
 class TestPyprojectDeclaresRequiresPythonDynamic:
     """`requires-python` must be dynamic so `setup.py` can supply it per build."""
 
