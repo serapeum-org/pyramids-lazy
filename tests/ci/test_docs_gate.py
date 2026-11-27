@@ -30,13 +30,25 @@ So the tests here pin the parts that would make the gate silently stop working:
 - the two halves of the review artifact: it is uploaded only on a pull request, and from the very
   directory `--site-dir` writes to. Either half moving alone keeps the run green while uploading
   nothing, which is the same silent-success failure mode as the missing gate itself;
-- the gate's own checkout: `persist-credentials: false` and no explicit `ref:`, which is what keeps
-  fork-controlled code (and the ambient token) out of the one job a pull request can reach.
+- the gate's own checkout, which is the exposed surface because a pull request reaches that job.
+  It takes `ref: ${{ github.event.workflow_run.head_branch || github.ref }}` -- the same expression
+  `deploy-release` uses -- so the release path validates the tree that actually publishes rather
+  than the default branch GitHub hands a `workflow_run`. Naming a ref from the event is what moved
+  the fork safety into the expression and into the job's `if:`: the `||` falls through to
+  `github.ref` on a pull request (the merge commit, never the fork's head), and a fork's
+  `workflow_run` is refused by `github.event.workflow_run.head_repository.fork == false`, the same
+  guard `deploy-release` carries. `persist-credentials: false` keeps the ambient token out of the
+  one worktree a pull request controls.
 
 The helpers get their own classes at the end. They are the module's blind spot: every assertion
 above reads the workflow *through* them, so a helper that quietly returns nothing -- an unparsed
 `needs` shape, a step list it never looked at -- reports a missing field or an unwired job rather
 than failing where the fault is.
+
+Deliberately no `>>>` examples: CI's doctest gate is `pytest --doctest-modules src`, which never
+reaches `tests/`, and this module runs no `doctest.testmod` on itself the way `tests/ci/test_bash.py`
+does for `tests/ci/_bash.py`. An example here would be unexecuted documentation, and the helpers
+read the live workflow from disk, so one would also assert today's CI configuration twice.
 """
 
 from __future__ import annotations
@@ -53,23 +65,36 @@ pytestmark = pytest.mark.core
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "github-pages-mkdocs.yml"
 
-# `on:` is a YAML 1.1 boolean, so PyYAML keys the trigger block under True rather than "on".
+#: The key the trigger block parses to. `on:` is a YAML 1.1 boolean, so `yaml.safe_load` keys it
+#: under `True` rather than under the string `"on"` -- hence `_workflow()[_ON_KEY]`, not
+#: `_workflow()["on"]`, everywhere the triggers are read.
 _ON_KEY = True
 
-#: The job ids that publish, and so must be gated and unreachable from a pull request.
+#: The job ids that publish, and so must be gated and unreachable from a pull request. Used as the
+#: `parametrize` argument for every test that has to hold for both deploys.
 _DEPLOY_JOBS = ("deploy-main", "deploy-release")
 
-# The directory `mkdocs build` is told to write to. Captured rather than substring-matched so the
-# upload step's `path:` can be compared against it: a `--site-dir` nobody uploads and an upload of
-# a directory nothing wrote are both green runs that hand reviewers an empty artifact.
+#: Captures the directory `mkdocs build` is told to write to, from group 1 of a `--site-dir <path>`
+#: match. Captured rather than substring-matched so the upload step's `path:` can be compared
+#: against it: a `--site-dir` nobody uploads and an upload of a directory nothing wrote are both
+#: green runs that hand reviewers an empty artifact.
 _SITE_DIR = re.compile(r"--site-dir\s+(\S+)")
 
 
 def _workflow() -> dict:
     """Return the parsed docs workflow.
 
+    The file is re-read on every call rather than parsed once at import, and the helpers below
+    resolve this name through the module globals each time they run -- which is why monkeypatching
+    `_workflow` on the module swaps the source of truth for all of them at once.
+
     Returns:
-        dict: The whole workflow document.
+        dict: The whole workflow document. Its trigger block is keyed under `_ON_KEY`, not `"on"`.
+
+    Raises:
+        FileNotFoundError: If `.github/workflows/github-pages-mkdocs.yml` has been moved or
+            deleted -- the gate going missing is the failure this module exists to catch.
+        yaml.YAMLError: If the workflow is not parseable YAML.
     """
     return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
 
@@ -85,7 +110,8 @@ def _job(job_id: str) -> dict:
 
     Raises:
         AssertionError: If the job is absent, which every test here would otherwise
-            misreport as a missing field.
+            misreport as a missing field. The message enumerates the job ids that do exist.
+        KeyError: If the document carries no `jobs:` mapping at all.
     """
     jobs = _workflow()["jobs"]
     assert job_id in jobs, f"no `{job_id}` job; jobs are {sorted(jobs)}"
@@ -95,11 +121,19 @@ def _job(job_id: str) -> dict:
 def _declared_needs(job_id: str) -> list[str]:
     """Return a job's `needs` as a list, whether written as a string or a sequence.
 
+    Normalising the bare-string form matters for the membership tests built on it: `"build-strict"
+    in "build-strict-preview"` is true for a raw string, so a deploy gated on a similarly named job
+    would read as correctly wired.
+
     Args:
         job_id: The job's key under `jobs:`.
 
     Returns:
-        list[str]: The job ids it declares a dependency on.
+        list[str]: The job ids it declares a dependency on, in the order written; empty for a job
+            that declares no `needs`.
+
+    Raises:
+        AssertionError: Propagated from `_job` if the job is absent.
     """
     needs = _job(job_id).get("needs", [])
     return [needs] if isinstance(needs, str) else list(needs)
@@ -108,11 +142,20 @@ def _declared_needs(job_id: str) -> list[str]:
 def _run_steps(job_id: str) -> list[str]:
     """Return every `run:` script in a job, whitespace-normalised.
 
+    `uses:`-only steps are skipped rather than raising, and each script's words are rejoined with
+    single spaces so a command a YAML block scalar wrapped across lines still matches a one-line
+    substring search -- which is how every `--strict` / `-e docs` / `--locked` / `--site-dir`
+    assertion in this module is written.
+
     Args:
         job_id: The job's key under `jobs:`.
 
     Returns:
-        list[str]: One entry per step that carries a `run:`.
+        list[str]: One entry per step that carries a `run:`, in step order; empty for a job with
+            no steps, such as one that calls a reusable workflow.
+
+    Raises:
+        AssertionError: Propagated from `_job` if the job is absent.
     """
     return [
         " ".join(step["run"].split())
@@ -124,6 +167,11 @@ def _run_steps(job_id: str) -> list[str]:
 def _step_using(job_id: str, action: str) -> dict:
     """Return the first step in a job whose `uses:` names `action`.
 
+    Matched as a substring of the whole `uses:` value, so a caller can name an action without its
+    SHA pin or version comment. The first match wins, which is unambiguous only while no job uses
+    the same action twice: `actions/checkout` appears in all three jobs but exactly once in each,
+    so no caller here has to disambiguate.
+
     Args:
         job_id: The job's key under `jobs:`.
         action: A substring of the action reference, e.g. `python-setup/pixi`.
@@ -132,7 +180,9 @@ def _step_using(job_id: str, action: str) -> dict:
         dict: That step's mapping.
 
     Raises:
-        AssertionError: If no step uses it.
+        AssertionError: If no step uses it, or -- propagated from `_job` -- if the job is absent.
+            Returning `None` instead would turn a removed step into a `TypeError` in the caller,
+            or silently satisfy an `in` check.
     """
     for step in _job(job_id).get("steps", []):
         if action in step.get("uses", ""):
@@ -144,17 +194,39 @@ class TestTheGateRunsBeforeAMerge:
     """Without the `pull_request` trigger the gate only ever runs after the fact."""
 
     def test_the_workflow_runs_on_a_pull_request(self):
-        """A docs break must fail the PR, not the deploy that follows it."""
+        """A docs break must fail the PR, not the deploy that follows it.
+
+        Test scenario:
+            Reads the trigger block under `_ON_KEY` and requires a `pull_request` key. The other
+            three triggers all fire at or after a merge, so dropping this one restores the state
+            described at the top of this module -- a docs break failing the deploy rather than the
+            pull request that introduced it -- and nothing else in CI would notice.
+        """
         assert "pull_request" in _workflow()[_ON_KEY], (
             "no pull_request trigger: the strict build would only run post-merge again"
         )
 
     def test_it_runs_for_a_pull_request_into_any_branch(self):
-        """Mirrors core: a docs break is worth catching on a stacked PR too."""
+        """Mirrors core: a docs break is worth catching on a stacked PR too.
+
+        Test scenario:
+            Equality against `['**']`, not membership, so narrowing the trigger to `[main]` fails
+            here. A PR stacked onto another feature branch would otherwise skip the gate entirely
+            and only be checked once its base merged -- i.e. after the docs break was already on
+            the branch that publishes.
+        """
         assert _workflow()[_ON_KEY]["pull_request"]["branches"] == ["**"]
 
     def test_the_existing_triggers_are_kept(self):
-        """The gate is additive -- push-to-main, release and the release workflow_run all stay."""
+        """The gate is additive -- push-to-main, release and the release workflow_run all stay.
+
+        Test scenario:
+            Adding `pull_request` to an existing `on:` block is an edit to the one place every
+            trigger lives, so this pins the three that were already there: `push` to `main` (the
+            main-site deploy), `release: published` and the `workflow_run` on `github-release` (the
+            two paths `deploy-release` runs from). Losing one would strand a deploy job whose `if:`
+            can then never be satisfied -- a workflow that still passes while publishing nothing.
+        """
         triggers = _workflow()[_ON_KEY]
 
         assert triggers["push"]["branches"] == ["main"]
@@ -166,11 +238,25 @@ class TestTheStrictBuildIsReal:
     """A `build-strict` job that does not actually build strictly is worse than none."""
 
     def test_the_job_exists(self):
-        """Named `build-strict`, as in pyramids-core, so the two repos stay diffable."""
+        """Named `build-strict`, as in pyramids-core, so the two repos stay diffable.
+
+        Test scenario:
+            Read straight off the parsed document rather than through `_job`, so this test is the
+            one that cannot be confused by the helper: everything else here calls `_job`, whose
+            own assertion would report the same rename as a missing job. The id is part of the
+            contract because `needs: build-strict` on both deploys spells it out by hand.
+        """
         assert "build-strict" in _workflow()["jobs"]
 
     def test_it_builds_with_strict(self):
-        """`--strict` is what turns an mkdocs/griffe warning into a failure."""
+        """`--strict` is what turns an mkdocs/griffe warning into a failure.
+
+        Test scenario:
+            `mkdocs.yml` carries no `strict:` key, so nothing but this flag turns a broken `nav:`
+            entry or a dangling `::: identifier` into a non-zero exit and the job would pass while
+            gating nothing. Asserted as `any(...)` over the job's scripts with those scripts
+            attached to the message, so a helper that collected no steps cannot read as a pass.
+        """
         runs = _run_steps("build-strict")
 
         assert any("mkdocs build --strict" in run for run in runs), runs
@@ -191,7 +277,15 @@ class TestTheStrictBuildIsReal:
         assert setup["with"]["activate-environment"] == "docs"
 
     def test_it_does_not_write_into_the_repository(self):
-        """`--site-dir` keeps the build out of the tree, so nothing can be committed by accident."""
+        """`--site-dir` keeps the build out of the tree, so nothing can be committed by accident.
+
+        Test scenario:
+            `mkdocs.yml` sets no `site_dir:`, so without this flag the build renders a whole site
+            into the checkout it was run from -- a tree the gate shares with every other job on the
+            same event. Only the flag's presence is asserted here; that it names the same directory
+            the review artifact uploads is
+            `TestTheBuiltSiteReachesReviewersWithoutBeingPublished`'s job.
+        """
         runs = _run_steps("build-strict")
 
         assert any("--site-dir" in run for run in runs), runs
@@ -215,6 +309,14 @@ class TestEveryDeployIsGatedOnIt:
 
         Args:
             job_id: A publishing job.
+
+        Test scenario:
+            This is the single line that separates a PR-only check from a gate. Without it the
+            strict build and the deploy are independent jobs on the same event, so a release would
+            publish while the build that disapproved of it fails in parallel. Membership only, so
+            this test stays about the gate being present in the chain; that each deploy waits for
+            the gate and nothing else is the equality assertion in
+            `TestDeclaredNeedsReadsBothShapesOfNeeds`.
         """
         assert "build-strict" in _declared_needs(job_id), (
             f"`{job_id}` would publish a site the gate never approved"
@@ -244,7 +346,18 @@ class TestAPullRequestCannotDeploy:
         ), condition
 
     def test_the_fork_guard_on_the_release_deploy_survives(self):
-        """The workflow_run path must still refuse a fork's head repository."""
+        """The workflow_run path must still refuse a fork's head repository.
+
+        Test scenario:
+            `deploy-release` is reachable from a `workflow_run`, runs with the top-level
+            `contents: write` + `pages: write`, and holds `ACTIONS_DEPLOY_TOKEN`. The guard is the
+            only thing keeping a fork's completed `github-release` run from reaching it. The
+            condition is whitespace-normalised first because YAML does not fold the folded block's
+            more-indented continuation lines: the parsed string still carries newlines, so the
+            assertion would otherwise depend on where the condition happens to wrap. The same
+            guard now also sits on `build-strict`, asserted separately in
+            `TestTheGateValidatesTheTreeThatShips`.
+        """
         condition = " ".join(_job("deploy-release")["if"].split())
 
         assert "github.event.workflow_run.head_repository.fork == false" in condition
@@ -381,7 +494,15 @@ class TestTheGateValidatesTheTreeThatShips:
         )
 
     def test_that_ref_prefers_the_triggering_branch_over_the_default_one(self):
-        """Pins the `head_branch || github.ref` shape, not merely that some `ref:` exists."""
+        """Pins the `head_branch || github.ref` shape, not merely that some `ref:` exists.
+
+        Test scenario:
+            The preceding test only compares the two jobs' expressions to each other, so editing
+            both to the same wrong value -- `github.ref` alone, or the operands swapped -- would
+            satisfy it. This reads the gate's expression alone and requires both operands in the
+            order that makes `head_branch` win when it is non-empty: reversed, `github.ref` is
+            always truthy and the `workflow_run` branch could never be reached.
+        """
         gate = " ".join(
             _step_using("build-strict", "actions/checkout")["with"]["ref"].split()
         )
