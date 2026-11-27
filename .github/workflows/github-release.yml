@@ -166,6 +166,11 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+    outputs:
+      # 'true' once the bump commit and its tag are confirmed on the release branch. Read by
+      # cleanup-on-failure: past this point the branch holds the only copy of the bump commit, so a
+      # later failure must NOT delete it.
+      tagged: ${{ steps.verify-bump.outputs.tagged }}
     steps:
       - name: Checkout the release branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -208,6 +213,40 @@ jobs:
       # with no re-bump. A plain workflow_dispatch of that workflow will NOT publish: its release job
       # requires `workflow_run` (or dry_run_release, which stops before uploading). Once the artifact
       # has expired, a fresh release dispatch is needed, which cuts the NEXT version.
+      # Assert the bump actually landed before anything downstream trusts HEAD. The shared action
+      # has a recovery path that retries the bump with `cz bump --files-only`, which writes the
+      # version files and changelog but creates NO commit and NO tag, warns, and still exits 0. On
+      # that path HEAD is the PRE-BUMP tip, so recording it would publish the previous version --
+      # which is how 0.1.1 was re-uploaded to PyPI and rejected with HTTP 400. Fail here instead.
+      - name: Verify the bump commit and tag landed
+        id: verify-bump
+        run: |
+          set -euo pipefail
+          HEAD_SHA="$(git rev-parse HEAD)"
+          if [ -z "$HEAD_SHA" ]; then
+            echo "::error::could not resolve HEAD on the release branch"
+            exit 1
+          fi
+
+          # HEAD must be exactly tagged. The action amends the bump commit during its lockfile fold
+          # and force-moves the tag onto the amended commit, so after a successful run the two agree.
+          TAG="$(git describe --tags --exact-match HEAD 2>/dev/null || true)"
+          if [ -z "$TAG" ]; then
+            echo "::error::HEAD ($HEAD_SHA) carries no tag -- the version bump did not land (see the action's --files-only recovery path). Refusing to record a release ref."
+            exit 1
+          fi
+
+          # The tag must also match the version the tree now declares, so a stale tag reachable from
+          # HEAD cannot be mistaken for this release's tag.
+          VERSION="$(grep -m1 -E '^version[[:space:]]*=' pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          if [ "$TAG" != "$VERSION" ]; then
+            echo "::error::tag ($TAG) does not match pyproject version ($VERSION); refusing to record a release ref"
+            exit 1
+          fi
+
+          echo "verified: HEAD $HEAD_SHA is tagged $TAG and matches pyproject version $VERSION"
+          echo "tagged=true" >> "$GITHUB_OUTPUT"
+
       - name: Record the released commit for the downstream consumer
         run: git rev-parse HEAD > release-ref.txt
 
