@@ -64,9 +64,16 @@ _EXPRESSION = re.compile(r"\$\{\{(.+?)\}\}")
 # `||`. Anything richer (a `&&` conditional, a comparison, `format(...)`) must fail loudly.
 _MODELLED_EXPRESSION = re.compile(r"[\w.]+(?:\s*\|\|\s*[\w.]+)*")
 
-# A `case` arm header: one or more glob/word patterns, optionally quoted, joined by `|`, then
-# `)`. The charset deliberately excludes `=`, `"` and `$`, so a body line such as
+# A `case` arm header: one or more glob/word patterns, optionally single-quoted, joined by `|`,
+# then `)`. The charset deliberately excludes `=`, `"` and `$`, so a body line such as
 # `REF="$(cat .release-ref/release-ref.txt)"` cannot be mistaken for an arm.
+#
+# Excluding `"` costs the double-quoted header style: `"pull_request")` is invisible to this
+# regex. Restyling an arm that way does not pass silently -- the `;;` cross-check in `_case_arms`
+# fails, reading 3 headers against 4 `;;` for one restyled arm and 0 against 4 when all four are
+# -- but the message it raises names the terminator count and this regex, not the arm that was
+# just edited. Restyle with single quotes, or widen the charset here and re-check that the
+# `REF="$(...)"` body line still cannot match.
 _ARM_HEADER = re.compile(
     r"^\s*((?:'?[A-Za-z0-9_*?.\-]+'?)(?:\s*\|\s*'?[A-Za-z0-9_*?.\-]+'?)*)\)",
     re.MULTILINE,
@@ -106,6 +113,26 @@ def _workflow() -> dict:
 
     Returns:
         dict: The whole workflow document.
+
+    Examples:
+        - The document is the workflow's top-level sections, read fresh from disk each call:
+            ```python
+            >>> _workflow()["name"]
+            'Bundle PyPI Wheels'
+
+            ```
+        - `on:` parses as the YAML 1.1 boolean, never the string, which is what `_ON_KEY` is
+          for:
+            ```python
+            >>> _ON_KEY in _workflow()
+            True
+            >>> "on" in _workflow()
+            False
+
+            ```
+
+    See Also:
+        _triggers: The `on:` block alone, reached through `_ON_KEY`.
     """
     return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
 
@@ -115,6 +142,25 @@ def _triggers() -> dict:
 
     Returns:
         dict: Event name to its configuration (`{}` for a bare event).
+
+    Examples:
+        - The four events that start this workflow:
+            ```python
+            >>> sorted(_triggers())
+            ['pull_request', 'push', 'workflow_dispatch', 'workflow_run']
+
+            ```
+        - Each event's value is its own filter block; `pull_request` carries both of its:
+            ```python
+            >>> sorted(_triggers()["pull_request"])
+            ['branches', 'paths']
+            >>> _triggers()["pull_request"]["branches"]
+            ['main']
+
+            ```
+
+    See Also:
+        _paths_filter_selects: Models the `paths` filter this returns.
     """
     return _workflow()[_ON_KEY]
 
@@ -140,10 +186,18 @@ def _substitute(script: str, context: dict[str, str]) -> str:
 
     Models the two expression forms the step uses: a bare context lookup, and `a || b` falling
     through to the first non-empty value. A key absent from `context` renders empty, which is what
-    GitHub does for a context property the current event does not carry. Falsiness here is
-    emptiness only -- GitHub's documented falsy list is `false, 0, -0, "", '', null`, so for the
-    string-valued contexts this step reads, `""` is the only falsy value either side treats as
-    such.
+    GitHub does for a context property the current event does not carry.
+
+    Falsiness here is emptiness only, and that is the single place this helper approximates rather
+    than refuses. GitHub's documented falsy list is `false, 0, -0, "", '', null`; this model treats
+    only `""` as falsy, so a `||` whose left operand is the string `false`, `0`, `-0` or `null`
+    returns that string where GitHub would fall through to the right operand. That divergence is
+    not reachable from the resolve step as written: its only `||` is
+    `inputs.branch || github.ref_name`, and `inputs.branch` is declared `type: string` with
+    `default: ""`. It stays a boundary rather than a bug only while that holds --
+    `inputs.dry_run_release` is a `type: boolean` input of this same workflow (read by the release
+    job's `if`, which this file compares as text instead of substituting), so a boolean context
+    reaching this step is the one rewrite that would make the model quietly wrong instead of loud.
 
     Any other expression form -- a `&&`/`||` conditional, a comparison, a function call such as
     `format(...)` -- RAISES rather than being approximated. The previous version split on `||` and
@@ -183,6 +237,16 @@ def _substitute(script: str, context: dict[str, str]) -> str:
             '[]'
 
             ```
+        - The modelled boundary: only `""` is falsy here, so a string-valued `false` is
+          returned rather than falling through as GitHub would:
+            ```python
+            >>> _substitute(
+            ...     "${{ inputs.dry_run_release || github.ref_name }}",
+            ...     {"inputs.dry_run_release": "false", "github.ref_name": "main"},
+            ... )
+            'false'
+
+            ```
 
     See Also:
         _resolve_ref: Runs the substituted script through a real bash.
@@ -216,12 +280,21 @@ def _run_resolve(
     step's own error, and dropped `SystemRoot`/`HOME` for no benefit.
 
     Args:
-        context: The expression context for the event (see :func:`_substitute`).
+        context: The expression context for the event (see `_substitute`).
         cwd: Directory to run in; the `workflow_run` path reads `.release-ref/release-ref.txt`
             relative to it.
 
     Returns:
         tuple: The finished process, and the `ref=` lines it appended to `GITHUB_OUTPUT`.
+
+    Raises:
+        AssertionError: If no `bash` was found on this machine. Every test that reaches this
+            sits in a `@requires_bash` class, so the assertion firing means that guard was
+            dropped rather than that the machine is unusual.
+
+    See Also:
+        _resolve_ref: The strict wrapper to use when the step is expected to succeed.
+        _substitute: Renders the step's `${{ }}` expressions before it is run.
     """
     assert _BASH is not None
     output = cwd / "github_output.txt"
@@ -247,11 +320,13 @@ def _resolve_ref(context: dict[str, str], cwd: Path) -> str:
     """Run the resolve step for an event it must handle and return the ref it writes.
 
     Args:
-        context: The expression context for the event (see :func:`_substitute`).
+        context: The expression context for the event (see `_substitute`).
         cwd: Directory to run in.
 
     Returns:
-        str: The value the step appends to `GITHUB_OUTPUT` as `ref=`.
+        str: The value the step appends to `GITHUB_OUTPUT` as `ref=`. Command substitution
+            strips the trailing newline, so the `workflow_run` path yields the artifact's
+            single line without it.
 
     Raises:
         AssertionError: If the step exits non-zero, or writes no `ref=` line.
@@ -334,10 +409,17 @@ def _case_arms() -> set[str]:
 
     Parses the `case ... esac` span rather than scanning the whole step, and accepts the arm
     styles `case` allows but this step does not currently use -- a pattern on its own line with
-    its body beneath, an alternation (`a|b)`), and a quoted pattern -- because the earlier
+    its body beneath, an alternation (`a|b)`), and a single-quoted pattern -- because the earlier
     one-line-only regex returned the same four names for all of those and let a new arm pass
     unnoticed. The arm count is cross-checked against the `;;` terminators so a parse that reads
     too few arms fails instead of agreeing with the expected set.
+
+    Double quotes are the one style deliberately left out: `_ARM_HEADER` excludes `"` so that the
+    body line `REF="$(cat .release-ref/release-ref.txt)"` cannot be read as an arm, which also
+    makes a header written `"pull_request")` invisible. Restyling arms that way fails the `;;`
+    cross-check below instead of returning a wrong arm set -- but the failure names the terminator
+    count and the regex, not the arm that was edited, so a maintainer who has just restyled one
+    arm should read it as "restyle with single quotes", not as a broken test.
 
     Returns:
         set[str]: One entry per pattern, alternations split and quotes stripped, `*` included.
@@ -507,6 +589,11 @@ class TestTheResolvedRefIsCheckoutable:
         Args:
             number: The pull request number for the simulated event.
             tmp_path: Working directory for the step, from pytest.
+
+        Test scenario:
+            A 1-digit and a 4-digit number, because the arm builds the ref by interpolating
+            `github.event.pull_request.number` into `refs/pull/<n>/merge` rather than matching a
+            shape -- so nothing about the digit count may change the result.
         """
         resolved = _resolve_ref(
             {
@@ -525,6 +612,13 @@ class TestTheResolvedRefIsCheckoutable:
 
         Args:
             tmp_path: Working directory for the step, from pytest.
+
+        Test scenario:
+            A `push` event, which has no arm of its own -- the step's arms are `workflow_run`,
+            `workflow_dispatch`, `pull_request` and `*`, so a push reaches the catch-all and
+            takes `github.ref_name`. The ref it yields is therefore the same one
+            `test_an_unrecognised_event_falls_back_to_the_triggering_ref` asserts, reached by the
+            same arm; this test names the trigger that actually relies on it.
         """
         resolved = _resolve_ref(
             {"github.event_name": "push", "github.ref_name": "main"},
@@ -538,6 +632,12 @@ class TestTheResolvedRefIsCheckoutable:
 
         Args:
             tmp_path: Working directory for the step, from pytest.
+
+        Test scenario:
+            A dispatch that fills `inputs.branch` while `github.ref_name` is `main`, so a pass
+            proves the left operand wins rather than both happening to agree. This is the only
+            `||` in the step, and both of its operands are string-valued -- the reason
+            `_substitute`'s emptiness-only falsiness is sufficient here.
         """
         resolved = _resolve_ref(
             {
@@ -555,6 +655,11 @@ class TestTheResolvedRefIsCheckoutable:
 
         Args:
             tmp_path: Working directory for the step, from pytest.
+
+        Test scenario:
+            The context omits `inputs.branch` entirely, which `_substitute` renders as empty --
+            the same thing the input's declared `default: ""` produces when the dispatch form is
+            submitted untouched.
         """
         resolved = _resolve_ref(
             {"github.event_name": "workflow_dispatch", "github.ref_name": "main"},
@@ -568,6 +673,12 @@ class TestTheResolvedRefIsCheckoutable:
 
         Args:
             tmp_path: Working directory for the step, from pytest.
+
+        Test scenario:
+            Writes the `.release-ref/release-ref.txt` the job's `download-artifact` step fetches,
+            then checks the arm reads it. The file is written with a trailing newline while the
+            expected ref has none: command substitution strips it, which is why the arm needs no
+            explicit trim.
         """
         (tmp_path / ".release-ref").mkdir()
         (tmp_path / ".release-ref" / "release-ref.txt").write_text(
@@ -600,7 +711,14 @@ class TestAPullRequestCannotPublish:
         )
 
     def test_the_release_job_needs_every_build_and_verify_job(self):
-        """A red verify must stop a publish, not merely colour the run."""
+        """A red verify must stop a publish, not merely colour the run.
+
+        Test scenario:
+            The nine jobs the artifact's correctness depends on -- the three build jobs, `sdist`,
+            and all five verify jobs. `resolve-ref` is deliberately absent: `release` reads no
+            `needs.resolve-ref` expression, so it is one of the two jobs
+            `test_the_set_of_such_jobs_is_the_expected_ten` leaves out.
+        """
         assert set(_workflow()["jobs"]["release"]["needs"]) == {
             "build-linux-wheels",
             "build-macos-wheels",
@@ -618,7 +736,16 @@ class TestSupersededPullRequestRunsAreCancelled:
     """95 job-minutes a run makes the hosted-runner pool the scarce resource."""
 
     def test_only_pull_requests_share_a_cancellable_group(self):
-        """A push or release gets the unique `run_id` group, so a merge is always built to completion."""
+        """A push or release gets the unique `run_id` group, so a merge is always built to completion.
+
+        Test scenario:
+            Asserts the conditional as a substring because the group is prefixed with
+            `${{ github.workflow }}`, and compares `cancel-in-progress` whole. The group keys a
+            pull request on `github.ref`, which stays `refs/pull/<n>/merge` across pushes to that
+            PR -- so a new push shares the group and cancels the run it supersedes. This
+            expression is also a form `_substitute` refuses, which costs nothing: it is read as
+            text here and never run through the model.
+        """
         concurrency = _workflow()["concurrency"]
 
         assert (
@@ -707,7 +834,16 @@ class TestTheModelsRefuseWhatTheyCannotRepresent:
             )
 
     def test_a_function_call_expression_is_rejected(self):
-        """`format(...)` is a plausible rewrite of the new arm, and was modelled as empty."""
+        """`format(...)` is a plausible rewrite of the new arm, and was modelled as empty.
+
+        Test scenario:
+            The live `pull_request` arm builds its ref by concatenation,
+            `refs/pull/${{ github.event.pull_request.number }}/merge`; `format()` is the obvious
+            tidier spelling of exactly that, so it is the rewrite most likely to arrive. The
+            expression here spells the whole ref, and the old lookup-by-key model resolved it to
+            the empty string -- an empty `REF`, the silent-default-branch outcome
+            `TestTheResolveStepFailsLoudlyRatherThanResolvingNothing` is named for.
+        """
         with pytest.raises(AssertionError, match="unmodelled GitHub expression"):
             _substitute(
                 "${{ format('refs/pull/{0}/merge', github.event.pull_request.number) }}",
@@ -715,7 +851,15 @@ class TestTheModelsRefuseWhatTheyCannotRepresent:
             )
 
     def test_the_live_step_only_uses_modelled_expressions(self):
-        """The guard above is only useful if the step itself stays inside the modelled grammar."""
+        """The guard above is only useful if the step itself stays inside the modelled grammar.
+
+        Test scenario:
+            The step currently carries four expressions -- `github.event_name`,
+            `inputs.branch || github.ref_name`, `github.event.pull_request.number` and
+            `github.ref_name` -- one `||` chain and three bare lookups, all inside the grammar.
+            An expression added outside it fails here rather than being silently approximated by
+            every test that runs the step.
+        """
         for body in _EXPRESSION.findall(_resolve_script()):
             assert _MODELLED_EXPRESSION.fullmatch(body.strip()), body
 
@@ -747,6 +891,12 @@ class TestTheModelsRefuseWhatTheyCannotRepresent:
 
         Args:
             monkeypatch: Replaces the live filter with one carrying an interior glob.
+
+        Test scenario:
+            The pattern does not end in `/**`, so it takes the literal branch of the model,
+            where an unguarded glob would be compared with `==` and silently match nothing.
+            `test_an_interior_glob_before_a_trailing_double_star_is_rejected` covers the other
+            branch.
         """
         monkeypatch.setattr(
             sys.modules[__name__],
@@ -1012,6 +1162,12 @@ class TestTheArmParserReadsTheStylesItClaimsToAccept:
     both are dead code against it -- and a tolerance no test exercises is one that breaks
     the first time an arm is restyled, which is the regression the helper was widened to
     prevent.
+
+    The quoted style below means SINGLE quotes. A double-quoted header is outside
+    `_ARM_HEADER`'s charset, which excludes `"` so that the step's own
+    `REF="$(cat .release-ref/release-ref.txt)"` body line cannot be read as an arm; that case is
+    covered one class up, by `test_an_arm_style_the_regex_cannot_read_fails_the_cross_check`,
+    because it belongs with the failures rather than the tolerances.
     """
 
     @pytest.mark.parametrize(
@@ -1073,9 +1229,11 @@ class TestTheHelperExamplesStayExecutable:
         """Execute the module's own doctests and fail on the first rotted example.
 
         Test scenario:
-            Collects every `>>>` example in this module (the examples on `_substitute`,
-            `_checkout_can_resolve` and `_paths_filter_selects`) and requires both that some were
-            found -- so the guard cannot pass by collecting nothing -- and that all of them pass.
+            Collects every `>>>` example in this module -- the ones on the module-level helpers,
+            deliberately not on the test classes -- and requires both that some were found, so
+            the guard cannot pass by collecting nothing, and that all of them pass. The helper
+            list is left unenumerated on purpose: naming it here is the kind of detail that rots
+            the moment an example is added, which is the failure this test exists to catch.
         """
         failures, attempted = doctest.testmod(
             sys.modules[__name__], verbose=False, report=False
@@ -1093,6 +1251,26 @@ def _jobs_reading_resolve_ref() -> set[str]:
 
     Returns:
         set[str]: Job ids containing a `needs.resolve-ref...` expression.
+
+    Examples:
+        - Ten of the workflow's twelve jobs read the resolved ref:
+            ```python
+            >>> len(_jobs_reading_resolve_ref())
+            10
+            >>> "report" in _jobs_reading_resolve_ref()
+            True
+
+            ```
+        - The two that do not are `resolve-ref` itself and `release`, which gates on the build
+          and verify jobs instead:
+            ```python
+            >>> sorted({"resolve-ref", "release"} & _jobs_reading_resolve_ref())
+            []
+
+            ```
+
+    See Also:
+        _declared_needs: The other half of the check -- what a job declares, not what it reads.
     """
     return {
         job_id
@@ -1109,6 +1287,30 @@ def _declared_needs(job_id: str) -> list[str]:
 
     Returns:
         list[str]: The job ids it declares a dependency on.
+
+    Raises:
+        KeyError: If `job_id` is not a job in the workflow.
+
+    Examples:
+        - A bare-string `needs` becomes a one-item list, so membership cannot match a
+          substring of a differently-named job:
+            ```python
+            >>> _declared_needs("build-linux-wheels")
+            ['resolve-ref']
+
+            ```
+        - A job declaring none reads as empty rather than raising:
+            ```python
+            >>> _declared_needs("resolve-ref")
+            []
+
+            ```
+        - A list is returned in the order written, `resolve-ref` first here:
+            ```python
+            >>> _declared_needs("verify-debian12")
+            ['resolve-ref', 'build-linux-wheels']
+
+            ```
     """
     needs = _workflow()["jobs"][job_id].get("needs", [])
     return [needs] if isinstance(needs, str) else list(needs)
@@ -1143,7 +1345,13 @@ class TestEveryJobReadingTheResolvedRefDeclaresIt:
         )
 
     def test_the_set_of_such_jobs_is_the_expected_ten(self):
-        """Guards the guard: an empty collection would make the test above vacuous."""
+        """Guards the guard: an empty collection would make the test above vacuous.
+
+        Test scenario:
+            Ten of the workflow's twelve jobs, i.e. every job except `resolve-ref` itself and
+            `release`. Listing them is the point: `test_every_such_job_is_wired` passes trivially
+            on an empty set, so this is what proves the search found the jobs rather than nothing.
+        """
         assert _jobs_reading_resolve_ref() == {
             "build-linux-wheels",
             "build-macos-wheels",
@@ -1158,7 +1366,15 @@ class TestEveryJobReadingTheResolvedRefDeclaresIt:
         }
 
     def test_reports_skip_guard_can_now_fire(self):
-        """`report`'s `if` reads `needs.resolve-ref.result`, which requires the declaration."""
+        """`report`'s `if` reads `needs.resolve-ref.result`, which requires the declaration.
+
+        Test scenario:
+            `report` runs under `always()`, so its `!= 'skipped'` test is the only thing stopping
+            it from reporting on a run whose ref was never resolved. An undeclared need renders
+            null, and `null != 'skipped'` is true -- the guard would read as a condition while
+            always passing. Checks both halves: the `if` still reads the result, and the job still
+            declares the need that makes reading it meaningful.
+        """
         report = _workflow()["jobs"]["report"]
 
         assert "needs.resolve-ref.result" in report["if"]
