@@ -272,6 +272,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BRANCH: ${{ needs.prepare.outputs.branch }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           HEAD_BRANCH="$BRANCH"
@@ -285,8 +286,12 @@ jobs:
           # release is a fresh DISPATCH (new run_id => fresh branch), NOT GitHub's "Re-run failed
           # jobs" — a re-run re-invokes commitizen on the already-bumped branch and double-bumps the
           # version. (Making the bump itself idempotent is tracked in #29.)
-          if gh pr view "$HEAD_BRANCH" --json number >/dev/null 2>&1; then
-            echo "A PR for ${HEAD_BRANCH} already exists."
+          # Open PRs only. `gh pr view <branch>` also resolves CLOSED and MERGED PRs, so a branch
+          # that carried an earlier PR would be reported as already having one and the release PR
+          # would never be opened -- the release would finish with nothing to merge.
+          OPEN_PRS="$(gh pr list --repo "$REPOSITORY" --head "$HEAD_BRANCH" --state open --json number --jq 'length')"
+          if [ "$OPEN_PRS" -gt 0 ]; then
+            echo "An open PR for ${HEAD_BRANCH} already exists."
           else
             gh pr create \
               --base main \
