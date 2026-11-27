@@ -135,12 +135,10 @@ jobs:
     steps:
       - name: Download the release ref from the github-release run
         # On the release (workflow_run) path head_branch/head_sha point at the pre-bump main:
-        # github-release creates a release/auto-* branch, pushes the version bump THERE, then
-        # uploads that commit's SHA as the `release-ref` artifact. Fetch it so the wheels build the
-        # commit that actually holds the bump -- NOT head_branch/head_sha (which would build main).
-        # A SHA rather than a branch name, so this still resolves after the release branch is
-        # deleted on merge — the tag github-release cut still points at that commit. (It is not
-        # reachable from main: the squash merge rewrites the SHA.)
+        # github-release creates a release/auto-* branch and pushes the version bump THERE, then
+        # uploads that branch name as the `release-ref` artifact. Fetch it so the wheels build the
+        # tip that actually holds the bump -- exactly what pypi-release.yml does, and NOT
+        # head_branch/head_sha (which would build main).
         if: github.event_name == 'workflow_run'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -150,37 +148,18 @@ jobs:
           path: .release-ref
       - name: Resolve the ref to build
         id: ref
-        # Caller-supplied values reach the shell through `env`, never the script body: GitHub expands
-        # an expression into the script before bash parses it, so `inputs.branch` interpolated inline
-        # would be read as shell source rather than as data.
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          INPUT_BRANCH: ${{ inputs.branch }}
-          FALLBACK_REF: ${{ github.ref_name }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          case "$EVENT_NAME" in
-            workflow_run)
-              # `tr -d` strips the trailing newline and any stray CR, so the value cannot inject a
-              # second line into $GITHUB_OUTPUT below.
-              REF="$(tr -d '\r\n' < .release-ref/release-ref.txt)"
-              # Must be a bare 40-hex SHA, not merely non-empty: whitespace or a branch name would
-              # make checkout resolve something other than the released commit, and an empty value
-              # falls back to the default branch and publishes main's version.
-              if ! printf '%s' "$REF" | grep -qE '^[0-9a-f]{40}$'; then
-                echo "::error::release ref is not a 40-hex SHA: '$REF' -- refusing to build"
-                exit 1
-              fi
-              ;;
-            workflow_dispatch) REF="${INPUT_BRANCH:-$FALLBACK_REF}" ;;
+          case "${{ github.event_name }}" in
+            workflow_run) REF="$(cat .release-ref/release-ref.txt)" ;;
+            workflow_dispatch) REF="${{ inputs.branch || github.ref_name }}" ;;
             # On a PR, github.ref_name is the UNQUALIFIED "<pr_number>/merge". actions/checkout
             # treats an unqualified ref as branch-or-tag (getCheckoutInfo in src/ref-helper.ts):
             # neither refs/heads/<n>/merge nor a tag of that name exists, so it fails with
             # "A branch or tag with the name '<n>/merge' could not be found" -- every build job
             # dies at step one. Qualify it to the merge ref the PR event actually points at.
-            pull_request) REF="refs/pull/${PR_NUMBER}/merge" ;;
-            *) REF="$FALLBACK_REF" ;;
+            pull_request) REF="refs/pull/${{ github.event.pull_request.number }}/merge" ;;
+            *) REF="${{ github.ref_name }}" ;;
           esac
           echo "resolved ref: ${REF}"
           echo "ref=${REF}" >> "$GITHUB_OUTPUT"
