@@ -178,11 +178,6 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-    outputs:
-      # 'true' once the bump commit and its tag are confirmed on the release branch. Read by
-      # cleanup-on-failure: past this point the branch holds the only copy of the bump commit, so a
-      # later failure must NOT delete it.
-      tagged: ${{ steps.verify-bump.outputs.tagged }}
     steps:
       - name: Checkout the release branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -231,7 +226,6 @@ jobs:
       # that path HEAD is the PRE-BUMP tip, so recording it would publish the previous version --
       # which is how 0.1.1 was re-uploaded to PyPI and rejected with HTTP 400. Fail here instead.
       - name: Verify the bump commit and tag landed
-        id: verify-bump
         run: |
           set -euo pipefail
           HEAD_SHA="$(git rev-parse HEAD)"
@@ -257,7 +251,6 @@ jobs:
           fi
 
           echo "verified: HEAD $HEAD_SHA is tagged $TAG and matches pyproject version $VERSION"
-          echo "tagged=true" >> "$GITHUB_OUTPUT"
 
       - name: Record the released commit for the downstream consumer
         run: git rev-parse HEAD > release-ref.txt
@@ -340,25 +333,22 @@ jobs:
   # Delete the branch `prepare` created when a release fails or is cancelled BEFORE the tag was cut,
   # so failed attempts stop littering the remote (runs 43784168924 and 43905004962 both had to be
   # cleaned up by hand). It deletes a branch only when all of these hold: this run created it
-  # (`prepare.outputs.created`), the bump was never tagged (`release.outputs.tagged`), and no open PR
-  # targets it. Once the tag exists the branch is kept, because the tag and GitHub Release are left
-  # in place on failure and that branch holds the only copy of the commit they point at.
+  # (`prepare.outputs.created`), no open PR targets it, and its tip carries no tag — the last check
+  # made against origin inside the step, not from a job output. Once the tag exists the branch is
+  # kept, because the tag and GitHub Release are left in place on failure and that branch holds the
+  # only copy of the commit they point at.
   cleanup-on-failure:
     # `pure-wheel-test` is not listed: it is an ancestor through `release`, and `failure()` covers
     # the whole dependency chain, so naming it again adds nothing.
     needs: [prepare, release]
-    # Four conditions, each load-bearing:
+    # Two conditions here; the "was it tagged?" test is done inside the step against origin, NOT
+    # from a job output -- see the step body for why.
     #   failure() || cancelled()  -- failure() alone is false for a cancelled run, which used to
     #                                leave the branch behind on every cancel.
     #   created == 'true'         -- only ever delete a branch THIS run created.
-    #   tagged != 'true'          -- once the bump commit is tagged, that branch holds the only copy
-    #                                of it (the tag and Release are deliberately kept on failure), so
-    #                                deleting it would strand the tag and make the next dispatch
-    #                                recompute the same version and collide on the existing tag.
     if: >-
       ${{ (failure() || cancelled())
-          && needs.prepare.outputs.created == 'true'
-          && needs.release.outputs.tagged != 'true' }}
+          && needs.prepare.outputs.created == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -392,14 +382,41 @@ jobs:
             exit 0
           fi
 
-          echo "Deleting orphaned release branch $BRANCH"
-          # Distinguish "already gone" (404) from a real failure (403/422/5xx). Reporting a masked
-          # permission error as "already gone" claims a cleanup that did not happen.
+          # Never delete a branch whose tip is tagged. Once the bump commit carries a tag, this
+          # branch holds the only copy of it -- the tag and GitHub Release are deliberately kept on
+          # failure -- so deleting it strands the tag and makes the next dispatch recompute the same
+          # version and collide.
+          #
+          # Asked of origin, NOT taken from a job output. An earlier attempt gated on a `tagged`
+          # output written by the release job's verify step, which fails twice over: the shared
+          # action pushes the tag and creates the Release internally, several steps BEFORE that
+          # verify step runs, so a failure in that window leaves the tag on origin with the output
+          # unset; and a failed job's outputs are not documented to reach a dependent job at all, so
+          # the guard could be inert exactly when it is needed. Querying origin is immune to both.
+          TIP="$(gh api "repos/$REPOSITORY/git/ref/heads/$BRANCH" --jq '.object.sha' 2>/dev/null || true)"
+          if [ -z "$TIP" ]; then
+            echo "branch $BRANCH is already gone; nothing to delete"
+            exit 0
+          fi
+          if gh api "repos/$REPOSITORY/git/matching-refs/tags" --jq '.[].object.sha' | grep -qx "$TIP"; then
+            echo "$BRANCH tip ($TIP) is tagged; keeping the branch so the tag stays reachable."
+            exit 0
+          fi
+
+          echo "Deleting orphaned release branch $BRANCH (tip $TIP, untagged)"
+          # Classify by the ACTUAL responses, measured against the API:
+          #   deleting a ref that does not exist -> 422 "Reference does not exist"
+          #   deleting in a repo we cannot reach -> 404 "Not Found"
+          # So 422 is the benign already-gone case and 404 is a real failure. A previous revision
+          # had these the wrong way round: it hard-failed on the benign case and swallowed the
+          # permission error as "already gone".
           if ! ERR="$(gh api -X DELETE "repos/$REPOSITORY/git/refs/heads/$BRANCH" 2>&1)"; then
-            if printf '%s' "$ERR" | grep -q 'Not Found'; then
+            if printf '%s' "$ERR" | grep -q 'Reference does not exist'; then
               echo "branch $BRANCH already gone; nothing to delete"
             else
-              echo "::error::failed to delete $BRANCH: $ERR"
+              # Printed on its own lines first: an ::error:: annotation keeps only the first line.
+              printf 'failed to delete %s:\n%s\n' "$BRANCH" "$ERR"
+              echo "::error::failed to delete $BRANCH (see the log line above for the API response)"
               exit 1
             fi
           fi
