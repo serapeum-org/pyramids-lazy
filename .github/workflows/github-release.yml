@@ -12,18 +12,23 @@ name: github-release
 # on that ONE branch. (pure-wheel-test builds the pre-bump tip; the bump only adds the
 # version/changelog/lockfile commit, so the tested and released trees differ only by that commit.)
 #
-# THE TAG IS CURRENTLY ORPHANED OFF MAIN, BY CONSTRUCTION. main's ruleset allows squash merges only
-# and requires a review, so this workflow cannot land the release PR itself, and the human squash
-# that lands it rewrites the commit SHA — leaving the tag pointing at a commit that is not an
-# ancestor of main. 0.1.0, 0.1.1 and 0.2.0 are all orphaned this way. Do NOT read the PR body's
-# "merge with a merge commit" advice as something the ruleset currently permits. Deciding the fix is
-# #29: Route A adds the Actions app as a ruleset bypass actor (#51, deferred), Route B tags after
-# the merge (upstream github-actions #51, shipped as github-release/v1.6.0's `skip-tag`, plus #57).
+# EVERY TAG THIS WORKFLOW HAS CUT IS ORPHANED OFF MAIN. main's ruleset sets
+# allowed_merge_methods: ["squash"] and requires one review, so this workflow cannot land the release
+# PR itself, and the squash that lands it rewrites the commit SHA — leaving the tag on a commit that
+# is not an ancestor of main. 0.1.0, 0.1.1 and 0.2.0 are all orphaned this way (verify with
+# `git merge-base --is-ancestor <tag> origin/main`).
 #
-# On ANY failure the job goes red and PyPI is not published (the consumers gate on this run's
-# success). `cleanup-on-failure` then deletes the throwaway `release/auto-*` branch, unless a PR was
-# already opened for it. The tag and GitHub Release, if the failure came after they were cut, are
-# left in place for inspection — removing those is a judgement call, not a cleanup.
+# Repository admins hold bypass_mode: always on that ruleset, and this workflow is admin-gated — but
+# whether ruleset bypass also lifts allowed_merge_methods, or only the review requirement, is
+# UNTESTED. Do not assume a merge commit is available until someone proves it; that is the open
+# question in #51. Deciding the fix is #29: Route A adds the Actions app as a bypass actor (#51,
+# deferred), Route B tags after the merge (upstream github-actions#51, shipped as
+# github-release/v1.6.0's `skip-tag`, plus github-actions#57).
+#
+# On ANY failure the job goes red and PyPI is not published (the consumer gates on this run's
+# success). `cleanup-on-failure` then deletes the throwaway `release/auto-*` branch. The tag and
+# GitHub Release, if the failure came after they were cut, are left in place for inspection —
+# removing those is a judgement call, not a cleanup.
 
 permissions:
   contents: read
@@ -181,20 +186,24 @@ jobs:
           package-manager-version: v0.84.2
           install-groups: "dev"
 
-      # Hand the released commit to the downstream consumers (bundle-pypi-wheels, pypi-release).
-      # They are triggered by `workflow_run`, whose payload carries no custom data and whose
-      # head_branch/head_sha point at the dispatched ref (normally main) — which does NOT hold the
-      # bump in the manual-merge model. The artifact is the one channel that crosses the
+      # Hand the released commit to bundle-pypi-wheels.yml — the only workflow that reads this
+      # artifact. (pypi-release.yml is a dispatch-only emergency sdist fallback and never reads it.)
+      # bundle-pypi-wheels is triggered by `workflow_run`, whose payload carries no custom data and
+      # whose head_branch/head_sha point at the dispatched ref (normally main) — which does NOT hold
+      # the bump in the manual-merge model. The artifact is the one channel that crosses the
       # workflow_run boundary; the consumer downloads it by run id and checks it out.
       #
       # Record the SHA, not the branch name: the repo deletes the release branch when the PR merges,
-      # so a branch name leaves a delayed re-publish with nothing to check out, whereas the SHA
-      # stays reachable through the merge commit on main.
+      # and a branch name would then resolve to nothing. The SHA keeps resolving because the tag cut
+      # here still points at it. (It is NOT reachable from main — the squash merge rewrites the SHA;
+      # see the orphaned-tag note in the header.)
       #
-      # RECOVERY: a failed/late publish re-runs the SAME version with no re-bump while the artifact
-      # is live — re-run the consumer job, or dispatch it against the recorded SHA. Only once the
-      # artifact has expired is a fresh release dispatch needed (which cuts the NEXT version).
-      - name: Record the released commit for the downstream consumers
+      # RECOVERY: while the artifact is live, re-run bundle-pypi-wheels' failed jobs — that replays
+      # the same workflow_run payload, so the publish gate still fires and the SAME version is built
+      # with no re-bump. A plain workflow_dispatch of that workflow will NOT publish: its release job
+      # requires `workflow_run` (or dry_run_release, which stops before uploading). Once the artifact
+      # has expired, a fresh release dispatch is needed, which cuts the NEXT version.
+      - name: Record the released commit for the downstream consumer
         run: git rev-parse HEAD > release-ref.txt
 
       - name: Upload the release ref for pypi-release
@@ -234,7 +243,7 @@ jobs:
               --base main \
               --head "$HEAD_BRANCH" \
               --title "$TITLE" \
-              --body "Automated release PR. The tag was cut on \`$HEAD_BRANCH\`; merge it into main MANUALLY. NOTE: a squash merge rewrites the commit SHA and orphans the tag — land it so the tagged commit stays an ancestor of main."
+              --body "Automated release PR. The tag was cut on \`$HEAD_BRANCH\`; merge it into main MANUALLY. NOTE: main allows squash merges only, and the squash rewrites the commit SHA, so the tag will NOT be an ancestor of main once this lands. That is the known, expected outcome today — see #29 for the fix. Do not hold this PR waiting for a merge-commit option."
           fi
 
           echo "Release PR for ${HEAD_BRANCH} is open; merge it manually into main."
