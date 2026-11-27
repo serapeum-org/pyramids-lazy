@@ -384,6 +384,17 @@ jobs:
     #   failure() || cancelled()  -- failure() alone is false for a cancelled run, which used to
     #                                leave the branch behind on every cancel.
     #   created == 'true'         -- only ever delete a branch THIS run created.
+    #
+    # TWO KNOWN LIMITATIONS, both accepted. Each one degrades to "the branch is left on origin",
+    # which is the behaviour this job replaced, so neither can delete something it should not:
+    #
+    #  1. Whether a not-yet-started job reliably starts once a run is CANCELLED is not something we
+    #     have verified, and the docs do not state it. If it does not, a cancelled release leaves
+    #     its branch behind exactly as before.
+    #  2. `created` is written to $GITHUB_OUTPUT by the resolve step, and a step killed mid-flight
+    #     publishes no outputs at all. A cancel landing between `git push -u` and the end of that
+    #     step therefore leaks the branch with this job's own guard switched off. Writing the output
+    #     earlier does not help, since outputs only materialise when the step completes.
     if: >-
       ${{ (failure() || cancelled())
           && needs.prepare.outputs.created == 'true' }}
