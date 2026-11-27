@@ -36,7 +36,6 @@ from __future__ import annotations
 import doctest
 import os
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -44,16 +43,34 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.ci._bash import BASH, requires_bash
+
 pytestmark = pytest.mark.core
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "bundle-pypi-wheels.yml"
 
-_BASH = shutil.which("bash")
+_BASH = BASH
 
-requires_bash = pytest.mark.skipif(
-    _BASH is None, reason="bash unavailable on this machine"
-)
+
+@pytest.fixture(autouse=True)
+def _bash_must_be_present(request):
+    """Fail a `bash`-marked test when no usable `bash` exists, rather than skipping it.
+
+    The repo's convention is that a test needing something absent is deselected on the command
+    line, never folded into a silent skip count -- a skip here would leave the 16 tests that are
+    this module's whole point invisible while the suite stayed green.
+
+    Args:
+        request: The pytest request, used to read the test's own markers.
+    """
+    if request.node.get_closest_marker("bash") and _BASH is None:
+        pytest.fail(
+            "no usable bash found: these tests drive the workflow's own shell, so skipping "
+            "them would leave only the YAML parsing covered. Install bash (Git for Windows "
+            "provides it) or deselect deliberately with -m 'not bash'."
+        )
+
 
 # `on:` is a YAML 1.1 boolean, so PyYAML keys the trigger block under True rather than "on".
 _ON_KEY = True
@@ -289,10 +306,17 @@ def _run_resolve(
     """Run the real resolve step for a simulated event and return the process and its outputs.
 
     Returns the process rather than asserting on it, so a test can distinguish the step failing
-    (the behaviour under test) from the harness failing. The environment is inherited with only
-    `GITHUB_OUTPUT` overridden: an earlier version passed `PATH=/usr/bin:/bin` and nothing else,
-    which made an unresolvable `cat` or a non-Git `bash` on Windows indistinguishable from the
-    step's own error, and dropped `SystemRoot`/`HOME` for no benefit.
+    (the behaviour under test) from the harness failing. The environment is inherited with two
+    overrides: an earlier version passed `PATH=/usr/bin:/bin` and nothing else, which made an
+    unresolvable `cat` or a non-Git `bash` on Windows indistinguishable from the step's own error,
+    and dropped `SystemRoot`/`HOME` for no benefit.
+
+    `LC_ALL=C` is the second override, and it is load-bearing:
+    `test_a_release_with_no_uploaded_ref_fails_the_step` asserts `cat`'s English
+    "No such file or directory". Inheriting a localized `LANG`/`LC_ALL` would translate that
+    message and fail the test for a reason unrelated to the workflow. CI runners are `C.UTF-8`, so
+    this only ever bit a localized developer machine -- which is precisely the kind of failure that
+    is maddening to diagnose.
 
     Args:
         context: The expression context for the event (see `_substitute`).
@@ -314,7 +338,7 @@ def _run_resolve(
     assert _BASH is not None
     output = cwd / "github_output.txt"
     output.touch()
-    env = {**os.environ, "GITHUB_OUTPUT": output.as_posix()}
+    env = {**os.environ, "GITHUB_OUTPUT": output.as_posix(), "LC_ALL": "C"}
     result = subprocess.run(
         [_BASH, "-c", _substitute(_resolve_script(), context)],
         capture_output=True,
@@ -1116,9 +1140,8 @@ class TestTheResolveHarnessRefusesAnUnusableResult:
             _resolve_ref({}, tmp_path)
 
 
-@requires_bash
-class TestEveryBranchOfTheResolveStepIsExercised:
-    """Branch coverage for shell embedded in YAML, which no coverage tool reports on."""
+class TestEveryArmIsAccountedFor:
+    """The arm/table agreement, which reads YAML only and so needs no `bash`."""
 
     def test_the_tests_drive_every_case_arm(self):
         """Every arm in the step is one `_EVENT_CASES` drives, and vice versa.
@@ -1135,6 +1158,11 @@ class TestEveryBranchOfTheResolveStepIsExercised:
         }
 
         assert _case_arms() == driven
+
+
+@requires_bash
+class TestEveryBranchOfTheResolveStepIsExercised:
+    """Branch coverage for shell embedded in YAML, which no coverage tool reports on."""
 
     @pytest.mark.parametrize("event", sorted(_EVENT_CASES))
     def test_every_modelled_event_resolves_its_ref(self, event, tmp_path):
