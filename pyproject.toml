@@ -3,7 +3,12 @@ name = "pyramids-lazy"
 version = "0.2.0"
 description = "Lazy / dask compute backend for pyramids (the pyramids.compute_backend plugin)"
 readme = "README.md"
-requires-python = ">=3.11,<4"
+# requires-python is declared dynamic (supplied by setup.py) so the PUBLISHED artifacts and a
+# local/editable install can differ: the wheels + sdist built for PyPI cap at <3.15 (pip then
+# refuses 3.15, where h5py/numcodecs/pyramids-core ship no cp315 wheels yet), while a clean
+# checkout, the pixi editable dev install and conda-forge's source build stay uncapped so the
+# 3.15 conda dev/CI environments keep working. See setup.py.
+dynamic = ["requires-python"]
 license = { text = "GNU General Public License v3" }
 authors = [{ name = "Mostafa Farrag", email = "moah.farag@gmail.com" }]
 keywords = ["GIS", "gdal", "dask", "zarr", "lazy", "pyramids"]

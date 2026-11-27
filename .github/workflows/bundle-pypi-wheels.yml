@@ -187,7 +187,7 @@ jobs:
           CIBW_ARCHS_LINUX: ${{ matrix.arch }}
           # before-all (build.sh) runs inside the manylinux container; pass what it needs in.
           CIBW_ENVIRONMENT: >-
-            PYRAMIDS_LAZY_NATIVE=1 OUTPUT=/tmp/pp-out
+            PYRAMIDS_LAZY_NATIVE=1 PYRAMIDS_LAZY_PUBLISH=1 OUTPUT=/tmp/pp-out
             PLAT=manylinux_2_28_${{ matrix.arch }}
             CORE_VERSION=${{ inputs.core-version || env.PINNED_CORE_VERSION }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -222,7 +222,7 @@ jobs:
         env:
           CIBW_ARCHS_MACOS: ${{ matrix.arch }}
           CIBW_ENVIRONMENT: >-
-            PYRAMIDS_LAZY_NATIVE=1 OUTPUT=/tmp/pp-out
+            PYRAMIDS_LAZY_NATIVE=1 PYRAMIDS_LAZY_PUBLISH=1 OUTPUT=/tmp/pp-out
             PLAT=macosx_11_0_${{ matrix.arch }}
             CORE_VERSION=${{ inputs.core-version || env.PINNED_CORE_VERSION }}
             MACOSX_DEPLOYMENT_TARGET=11.0
@@ -246,7 +246,7 @@ jobs:
         env:
           CIBW_ARCHS_WINDOWS: AMD64
           CIBW_ENVIRONMENT: >-
-            PYRAMIDS_LAZY_NATIVE=1 OUTPUT=C:/pp-out
+            PYRAMIDS_LAZY_NATIVE=1 PYRAMIDS_LAZY_PUBLISH=1 OUTPUT=C:/pp-out
             PLAT=win_amd64
             CORE_VERSION=${{ inputs.core-version || env.PINNED_CORE_VERSION }}
             GDAL_VERSION=${{ inputs.gdal-version || env.PINNED_GDAL_VERSION }}
@@ -272,7 +272,11 @@ jobs:
       - name: Build the sdist
         # No plugin staged and PYRAMIDS_LAZY_NATIVE unset, so this is the ordinary pure source
         # dist; a source install on an unsupported platform gets the pure backend and the
-        # OGR-Parquet path raises its branded hint.
+        # OGR-Parquet path raises its branded hint. PYRAMIDS_LAZY_PUBLISH=1 caps Requires-Python at
+        # <3.15 (see setup.py) so pip refuses the sdist on 3.15 too -- otherwise pip would skip the
+        # capped wheels and fall through to an uncapped sdist, defeating the clean refusal.
+        env:
+          PYRAMIDS_LAZY_PUBLISH: "1"
         run: |
           set -euo pipefail
           python -m pip install --quiet --upgrade build
@@ -417,6 +421,113 @@ jobs:
           python -m pip install "$(ls wheelhouse/*.whl)" --only-binary=:all:
           python ci/parquet-plugin/verify.py --via-entry-point
 
+  test-native-wheel:
+    # Runs the actual test suite against the PUBLISHED native wheel the way a pip user installs it
+    # (actions/setup-python + `pip --only-binary=:all:`, NOT the conda/pixi dev env). The verify-*
+    # jobs only smoke-test that the OGR-Parquet driver loads; this exercises the whole suite against
+    # the real artifact, across the supported Python range (Linux) and all three OS wheels. 3.15 is
+    # deliberately absent: the published wheel caps Requires-Python at <3.15 (see setup.py), so it
+    # cannot install there -- that path is probed non-gating in pypi-install-test.yml instead.
+    name: suite native wheel ${{ matrix.os }} py${{ matrix.python-version }}
+    needs: [resolve-ref, build-linux-wheels, build-macos-wheels, build-windows-wheels]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, artifact: wheels-linux-x86_64, python-version: "3.11", extra: "" }
+          - { os: ubuntu-latest, artifact: wheels-linux-x86_64, python-version: "3.12", extra: "" }
+          # One leg installs the [parquet] extra so the OGR-Parquet suite runs through the bundled
+          # driver end to end (the extra provides pyarrow to write the fixture); 3.13 matches the
+          # pure-wheel-test extras leg, where the pyarrow/dask-geopandas wheels are known-present.
+          - { os: ubuntu-latest, artifact: wheels-linux-x86_64, python-version: "3.13", extra: "[parquet]" }
+          - { os: ubuntu-latest, artifact: wheels-linux-x86_64, python-version: "3.14", extra: "" }
+          - { os: macos-15, artifact: wheels-macos-arm64, python-version: "3.12", extra: "" }
+          - { os: windows-2022, artifact: wheels-windows-AMD64, python-version: "3.12", extra: "" }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-ref.outputs.ref }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ matrix.artifact }}
+          path: wheelhouse
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install the native wheel as a pip user would, then run the suite
+        # --only-binary=:all: keeps it a true pure-pip install: every runtime dep (pyramids-core,
+        # dask, zarr, kerchunk, h5py, ...) must resolve from a published wheel on this OS/Python.
+        # -o pythonpath= clears pyproject's `pythonpath = [".", "src"]` so tests import the INSTALLED
+        # wheel, not the source tree. interop (xarray) is a test-only dep absent from the wheel, and
+        # live needs the network -- both deselected (they run in tests.yml's pixi interop env).
+        shell: bash
+        run: |
+          set -euo pipefail
+          WHEEL=$(ls wheelhouse/*.whl)
+          pip install "${WHEEL}${{ matrix.extra }}" --only-binary=:all:
+          pip install pytest pytest-env pytest-mock --only-binary=:all:
+          python -c "import pyramids_lazy; print('installed', pyramids_lazy.__version__)"
+          pytest -vvv -o pythonpath= -m "not live and not interop" tests/
+
+  verify-sdist-pure-backend:
+    # The sdist is what a pip user on an UNSUPPORTED platform (musllinux, win_arm64) falls back to:
+    # no bundled driver, the pure backend. conda-forge ships no musl/win-arm64 libgdal-core, so that
+    # exact platform cannot pip-install the stack here; instead we force the pure path on glibc by
+    # building pyramids-lazy from the real sdist artifact (--no-binary) while its deps stay wheels.
+    # Asserts the degraded contract: imports, carries NO gdalplugins/, and iter_features over a
+    # .parquet raises (no silent success) rather than loading a driver it does not have.
+    name: verify sdist pure backend
+    needs: [resolve-ref, sdist]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-ref.outputs.ref }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sdist
+          path: dist
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install the sdist (pure backend) and assert the degraded contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          # --no-binary=pyramids-lazy forces the sdist to build (the pure backend, no gdalplugins);
+          # --only-binary=:all: keeps every dependency a published wheel. [parquet] pulls pyarrow so
+          # the assertion below can write a GeoParquet fixture.
+          pip install "$(ls dist/*.tar.gz)[parquet]" --only-binary=:all: --no-binary=pyramids-lazy
+          python - <<'PY'
+          import importlib.util, pathlib, tempfile, os
+          spec = importlib.util.find_spec("pyramids_lazy")
+          pkg = pathlib.Path(spec.origin).parent
+          assert not (pkg / "gdalplugins").exists(), f"pure sdist install must not carry gdalplugins/: {pkg}"
+          import pyramids_lazy
+          print("pure backend OK:", pyramids_lazy.__version__, "@", pkg, "(no gdalplugins/)")
+
+          import pyramids  # vendored-GDAL bootstrap must run before osgeo/geopandas/shapely
+          import geopandas as gpd
+          from shapely.geometry import Point
+          from pyramids.feature import FeatureCollection
+
+          path = os.path.join(tempfile.mkdtemp(), "points.parquet")
+          gpd.GeoDataFrame(
+              {"i": [0, 1, 2]}, geometry=[Point(x, x) for x in range(3)], crs="EPSG:4326"
+          ).to_parquet(path)
+          print("read_parquet works on the pure backend:", len(FeatureCollection.read_parquet(path)), "features")
+          try:
+              list(FeatureCollection.iter_features(path))
+          except Exception as exc:  # noqa: BLE401 - any raise satisfies the contract
+              print("iter_features correctly raised without the OGR driver:",
+                    type(exc).__name__, "-", str(exc)[:200])
+          else:
+              raise SystemExit("iter_features over parquet must NOT silently succeed without the OGR driver")
+          PY
+
   report:
     name: report
     # resolve-ref is listed because the `if` below reads needs.resolve-ref.result: an
@@ -451,7 +562,8 @@ jobs:
     # mark the run failed. Mirrors pyramids-core's bundle release job.
     needs:
       [build-linux-wheels, build-macos-wheels, build-windows-wheels, sdist,
-       verify-debian12, verify-rocky9, verify-rocky9-aarch64, verify-macos, verify-windows]
+       verify-debian12, verify-rocky9, verify-rocky9-aarch64, verify-macos, verify-windows,
+       test-native-wheel, verify-sdist-pure-backend]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # Publish only after a SUCCESSFUL same-repo github-release (the canonical path). A manual
