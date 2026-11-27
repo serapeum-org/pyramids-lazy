@@ -65,6 +65,24 @@ def find_bash() -> str | None:
 
     Returns:
         str | None: The executable's path, or None when no usable `bash` exists.
+
+    Examples:
+        - The answer is machine dependent, so the contract is what can be shown: either None,
+          or a file that exists right now:
+            ```python
+            >>> resolved = find_bash()
+            >>> resolved is None or Path(resolved).is_file()
+            True
+
+            ```
+        - Whatever it answers, it is never the WSL launcher -- the filter applies to the
+          `shutil.which` fallback as well as to the `PATH` walk:
+            ```python
+            >>> resolved = find_bash()
+            >>> resolved is None or not _is_wsl_launcher(Path(resolved))
+            True
+
+            ```
     """
     names = ("bash.exe", "bash") if os.name == "nt" else ("bash",)
     for entry in os.environ.get("PATH", "").split(os.pathsep):

@@ -516,6 +516,14 @@ def _paths_filter_selects(path: str) -> bool:
     the guard, `["ci/parquet-plugin/**", "!ci/parquet-plugin/verify.py"]` was modelled as still
     building `verify.py` while GitHub would not have run the workflow at all.
 
+    The `/**` branch below strips `**` and KEEPS the separator, so the prefix it compares against
+    is `ci/parquet-plugin/`. `pattern[: -len("/**")]` looks like the tidier spelling of the same
+    thing and is not: it leaves `ci/parquet-plugin`, which `str.startswith` also matches for
+    `ci/parquet-plugin-notes/build.sh`, `ci/parquet-plugin.bak/build.sh` and `ci/parquet-pluginx`
+    -- siblings GitHub would not select, so the model would promise a build for a PR that cannot
+    touch the wheel. `test_a_sibling_sharing_the_directory_prefix_is_not_selected` is the only
+    thing that notices; every other negative case is outside `ci/` entirely.
+
     Args:
         path: A repository-relative path, as a changed-file entry.
 
@@ -1843,6 +1851,13 @@ class TestTheBashGateFailsRatherThanSkipping:
     set up before the test body, so monkeypatching `_BASH` from inside one is already too late.
     It is called through `__wrapped__`, the original function pytest keeps on the fixture object,
     because pytest refuses a direct call on the fixture itself.
+
+    Both outcome types are then caught by hand rather than with
+    `pytest.raises(pytest.fail.Exception)`, because `Failed` and `Skipped` are sibling subclasses
+    of `OutcomeException` and neither catches the other. That is not a precaution: the first
+    version of the test below used `pytest.raises`, a `pytest.fail` -> `pytest.skip` mutation of
+    the gate escaped it, and pytest reported the guard's own test as skipped -- the silent skip
+    produced by the very test written to forbid it.
     """
 
     def test_a_bash_marked_test_fails_when_no_bash_exists(self, monkeypatch):
@@ -1861,9 +1876,11 @@ class TestTheBashGateFailsRatherThanSkipping:
             deselect deliberately rather than left to guess.
 
             The outcome is caught by hand rather than with `pytest.raises(pytest.fail.Exception)`
-            for that same reason: a `Skipped` raised here escapes `pytest.raises`, and pytest
-            then reports THIS test as skipped. The mutation would be reported as a skip by the
-            test written to catch it, which is as silent a pass as the one being guarded against.
+            for that same reason: `Skipped` is not a subclass of `Failed` -- both descend from
+            `OutcomeException` -- so a skip raised here escapes `pytest.raises` and pytest
+            reports THIS test as skipped. That is what happened to the first version of this
+            test: the mutation was reported as a skip by the test written to catch it, which is
+            as silent a pass as the one being guarded against.
         """
         monkeypatch.setattr(sys.modules[__name__], "_BASH", None)
 

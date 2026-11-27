@@ -20,7 +20,8 @@ the `shutil.which` fallback are all exercised wherever the suite runs.
 Nothing here touches the network or the real `PATH`, and nothing here is Windows-only: a
 `System32` path is built with `Path` so the filter is exercised on linux and macOS too, and the
 one genuinely platform-dependent branch -- the `("bash.exe", "bash")` name tuple -- is reached by
-monkeypatching `os.name` rather than by skipping elsewhere.
+substituting the whole `os` module that `_bash` looked up, rather than by skipping elsewhere. See
+`_simulate_os_name`, which records why patching `os.name` itself is not an option here.
 """
 
 from __future__ import annotations
@@ -70,11 +71,16 @@ def _simulate_os_name(monkeypatch, platform: str) -> None:
     """Make `_bash` alone see `os.name == platform`, leaving everyone else's `os` intact.
 
     `monkeypatch.setattr(os, "name", ...)` is the obvious spelling and it does not work:
-    `pathlib` reads `os.name` when it instantiates a path, so claiming to be POSIX on Windows
-    makes `Path(entry) / name` -- the very line under test -- raise
-    `UnsupportedOperation: cannot instantiate 'PosixPath' on your system`. Replacing the `os`
-    the module itself looked up keeps the substitution inside `find_bash`, where the only three
-    attributes it reaches for are `name`, `environ` and `pathsep`.
+    `pathlib` picks a path flavour from `os.name` when it INSTANTIATES a path, not when the path
+    is used, so claiming to be POSIX on Windows makes `Path(entry) / name` -- the very line under
+    test -- raise `pathlib.UnsupportedOperation: cannot instantiate 'PosixPath' on your system`
+    (checked under this repo's dev interpreter, CPython 3.14). The traceback points into the
+    helper rather than into `find_bash`, so the dead end reads as a broken test and is recorded
+    here, at the one place a new platform test would reach for it.
+
+    Replacing the `os` the module itself looked up keeps the substitution inside `find_bash`,
+    where the only three attributes it reaches for are `name`, `environ` and `pathsep` -- and
+    leaves `pathlib`, and every other importer of `os`, on the real one.
 
     `environ` is the real mapping rather than a copy, so a `monkeypatch.setenv` in either order
     is still visible through it.
