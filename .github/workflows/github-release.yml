@@ -84,6 +84,10 @@ jobs:
       contents: write
     outputs:
       branch: ${{ steps.resolve.outputs.branch }}
+      # 'true' only when THIS run created the branch. cleanup-on-failure deletes a branch only when
+      # this says so, rather than inferring ownership from the `release/auto-*` name -- an
+      # operator-supplied branch that happens to match that pattern is not ours to delete.
+      created: ${{ steps.resolve.outputs.created }}
     steps:
       - name: Check actor is a repository admin
         # Every `${{ }}` below reaches the shell through `env`, never through the script body: GitHub
@@ -132,25 +136,50 @@ jobs:
           RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
+          # Normalise a fully-qualified ref so `refs/heads/main` cannot slip past the main check.
+          GIVEN_BRANCH="${GIVEN_BRANCH#refs/heads/}"
+
           # Reject main up front. main's ruleset requires a PR, so the bump push would be refused
           # mid-release, after the branch/tag work has already started. Fail here instead.
           if [ "$GIVEN_BRANCH" = "main" ]; then
             echo "::error::Cannot release on 'main' (its ruleset rejects the bump push). Leave release-branch empty to auto-create one."
             exit 1
           fi
+
           if [ -n "$GIVEN_BRANCH" ]; then
-            # Catch a typo'd branch name here rather than in the release job's checkout, three jobs later.
-            git ls-remote --exit-code --heads origin "$GIVEN_BRANCH" >/dev/null \
-              || { echo "::error::release-branch '$GIVEN_BRANCH' does not exist on origin"; exit 1; }
+            # Reject anything that is not a legal branch name before it reaches ls-remote, where a
+            # glob would be matched rather than looked up ("*" resolves against every ref). Also
+            # catches whitespace, "..", a leading "-" and the other refname rules.
+            git check-ref-format --branch "$GIVEN_BRANCH" >/dev/null 2>&1 \
+              || { echo "::error::release-branch '$GIVEN_BRANCH' is not a valid branch name"; exit 1; }
+
+            # Must be the FULL refspec. `ls-remote --heads origin <name>` matches on any trailing
+            # path segment, so a nonexistent "foo" validates against refs/heads/ci/foo -- the guard
+            # passed exactly the typos it was added to catch. `--exit-code origin refs/heads/<name>`
+            # distinguishes correctly: 0 found, 2 absent.
+            set +e
+            git ls-remote --exit-code origin "refs/heads/$GIVEN_BRANCH" >/dev/null 2>&1
+            RC=$?
+            set -e
+            case "$RC" in
+              0) ;;
+              2) echo "::error::release-branch '$GIVEN_BRANCH' does not exist on origin"; exit 1 ;;
+              # Any other code is a transport/auth failure, not a missing branch. Reporting it as
+              # "does not exist" sends the operator hunting for the wrong problem.
+              *) echo "::error::could not reach origin to verify '$GIVEN_BRANCH' (git ls-remote exit $RC)"; exit 1 ;;
+            esac
             echo "Using the given release branch: $GIVEN_BRANCH"
             BRANCH="$GIVEN_BRANCH"
+            CREATED=false
           else
             BRANCH="release/auto-${RUN_ID}-${RUN_ATTEMPT}"
             echo "No release branch given; creating $BRANCH from the tip of main"
             git switch -c "$BRANCH"
             git push -u origin "$BRANCH"
+            CREATED=true
           fi
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "created=$CREATED" >> "$GITHUB_OUTPUT"
 
   # Build the wheel and run it across the OS/Python matrix on the SAME branch the release is cut on,
   # so a wheel that cannot install or import on a supported target blocks the tag/release/PyPI chain.
