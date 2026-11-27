@@ -617,6 +617,9 @@ class TestTheResolvedRefIsCheckoutable:
         Test scenario:
             A `pull_request` event on PR 54, where `github.ref_name` is `54/merge` and
             `github.event.pull_request.number` is `54`.
+
+            `_EVENT_CASES` drives this event too; this stays as the named, readable statement of
+            the regression the whole change exists for.
         """
         resolved = _resolve_ref(
             {
@@ -689,6 +692,9 @@ class TestTheResolvedRefIsCheckoutable:
             proves the left operand wins rather than both happening to agree. This is the only
             `||` in the step, and both of its operands are string-valued -- the reason
             `_substitute`'s emptiness-only falsiness is sufficient here.
+
+            Deliberately overlaps the `workflow_dispatch` row of `_EVENT_CASES`: the row proves the
+            arm is exercised, this names the build path that depends on it.
         """
         resolved = _resolve_ref(
             {
@@ -730,6 +736,9 @@ class TestTheResolvedRefIsCheckoutable:
             then checks the arm reads it. The file is written with a trailing newline while the
             expected ref has none: command substitution strips it, which is why the arm needs no
             explicit trim.
+
+            Deliberately overlaps the `workflow_run` row of `_EVENT_CASES`, for the same reason: the
+            row proves the arm is driven, this says what the arm is for.
         """
         (tmp_path / ".release-ref").mkdir()
         (tmp_path / ".release-ref" / "release-ref.txt").write_text(
@@ -765,8 +774,8 @@ class TestAPullRequestCannotPublish:
         """A red verify must stop a publish, not merely colour the run.
 
         Test scenario:
-            The nine jobs the artifact's correctness depends on -- the three build jobs, `sdist`,
-            and all five verify jobs. `resolve-ref` is deliberately absent: `release` reads no
+            The nine jobs the artifact's correctness depends on -- the four artifact-building
+            jobs (three wheel builds plus `sdist`) and all five verify jobs. `resolve-ref` is deliberately absent: `release` reads no
             `needs.resolve-ref` expression, so it is one of the two jobs
             `test_the_set_of_such_jobs_is_the_expected_ten` leaves out.
         """
@@ -922,6 +931,36 @@ class TestTheModelsRefuseWhatTheyCannotRepresent:
                 {"github.event.pull_request.number": "54"},
             )
 
+    def test_only_trusted_contexts_are_interpolated_into_the_shell(self):
+        """No attacker-controlled string may reach the step's shell, now that forks can trigger it.
+
+        Test scenario:
+            The step interpolates `${{ }}` straight into shell, and enabling `pull_request` made
+            this workflow reachable by a pull request from a fork -- so "every interpolated field
+            is one an outsider cannot set" became load-bearing and untested. It holds today:
+            `github.event.pull_request.number` is numeric, `github.ref_name` on a pull request is
+            `<n>/merge` derived from that number, and `inputs.branch` needs write access to
+            dispatch. `github.head_ref` -- the fork's own branch name, free text chosen by the PR
+            author -- is deliberately not used, and this test is what fails if an arm added later
+            reaches for it.
+        """
+        trusted = {
+            "github.event_name",
+            "github.ref_name",
+            "inputs.branch",
+            "github.event.pull_request.number",
+        }
+
+        read = {
+            operand.strip()
+            for body in _EXPRESSION.findall(_resolve_script())
+            for operand in body.split("||")
+        }
+
+        assert read <= trusted, (
+            f"untrusted context(s) interpolated into the step: {sorted(read - trusted)}"
+        )
+
     def test_the_live_step_only_uses_modelled_expressions(self):
         """The guard above is only useful if the step itself stays inside the modelled grammar.
 
@@ -1075,6 +1114,8 @@ class TestTheResolveStepFailsLoudlyRatherThanResolvingNothing:
         Test scenario:
             A hypothetical `schedule` event -- not currently a trigger, per
             `test_no_other_event_starts_the_workflow`.
+
+            Deliberately overlaps the `schedule` row of `_EVENT_CASES`, which stands in for `*`.
         """
         resolved = _resolve_ref(
             {"github.event_name": "schedule", "github.ref_name": "main"}, tmp_path
@@ -1351,10 +1392,14 @@ class TestTheHelperExamplesStayExecutable:
 
 
 def _jobs_reading_resolve_ref() -> set[str]:
-    """Return every job whose definition references the `resolve-ref` job's outputs or result.
+    """Return every job whose definition mentions `needs.resolve-ref` anywhere.
 
-    Found by searching each job's own YAML rather than from a hand-written list, so a job added
-    later is covered without this file being touched.
+    Found by searching each job's own dumped YAML rather than from a hand-written list, so a job
+    added later is covered without this file being touched. It is a substring search, so a mention
+    in a `name:`, an `env:` value or an `echo` inside a `run:` would count too -- which
+    over-requires a `needs` declaration rather than missing one, the harmless direction. The
+    substring survives `safe_dump`'s folding: the only fold points inside
+    `${{ needs.resolve-ref.outputs.ref }}` are the spaces just after `{{` and before `}}`.
 
     Returns:
         set[str]: Job ids containing a `needs.resolve-ref...` expression.
@@ -1429,17 +1474,24 @@ class TestEveryJobReadingTheResolvedRefDeclaresIt:
     `actions/checkout` then falls back to `github.ref`. That is the same ref on a push or a pull
     request, which is why this went unnoticed -- but on the release path `github.ref` is the
     default branch while the wheel is built from the `release/auto-*` branch carrying the version
-    bump, so `verify.py` ran from a different tree than the wheel it was verifying. `report`'s
-    `needs.resolve-ref.result != 'skipped'` was likewise reading null, making the guard a no-op.
+    bump, so `verify.py` would have run from a different tree than the wheel it was verifying.
+    `report`'s `needs.resolve-ref.result != 'skipped'` was likewise reading null, making the guard
+    a no-op.
+
+    Latent rather than historical: this workflow has never run on a `workflow_run` event -- every
+    run so far is a push, a pull request or a dispatch -- and 0.1.0/0.1.1/0.2.0 all predate it, so
+    no published wheel was verified against the wrong tree. The first release through this arm
+    would have been.
     """
 
     def test_every_such_job_is_wired(self):
         """The invariant for all ten jobs, derived from the workflow rather than listed here.
 
         Test scenario:
-            Collects every job whose definition mentions `needs.resolve-ref` -- the four build
-            jobs, the five verify jobs and `report` -- and requires each to declare it. A job
-            added later is covered automatically.
+            Collects every job whose definition mentions `needs.resolve-ref` -- the four
+            artifact-building jobs (three wheel builds plus `sdist`), the five verify jobs and
+            `report` -- and requires each to declare it. A job added later is covered
+            automatically.
         """
         missing = {
             job_id
@@ -1489,7 +1541,13 @@ class TestEveryJobReadingTheResolvedRefDeclaresIt:
 
 
 class TestDeclaredNeedsReadsEveryShapeTheWorkflowUses:
-    """`needs` is written three ways in this workflow, and the root job omits it.
+    """`needs` is spelled three ways in this workflow but yields only two Python shapes.
+
+    `build-linux-wheels` writes a bare string; `verify-debian12` an inline flow sequence and
+    `report` the same sequence broken across lines, which YAML parses into an identical `list`. So
+    `_declared_needs` has two shapes to normalise, the bare string being the one that matters --
+    the third case below exercises no new code and is kept only to pin the spelling. The root job,
+    `resolve-ref`, omits `needs` entirely, which is the remaining branch.
 
     `test_every_such_job_is_wired` membership-tests the result, so a shape read wrongly
     does not raise -- it reports a wired job as unwired, or an unwired one as fine.

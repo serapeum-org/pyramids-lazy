@@ -290,8 +290,11 @@ jobs:
   # even though build-linux-wheels already depends on it: an undeclared need renders the
   # expression EMPTY rather than failing, and checkout then falls back to github.ref. That is
   # the same ref on a push or a pull request, but on the release path github.ref is the default
-  # branch while the wheel was built from the release/auto-* branch carrying the version bump --
-  # so verify.py ran from a different tree than the wheel it was verifying.
+  # branch while the wheel is built from the release/auto-* branch carrying the version bump --
+  # so verify.py WOULD HAVE RUN from a different tree than the wheel it was verifying. Latent, not
+  # historical: this workflow has never run on a workflow_run event (every run so far is a push,
+  # a pull_request or a workflow_dispatch), and 0.1.0/0.1.1/0.2.0 all predate it, so no published
+  # wheel was verified against the wrong tree. The first release through this arm would have been.
   verify-debian12:
     name: verify debian12 (glibc)
     needs: [resolve-ref, build-linux-wheels]
