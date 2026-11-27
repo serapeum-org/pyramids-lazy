@@ -1,7 +1,7 @@
 name: github-release
 
-# Manual release cutter (commitizen bump -> tag -> GitHub release -> auto-merged PR onto main),
-# ported from pyramids-mesh. Dispatch-only, so it never runs on ordinary CI. It gates on
+# Manual release cutter (commitizen bump -> tag -> GitHub Release -> a release PR opened for MANUAL
+# merge), ported from pyramids-mesh. Dispatch-only, so it never runs on ordinary CI. It gates on
 # pure-wheel-test, which installs the released pyramids-core from PyPI; that gate is unblocked now
 # core 0.79.0 ships the `pyramids.lazy_support` facade this backend requires; the floor is 0.80.0,
 # which additionally brands the lazy-vector install hint with this distribution's extra.
@@ -11,19 +11,33 @@ name: github-release
 # as if it had been passed. `prepare` runs FIRST so pure-wheel-test and the bump/tag/release all run
 # on that ONE branch. (pure-wheel-test builds the pre-bump tip; the bump only adds the
 # version/changelog/lockfile commit, so the tested and released trees differ only by that commit.)
-# The branch is then merged into main with a MERGE COMMIT, so ON A SUCCESSFUL MERGE the tagged commit
-# is an ancestor of main (fixing the orphaned tag that 0.1.1 hit). On ANY failure before the final
-# merge (the merge-commit preflight, pure-wheel-test, the bump itself, or an exhausted merge loop) the
-# job goes red and the throwaway `release/auto-*` branch is left on origin — with the tag + GitHub
-# Release too, if the failure came after they were cut. PyPI is not published (pypi-release gates on
-# this job's success). Cleanup of abandoned branches/tags on a failed release is tracked in #29.
+#
+# EVERY TAG THIS WORKFLOW HAS CUT IS ORPHANED OFF MAIN. main's ruleset sets
+# allowed_merge_methods: ["squash"] and requires one review, so this workflow cannot land the release
+# PR itself, and the squash that lands it rewrites the commit SHA — leaving the tag on a commit that
+# is not an ancestor of main. 0.1.0, 0.1.1 and 0.2.0 are all orphaned this way (verify with
+# `git merge-base --is-ancestor <tag> origin/main`).
+#
+# Repository admins hold bypass_mode: always on that ruleset, and this workflow is admin-gated — but
+# whether ruleset bypass also lifts allowed_merge_methods, or only the review requirement, is
+# UNTESTED. Do not assume a merge commit is available until someone proves it; that is the open
+# question in #51. Deciding the fix is #29: Route A adds the Actions app as a bypass actor (#51,
+# deferred), Route B tags after the merge (upstream github-actions#51, shipped as
+# github-release/v1.6.0's `skip-tag`, plus github-actions#57).
+#
+# On ANY failure the job goes red and PyPI is not published (the consumer gates on this run's
+# success). `cleanup-on-failure` then deletes the throwaway `release/auto-*` branch. The tag and
+# GitHub Release, if the failure came after they were cut, are left in place for inspection —
+# removing those is a judgement call, not a cleanup.
 
 permissions:
   contents: read
 
-# Serialize releases: a second dispatch queues behind the first instead of racing it on the
-# bump/tag/PR-merge (two runs off the same tip would compute the same next version and collide on the
-# tag push / merge). Releases are rare and admin-only, so queue rather than cancel.
+# Serialize releases: one release runs at a time (a second dispatch queues, it does not cancel).
+# NOTE this does NOT prevent a duplicate-version/tag collision: until a release PR is merged, main is
+# still unbumped, so a second release dispatched before that merge recomputes the SAME version and
+# fails at tag push. Rule: merge each release PR into main before dispatching the next. Releases are
+# rare and admin-only, so queue rather than cancel.
 concurrency:
   group: github-release
   cancel-in-progress: false
@@ -70,34 +84,29 @@ jobs:
       contents: write
     outputs:
       branch: ${{ steps.resolve.outputs.branch }}
+      # 'true' only when THIS run created the branch. cleanup-on-failure deletes a branch only when
+      # this says so, rather than inferring ownership from the `release/auto-*` name -- an
+      # operator-supplied branch that happens to match that pattern is not ours to delete.
+      created: ${{ steps.resolve.outputs.created }}
     steps:
       - name: Check actor is a repository admin
-        run: |
-          PERMISSION=$(gh api repos/${{ github.repository }}/collaborators/${{ github.actor }}/permission --jq '.permission')
-          echo "Permission level for ${{ github.actor }}: $PERMISSION"
-          if [ "$PERMISSION" != "admin" ]; then
-            echo "::error::${{ github.actor }} is not a repository admin. Only admins can trigger releases."
-            exit 1
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Verify the repo allows merge commits
-        # The auto-merge later uses `gh pr merge --merge` (a MERGE COMMIT) specifically so the tagged
-        # bump commit lands on main as an ancestor. If "Allow merge commits" is disabled, every
-        # release would fail the merge loop and orphan the tag — so fail fast here, before the bump,
-        # tag or any branch is cut. (main must also stay unprotected / without required reviews for
-        # the immediate token merge to land.)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Every `${{ }}` below reaches the shell through `env`, never through the script body: GitHub
+        # expands an expression into the script *before* bash parses it, so an interpolated value is
+        # read as shell source rather than as data. Matches Digital-Earth's copy of this step.
         run: |
           set -euo pipefail
-          ALLOWED=$(gh api "repos/${{ github.repository }}" --jq '.allow_merge_commit')
-          echo "allow_merge_commit: ${ALLOWED}"
-          if [ "${ALLOWED}" != "true" ]; then
-            echo "::error::'Allow merge commits' is disabled on ${{ github.repository }}, but this release merges with 'gh pr merge --merge'. Enable it (Settings -> General -> Pull Requests) or the release tag will be orphaned off main."
+          # Without `set -e` a failing `gh api` left PERMISSION empty and the check below reported
+          # "not a repository admin", sending the operator after a permissions problem they do not have.
+          PERMISSION=$(gh api "repos/$REPOSITORY/collaborators/$ACTOR/permission" --jq '.permission')
+          echo "Permission level for $ACTOR: $PERMISSION"
+          if [ "$PERMISSION" != "admin" ]; then
+            echo "::error::$ACTOR is not a repository admin. Only admins can trigger releases."
             exit 1
           fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
 
       - name: Checkout main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -109,19 +118,57 @@ jobs:
         id: resolve
         env:
           GIVEN_BRANCH: ${{ inputs.release-branch }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
-          GIVEN="$GIVEN_BRANCH"
-          if [ -n "$GIVEN" ]; then
-            echo "Using the given release branch: $GIVEN"
-            BRANCH="$GIVEN"
+          # Normalise a fully-qualified ref so `refs/heads/main` cannot slip past the main check.
+          GIVEN_BRANCH="${GIVEN_BRANCH#refs/heads/}"
+
+          # Reject main up front. main's ruleset requires a PR, so the bump push would be refused
+          # mid-release, after the branch/tag work has already started. Fail here instead.
+          if [ "$GIVEN_BRANCH" = "main" ]; then
+            echo "::error::Cannot release on 'main': its ruleset rejects the bump push."
+            echo "::error::Leave release-branch empty and one will be created for you."
+            exit 1
+          fi
+
+          if [ -n "$GIVEN_BRANCH" ]; then
+            # Reject anything that is not a legal branch name before it reaches ls-remote, where a
+            # glob would be matched rather than looked up ("*" resolves against every ref). Also
+            # catches whitespace, "..", a leading "-" and the other refname rules.
+            git check-ref-format --branch "$GIVEN_BRANCH" >/dev/null 2>&1 \
+              || { echo "::error::release-branch '$GIVEN_BRANCH' is not a valid branch name"; exit 1; }
+
+            # Must be the FULL refspec. `ls-remote --heads origin <name>` matches on any trailing
+            # path segment, so a nonexistent "foo" validates against refs/heads/ci/foo -- the guard
+            # passed exactly the typos it was added to catch. `--exit-code origin refs/heads/<name>`
+            # distinguishes correctly: 0 found, 2 absent.
+            set +e
+            LS_ERR="$(git ls-remote --exit-code origin "refs/heads/$GIVEN_BRANCH" 2>&1 >/dev/null)"
+            RC=$?
+            set -e
+            case "$RC" in
+              0) ;;
+              2) echo "::error::release-branch '$GIVEN_BRANCH' does not exist on origin"; exit 1 ;;
+              # Any other code is a transport/auth failure, not a missing branch. Reporting it as
+              # "does not exist" sends the operator hunting for the wrong problem.
+              *) printf 'git ls-remote failed (exit %s): %s\n' "$RC" "$LS_ERR"
+                 echo "::error::could not reach origin to verify '$GIVEN_BRANCH' (ls-remote exit $RC; see log above)"
+                 exit 1 ;;
+            esac
+            echo "Using the given release branch: $GIVEN_BRANCH"
+            BRANCH="$GIVEN_BRANCH"
+            CREATED=false
           else
-            BRANCH="release/auto-${{ github.run_id }}-${{ github.run_attempt }}"
+            BRANCH="release/auto-${RUN_ID}-${RUN_ATTEMPT}"
             echo "No release branch given; creating $BRANCH from the tip of main"
             git switch -c "$BRANCH"
             git push -u origin "$BRANCH"
+            CREATED=true
           fi
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "created=$CREATED" >> "$GITHUB_OUTPUT"
 
   # Build the wheel and run it across the OS/Python matrix on the SAME branch the release is cut on,
   # so a wheel that cannot install or import on a supported target blocks the tag/release/PyPI chain.
@@ -162,44 +209,101 @@ jobs:
           package-manager-version: v0.84.2
           install-groups: "dev"
 
-      # Hand the release branch to pypi-release. pypi-release is triggered by `workflow_run`, whose
-      # payload carries no custom data and whose head_branch/head_sha point at the dispatched ref
-      # (normally main) — which does NOT hold the bump in the manual-merge model. Uploading the
-      # branch name as an artifact is the one channel that crosses the workflow_run boundary;
-      # pypi-release downloads it by run id and checks it out. RECOVERY: a failed/late pypi-release
-      # re-runs the SAME version with no re-bump while the release-ref artifact is live
-      # (retention-days: 1) and the branch still exists (it does until the PR is merged) — re-run the
-      # job, or dispatch pypi-release against the merged ref. Only once the artifact has expired or
-      # the branch was deleted is a fresh release dispatch needed (which cuts the NEXT version).
-      - name: Record the release branch for pypi-release
-        env:
-          BRANCH: ${{ needs.prepare.outputs.branch }}
-        run: printf '%s\n' "$BRANCH" > release-ref.txt
+      # Assert the bump actually landed before anything downstream trusts HEAD. The shared action
+      # has a recovery path that retries the bump with `cz bump --files-only`, which writes the
+      # version files and changelog but creates NO commit and NO tag, warns, and still exits 0. On
+      # that path HEAD is the PRE-BUMP tip, so recording it would hand the consumer the PREVIOUS
+      # version, which PyPI then rejects with HTTP 400 for already existing. (That 400 has happened
+      # here, in run 43886118127 on 2026-11-16, but by a different route -- a stale checkout, fixed
+      # in #34. The --files-only path reaches the same place with nothing to stop it.)
+      - name: Verify the bump commit and tag landed
+        run: |
+          set -euo pipefail
+          # No emptiness check on rev-parse: under `set -e` a failure aborts the step, so a guard
+          # here could never print.
+          HEAD_SHA="$(git rev-parse HEAD)"
 
-      - name: Upload the release ref for pypi-release
+          # Read the version the tree now declares. Accept either quote style, and fail loudly
+          # rather than carrying an empty value into the comparison below.
+          VERSION="$(grep -m1 -E '^[[:space:]]*version[[:space:]]*=' pyproject.toml \
+            | sed -E 's/^[^=]*=[[:space:]]*//; s/^["'"'"']//; s/["'"'"'].*$//')"
+          if [ -z "$VERSION" ]; then
+            echo "::error::could not read the version from pyproject.toml;"
+            echo "::error::refusing to record a release ref"
+            exit 1
+          fi
+
+          # `git tag --points-at`, not `git describe --exact-match`: describe returns ONE arbitrary
+          # tag when several point at HEAD. The action amends the bump commit during its lockfile
+          # fold and force-moves the tag onto the amended commit, so after a healthy run the tag for
+          # $VERSION is among these. tag_format is bare "$version" in this repo, so the tag name is
+          # the version itself -- a prefixed tag_format would need the prefix applied here.
+          TAGS="$(git tag --points-at HEAD)"
+          if [ -z "$TAGS" ]; then
+            echo "::error::HEAD ($HEAD_SHA) carries no tag: the version bump did not land."
+            echo "::error::See the action's --files-only recovery path. Refusing to record a ref."
+            exit 1
+          fi
+          if ! printf '%s\n' "$TAGS" | grep -qx -- "$VERSION"; then
+            echo "tags on HEAD: $(printf '%s' "$TAGS" | tr '\n' ' ')"
+            echo "::error::no tag matching version $VERSION points at HEAD; refusing to record a ref"
+            exit 1
+          fi
+
+          echo "verified: HEAD $HEAD_SHA is tagged $VERSION (tags on HEAD: $(printf '%s' "$TAGS" | tr '\n' ' '))"
+
+      # Hand the released commit to bundle-pypi-wheels.yml — the only workflow that reads this
+      # artifact. (pypi-release.yml is a dispatch-only emergency sdist fallback and never reads it.)
+      # bundle-pypi-wheels is triggered by `workflow_run`, whose payload carries no custom data and
+      # whose head_branch/head_sha point at the dispatched ref (normally main) — which does NOT hold
+      # the bump in the manual-merge model. The artifact is the one channel that crosses the
+      # workflow_run boundary; the consumer downloads it by run id and checks it out.
+      #
+      # Record the SHA, not the branch name: the repo deletes the release branch when the PR merges,
+      # and a branch name would then resolve to nothing. The SHA keeps resolving because the tag cut
+      # here still points at it. (It is NOT reachable from main — the squash merge rewrites the SHA;
+      # see the orphaned-tag note in the header.)
+      #
+      # RECOVERY: while the artifact is live, re-run bundle-pypi-wheels' failed jobs — that replays
+      # the same workflow_run payload, so the publish gate still fires and the SAME version is built
+      # with no re-bump. A plain workflow_dispatch of that workflow will NOT publish: its release job
+      # requires `workflow_run` (or dry_run_release, which stops before uploading). Once the artifact
+      # has expired, a fresh release dispatch is needed, which cuts the NEXT version.
+      - name: Record the released commit for the downstream consumer
+        run: |
+          set -euo pipefail
+          REF="$(git rev-parse HEAD)"
+          # Must be a bare 40-hex SHA. The consumer feeds this straight to `actions/checkout`, and a
+          # blank or multi-line value would both corrupt its $GITHUB_OUTPUT write and silently fall
+          # back to the default branch.
+          if ! printf '%s' "$REF" | grep -qE '^[0-9a-f]{40}$'; then
+            echo "::error::refusing to record a release ref that is not a 40-hex SHA: '$REF'"
+            exit 1
+          fi
+          printf '%s\n' "$REF" > release-ref.txt
+          echo "recorded release ref: $REF"
+
+      - name: Upload the release ref for bundle-pypi-wheels
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-ref
           path: release-ref.txt
-          retention-days: 1
+          # 7 days, not 1: a delayed re-publish on the workflow_run path must still find the artifact.
+          retention-days: 7
           if-no-files-found: error
 
       # Open the release PR into main. Auto-merge is DISABLED: main is governed by a ruleset that
       # allows squash-only merges and requires a review, so the workflow cannot land a merge commit
       # unattended. The PR is opened here and MERGED MANUALLY at the end. Re-enable the merge loop
-      # below once the release model is reworked (see planning/release-tag-after-merge-proposal.md).
+      # below once the release model is reworked (see #29 for the route decision).
       - name: Open the release PR into main (merge manually)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BRANCH: ${{ needs.prepare.outputs.branch }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           HEAD_BRANCH="$BRANCH"
-
-          if [ "$HEAD_BRANCH" = "main" ]; then
-            echo "Release was cut on main; nothing to merge back."
-            exit 0
-          fi
 
           # The tag the action just created sits on HEAD; use it for the PR title when present.
           VERSION="$(git describe --tags --exact-match HEAD 2>/dev/null || true)"
@@ -210,14 +314,23 @@ jobs:
           # release is a fresh DISPATCH (new run_id => fresh branch), NOT GitHub's "Re-run failed
           # jobs" — a re-run re-invokes commitizen on the already-bumped branch and double-bumps the
           # version. (Making the bump itself idempotent is tracked in #29.)
-          if gh pr view "$HEAD_BRANCH" --json number >/dev/null 2>&1; then
-            echo "A PR for ${HEAD_BRANCH} already exists."
+          # Open PRs only. `gh pr view <branch>` also resolves CLOSED and MERGED PRs, so a branch
+          # that carried an earlier PR would be reported as already having one and the release PR
+          # would never be opened -- the release would finish with nothing to merge.
+          OPEN_PRS="$(gh pr list --repo "$REPOSITORY" --head "$HEAD_BRANCH" --state open --json number --jq 'length')"
+          if [ "$OPEN_PRS" -gt 0 ]; then
+            echo "An open PR for ${HEAD_BRANCH} already exists."
           else
+            BODY="$(printf '%s\n\n%s\n%s\n%s\n' \
+              "Automated release PR. The tag was cut on \`$HEAD_BRANCH\`; merge it into main MANUALLY." \
+              "NOTE: main allows squash merges only, and the squash rewrites the commit SHA, so the" \
+              "tag will NOT be an ancestor of main once this lands. That is the known, expected" \
+              "outcome today -- see #29 for the fix. Do not wait for a merge-commit option.")"
             gh pr create \
               --base main \
               --head "$HEAD_BRANCH" \
               --title "$TITLE" \
-              --body "Automated release PR. The tag was cut on \`$HEAD_BRANCH\`; merge it into main MANUALLY. NOTE: a squash merge rewrites the commit SHA and orphans the tag — land it so the tagged commit stays an ancestor of main."
+              --body "$BODY"
           fi
 
           echo "Release PR for ${HEAD_BRANCH} is open; merge it manually into main."
@@ -248,9 +361,111 @@ jobs:
       # PR, so leaving it enabled would delete the branch out from under the open PR). The repo's
       # delete_branch_on_merge removes the branch after the manual merge instead.
       # - name: Delete the merged release branch
-      #   if: ${{ success() && needs.prepare.outputs.branch != 'main' }}
+      #   if: ${{ success() }}
       #   env:
       #     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       #   run: |
       #     BRANCH="${{ needs.prepare.outputs.branch }}"
       #     git push origin --delete "$BRANCH" || echo "branch ${BRANCH} already removed; nothing to delete"
+
+  # Delete the branch `prepare` created when a release fails or is cancelled BEFORE the tag was cut,
+  # so failed attempts stop littering the remote (runs 43784168924 and 43905004962 both had to be
+  # cleaned up by hand). It deletes a branch only when all of these hold: this run created it
+  # (`prepare.outputs.created`), no open PR targets it, and its tip carries no tag — the last check
+  # made against origin inside the step, not from a job output. Once the tag exists the branch is
+  # kept, because the tag and GitHub Release are left in place on failure and that branch holds the
+  # only copy of the commit they point at.
+  cleanup-on-failure:
+    # `pure-wheel-test` is not listed: it is an ancestor through `release`, and `failure()` covers
+    # the whole dependency chain, so naming it again adds nothing.
+    needs: [prepare, release]
+    # Two conditions here; the "was it tagged?" test is done inside the step against origin, NOT
+    # from a job output -- see the step body for why.
+    #   failure() || cancelled()  -- failure() alone is false for a cancelled run, which used to
+    #                                leave the branch behind on every cancel.
+    #   created == 'true'         -- only ever delete a branch THIS run created.
+    #
+    # TWO KNOWN LIMITATIONS, both accepted. Each one degrades to "the branch is left on origin",
+    # which is the behaviour this job replaced, so neither can delete something it should not:
+    #
+    #  1. Whether a not-yet-started job reliably starts once a run is CANCELLED is not something we
+    #     have verified, and the docs do not state it. If it does not, a cancelled release leaves
+    #     its branch behind exactly as before.
+    #  2. `created` is written to $GITHUB_OUTPUT by the resolve step, and a step killed mid-flight
+    #     publishes no outputs at all. A cancel landing between `git push -u` and the end of that
+    #     step therefore leaks the branch with this job's own guard switched off. Writing the output
+    #     earlier does not help, since outputs only materialise when the step completes.
+    if: >-
+      ${{ (failure() || cancelled())
+          && needs.prepare.outputs.created == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Delete the orphaned auto-created release branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          BRANCH: ${{ needs.prepare.outputs.branch }}
+        run: |
+          set -euo pipefail
+          # Belt and braces. Ownership is already established by the job's
+          # `prepare.outputs.created == 'true'` condition; this only refuses to act on a name that
+          # does not look like one we mint, in case that output is ever wired up wrong.
+          case "$BRANCH" in
+            release/auto-*) ;;
+            *) echo "Not an auto-created branch name ($BRANCH); leaving it."; exit 0 ;;
+          esac
+
+          # --repo is mandatory: this job has no checkout, and `gh` resolves the repository from
+          # --repo, GH_REPO or a git remote -- never from GITHUB_REPOSITORY. Without it the call
+          # exits 1 ("failed to run git: fatal: not a git repository") on every run, and swallowing
+          # that error made this guard unreachable, so the branch was deleted even under an open PR.
+          # `pr list --state open` rather than `pr view`, because `pr view <branch>` also resolves
+          # closed and merged PRs, which would block cleanup of a reused branch name forever.
+          OPEN_PRS="$(gh pr list --repo "$REPOSITORY" --head "$BRANCH" --state open --json number --jq 'length')"
+          if [ "$OPEN_PRS" -gt 0 ]; then
+            echo "An open PR exists for $BRANCH; leaving the branch for the PR."
+            exit 0
+          fi
+
+          # Never delete a branch whose tip is tagged. Once the bump commit carries a tag, this
+          # branch holds the only copy of it -- the tag and GitHub Release are deliberately kept on
+          # failure -- so deleting it strands the tag and makes the next dispatch recompute the same
+          # version and collide.
+          #
+          # Asked of origin, NOT taken from a job output. An earlier attempt gated on a `tagged`
+          # output written by the release job's verify step, which fails twice over: the shared
+          # action pushes the tag and creates the Release internally, several steps BEFORE that
+          # verify step runs, so a failure in that window leaves the tag on origin with the output
+          # unset; and a failed job's outputs are not documented to reach a dependent job at all, so
+          # the guard could be inert exactly when it is needed. Querying origin is immune to both.
+          TIP="$(gh api "repos/$REPOSITORY/git/ref/heads/$BRANCH" --jq '.object.sha' 2>/dev/null || true)"
+          if [ -z "$TIP" ]; then
+            echo "branch $BRANCH is already gone; nothing to delete"
+            exit 0
+          fi
+          if gh api "repos/$REPOSITORY/git/matching-refs/tags" --jq '.[].object.sha' | grep -qx "$TIP"; then
+            echo "$BRANCH tip ($TIP) is tagged; keeping the branch so the tag stays reachable."
+            exit 0
+          fi
+
+          echo "Deleting orphaned release branch $BRANCH (tip $TIP, untagged)"
+          # Classify by the ACTUAL responses, measured against the API:
+          #   deleting a ref that does not exist -> 422 "Reference does not exist"
+          #   deleting in a repo we cannot reach -> 404 "Not Found"
+          # So 422 is the benign already-gone case and 404 is a real failure. A previous revision
+          # had these the wrong way round: it hard-failed on the benign case and swallowed the
+          # permission error as "already gone".
+          if ! ERR="$(gh api -X DELETE "repos/$REPOSITORY/git/refs/heads/$BRANCH" 2>&1)"; then
+            if printf '%s' "$ERR" | grep -q 'Reference does not exist'; then
+              echo "branch $BRANCH already gone; nothing to delete"
+            else
+              # Printed on its own lines first: an ::error:: annotation keeps only the first line.
+              printf 'failed to delete %s:\n%s\n' "$BRANCH" "$ERR"
+              echo "::error::failed to delete $BRANCH (see the log line above for the API response)"
+              exit 1
+            fi
+          fi
