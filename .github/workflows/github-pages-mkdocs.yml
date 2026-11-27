@@ -1,8 +1,10 @@
 name: Deploy MkDocs
 
-# MkDocs deploy workflow, ported from pyramids-mesh: the main-branch site and versioned release
-# docs (mike). It runs on push-to-main and on release. PR-preview deploys (mesh's deploy-pr job)
-# are intentionally omitted here, so a pull request never runs a docs deploy.
+# MkDocs build + deploy workflow: the warnings-as-errors `build-strict` gate, the main-branch site
+# and the versioned release docs (mike). `build-strict` runs on every event including pull
+# requests, and both deploys depend on it. PR-preview *deploys* (mesh's deploy-pr job) stay
+# omitted, so a pull request builds the site and uploads it as an artifact but never publishes to
+# gh-pages -- a per-PR deploy would commit a whole site to the shared branch on every push.
 #
 # The site it deploys is `mkdocs.yml` + `docs/`. The deploy also needs the `ACTIONS_DEPLOY_TOKEN`
 # secret and writes to a `gh-pages` branch that mike creates on the first successful run.
@@ -15,6 +17,14 @@ on:
   push:
     branches:
       - main
+  # The gate's reason for existing: before this, nothing built the docs on a pull request, so a
+  # broken nav entry or a dangling `::: identifier` failed the DEPLOY after merging instead of the
+  # PR that introduced it. '**' rather than [main] so a stacked PR is checked too, as in core.
+  # Only `build-strict` becomes reachable from a pull request -- every deploy job's `if:` demands
+  # a push, a release or a workflow_run, none of which a pull request can satisfy.
+  pull_request:
+    branches:
+      - '**'
   release:
     types:
       - published
@@ -23,7 +33,59 @@ on:
     types: [completed]
 
 jobs:
+  # Gate every deploy on a warnings-as-errors build. The mkdocs-deploy action builds NON-STRICT
+  # (`mkdocs.yml` sets no `strict:` key, and mkdocs defaults it to false), so a broken nav entry, a
+  # dangling anchor or a malformed docstring publishes silently -- this fails the run instead.
+  #
+  # This check is a restoration, not a new idea: it lived in lint.yml as a `docs` job from 4b70d7e
+  # (#14, which closed #17 "nothing validates the docs site before merge") until 8e383b6 (#43)
+  # rewrote lint.yml and the job did not survive. It sits here rather than back in lint.yml because
+  # here it also gates the deploys, which the lint.yml placement never did.
+  build-strict:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # This workflow grants contents+pages write at the top level for the deploy jobs. A pull
+    # request reaches THIS job, so it drops to read-only: it needs nothing else, and the deploys
+    # hold ACTIONS_DEPLOY_TOKEN.
+    permissions:
+      contents: read
+    steps:
+      # No explicit ref: on a pull_request, checkout's default is the merge commit rather than the
+      # fork's head, so fork-controlled code never runs in this job.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The same pixi `docs` environment the deploy jobs install (`install-groups: 'docs'`), so the
+      # gate and the deploy cannot drift onto different dependency sets.
+      - name: Set up Python
+        uses: serapeum-org/github-actions/actions/python-setup/pixi@6c0a569b67c149c4648c75495544732cba2d0eca # pixi/v1.2.2
+        with:
+          environments: docs
+          activate-environment: docs
+          cache: true
+          version: v0.84.2
+
+      - name: Build the docs site (strict)
+        # --strict turns mkdocs/griffe warnings into errors -- that is the whole gate. --locked, as
+        # in tests.yml's `main`: without it a drifted pixi.lock is silently re-solved and the gate
+        # would pass against dependencies the lock does not describe. --site-dir keeps the output
+        # out of the checkout so nothing can be committed by accident.
+        run: pixi run --locked -e docs mkdocs build --strict --site-dir /tmp/site
+
+      # A pull request builds the site but does not publish it. Reviewers who want to see the
+      # rendered pages download them here instead of from a gh-pages preview.
+      - name: Upload the built site for review
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: site-pr-${{ github.event.pull_request.number }}
+          path: /tmp/site
+          retention-days: 7
+
   deploy-main:
+    needs: build-strict
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
@@ -39,6 +101,7 @@ jobs:
           deploy-token: ${{ secrets.ACTIONS_DEPLOY_TOKEN }}
 
   deploy-release:
+    needs: build-strict
     # Security: when triggered via `workflow_run`, require that the upstream workflow ran from the
     # base repository (not a fork) so untrusted code never runs in a context holding the deploy token.
     if: >-
