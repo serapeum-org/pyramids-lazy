@@ -871,25 +871,81 @@ class TestTheHelperExamplesStayExecutable:
         assert failures == 0, f"{failures} of {attempted} doctest examples failed"
 
 
-class TestTheBuildJobsWireTheResolvedRef:
-    """A job checking out `needs.resolve-ref.outputs.ref` must declare the dependency.
+def _jobs_reading_resolve_ref() -> set[str]:
+    """Return every job whose definition references the `resolve-ref` job's outputs or result.
 
-    An undeclared `needs` renders the expression empty rather than failing, and checkout then
-    falls back to `github.ref` -- right on a push or a PR, wrong on the release path, where the
-    version bump lives on the release branch rather than on `head_branch`.
+    Found by searching each job's own YAML rather than from a hand-written list, so a job added
+    later is covered without this file being touched.
+
+    Returns:
+        set[str]: Job ids containing a `needs.resolve-ref...` expression.
+    """
+    return {
+        job_id
+        for job_id, job in _workflow()["jobs"].items()
+        if "needs.resolve-ref" in yaml.safe_dump(job)
+    }
+
+
+def _declared_needs(job_id: str) -> list[str]:
+    """Return a job's `needs` as a list, whether written as a string or a sequence.
+
+    Args:
+        job_id: The job's id in the workflow.
+
+    Returns:
+        list[str]: The job ids it declares a dependency on.
+    """
+    needs = _workflow()["jobs"][job_id].get("needs", [])
+    return [needs] if isinstance(needs, str) else list(needs)
+
+
+class TestEveryJobReadingTheResolvedRefDeclaresIt:
+    """An undeclared `needs` renders the expression EMPTY rather than failing.
+
+    `actions/checkout` then falls back to `github.ref`. That is the same ref on a push or a pull
+    request, which is why this went unnoticed -- but on the release path `github.ref` is the
+    default branch while the wheel is built from the `release/auto-*` branch carrying the version
+    bump, so `verify.py` ran from a different tree than the wheel it was verifying. `report`'s
+    `needs.resolve-ref.result != 'skipped'` was likewise reading null, making the guard a no-op.
     """
 
-    @pytest.mark.parametrize(
-        "job",
-        ["build-linux-wheels", "build-macos-wheels", "build-windows-wheels", "sdist"],
-    )
-    def test_each_build_job_depends_on_resolve_ref(self, job):
-        """Pin the wiring for every job that builds a published artifact.
+    def test_every_such_job_is_wired(self):
+        """The invariant for all ten jobs, derived from the workflow rather than listed here.
 
-        Args:
-            job: A job that builds an artifact from the resolved ref.
+        Test scenario:
+            Collects every job whose definition mentions `needs.resolve-ref` -- the four build
+            jobs, the five verify jobs and `report` -- and requires each to declare it. A job
+            added later is covered automatically.
         """
-        needs = _workflow()["jobs"][job]["needs"]
-        declared = [needs] if isinstance(needs, str) else needs
+        missing = {
+            job_id
+            for job_id in _jobs_reading_resolve_ref()
+            if "resolve-ref" not in _declared_needs(job_id)
+        }
 
-        assert "resolve-ref" in declared
+        assert missing == set(), (
+            f"these jobs read needs.resolve-ref without declaring it: {missing}"
+        )
+
+    def test_the_set_of_such_jobs_is_the_expected_ten(self):
+        """Guards the guard: an empty collection would make the test above vacuous."""
+        assert _jobs_reading_resolve_ref() == {
+            "build-linux-wheels",
+            "build-macos-wheels",
+            "build-windows-wheels",
+            "sdist",
+            "verify-debian12",
+            "verify-rocky9",
+            "verify-rocky9-aarch64",
+            "verify-macos",
+            "verify-windows",
+            "report",
+        }
+
+    def test_reports_skip_guard_can_now_fire(self):
+        """`report`'s `if` reads `needs.resolve-ref.result`, which requires the declaration."""
+        report = _workflow()["jobs"]["report"]
+
+        assert "needs.resolve-ref.result" in report["if"]
+        assert "resolve-ref" in _declared_needs("report")
