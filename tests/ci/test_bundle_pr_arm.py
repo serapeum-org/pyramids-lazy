@@ -757,6 +757,31 @@ class TestTheModelsRefuseWhatTheyCannotRepresent:
         with pytest.raises(AssertionError, match="unmodelled paths pattern"):
             _paths_filter_selects("ci/parquet-plugin/build.sh")
 
+    def test_an_interior_glob_before_a_trailing_double_star_is_rejected(
+        self, monkeypatch
+    ):
+        """A pattern can end in `/**` and still carry a glob this model cannot read.
+
+        Args:
+            monkeypatch: Replaces the live filter with `ci/*/plugin/**`.
+
+        Test scenario:
+            `test_a_non_trailing_glob_is_rejected` above exercises the guard on the
+            *literal* branch, because `ci/*/build.sh` does not end in `/**`. This takes
+            the `/**` branch instead, where the prefix is otherwise compared with
+            `str.startswith` -- so `ci/*/plugin/` would match only a path containing a
+            literal asterisk, and every path GitHub selects would be reported as not
+            building.
+        """
+        monkeypatch.setattr(
+            sys.modules[__name__],
+            "_triggers",
+            lambda: {"pull_request": {"paths": ["ci/*/plugin/**"]}},
+        )
+
+        with pytest.raises(AssertionError, match="only a trailing"):
+            _paths_filter_selects("ci/parquet-plugin/plugin/build.sh")
+
 
 @requires_bash
 class TestTheResolveStepFailsLoudlyRatherThanResolvingNothing:
@@ -806,6 +831,63 @@ class TestTheResolveStepFailsLoudlyRatherThanResolvingNothing:
 
 
 @requires_bash
+class TestTheResolveHarnessRefusesAnUnusableResult:
+    """`_resolve_ref` is the strict wrapper every positive ref assertion here trusts.
+
+    `_run_resolve` deliberately returns the process, so a test can assert on a step that
+    fails on purpose. `_resolve_ref` is the other half of that split: it must raise rather
+    than hand back a ref the step never produced.
+    """
+
+    def test_a_non_zero_exit_is_raised_rather_than_returned(
+        self, monkeypatch, tmp_path
+    ):
+        """A red step must not reach the caller as a ref.
+
+        Args:
+            monkeypatch: Replaces the step with one that writes to stderr and exits 3.
+            tmp_path: Working directory for the step, from pytest.
+
+        Test scenario:
+            `test_a_release_with_no_uploaded_ref_fails_the_step` drives the real failure
+            through `_run_resolve`, which returns instead of asserting -- so
+            `_resolve_ref`'s own exit-code guard was never exercised. The message carries
+            the step's stderr, which is what makes a harness failure diagnosable.
+        """
+        monkeypatch.setattr(
+            sys.modules[__name__],
+            "_resolve_script",
+            lambda: 'echo "boom" >&2\nexit 3\n',
+        )
+
+        with pytest.raises(AssertionError, match="resolve step failed: boom"):
+            _resolve_ref({}, tmp_path)
+
+    def test_a_step_that_writes_no_ref_line_is_raised(self, monkeypatch, tmp_path):
+        """Exit 0 having written nothing is the silent-empty-ref case, and must still raise.
+
+        Args:
+            monkeypatch: Replaces the step with one that succeeds and appends no output.
+            tmp_path: Working directory for the step, from pytest.
+
+        Test scenario:
+            A rewrite that drops the `echo "ref=${REF}" >> "$GITHUB_OUTPUT"` line, or
+            redirects it somewhere else, leaves the step green with no ref -- and checkout
+            then silently takes the default branch, the outcome
+            `TestTheResolveStepFailsLoudlyRatherThanResolvingNothing` is named for. The
+            exit-code guard above cannot catch it, so this is the branch that does.
+        """
+        monkeypatch.setattr(
+            sys.modules[__name__],
+            "_resolve_script",
+            lambda: 'echo "resolved ref: main"\n',
+        )
+
+        with pytest.raises(AssertionError, match="wrote no ref= line"):
+            _resolve_ref({}, tmp_path)
+
+
+@requires_bash
 class TestEveryBranchOfTheResolveStepIsExercised:
     """Branch coverage for shell embedded in YAML, which no coverage tool reports on."""
 
@@ -846,6 +928,138 @@ class TestEveryBranchOfTheResolveStepIsExercised:
             )
 
         assert _resolve_ref(context, tmp_path) == expected
+
+
+class TestTheWorkflowParsersReportAStructureTheyCannotRead:
+    """Each parser reads the live YAML, so a silent miss would void the guard above it.
+
+    These are the failure modes that cannot be provoked from the live workflow, because
+    the live workflow is well-formed -- which is exactly why nothing exercised them.
+    """
+
+    def test_a_resolve_step_without_the_ref_id_is_reported(self, monkeypatch):
+        """`_resolve_script` keys off `id: ref`, not off the step's name or position.
+
+        Args:
+            monkeypatch: Replaces `_workflow` with one whose resolve-ref step lost its id.
+
+        Test scenario:
+            Every ref test funnels through `_resolve_script`, so a step that is renamed,
+            re-ordered or dropped has to raise here rather than return a neighbouring
+            step's `run:` -- which would leave this whole file green while testing the
+            wrong shell. The step is replaced with one carrying the right *name* and no
+            id, the shape a careless edit produces.
+        """
+        workflow = _workflow()
+        workflow["jobs"]["resolve-ref"]["steps"] = [
+            {"name": "Resolve the ref to build", "run": "true"}
+        ]
+        monkeypatch.setattr(sys.modules[__name__], "_workflow", lambda: workflow)
+
+        with pytest.raises(AssertionError, match="no step with id 'ref'"):
+            _resolve_script()
+
+    def test_a_resolve_step_without_a_case_block_is_reported(self, monkeypatch):
+        """`_case_span` narrows the arm scan; no `case ... in`/`esac` means no scan at all.
+
+        Args:
+            monkeypatch: Replaces the step with a straight-line script carrying no `case`.
+
+        Test scenario:
+            A rewrite to `if`/`elif` is the plausible way this happens. Falling back to
+            the whole step would let `_ARM_HEADER` read body lines as arms, which is the
+            precise reason the span exists.
+        """
+        monkeypatch.setattr(
+            sys.modules[__name__],
+            "_resolve_script",
+            lambda: 'set -euo pipefail\nREF="${{ github.ref_name }}"\n',
+        )
+
+        with pytest.raises(AssertionError, match="no `case ... in` / `esac` block"):
+            _case_span()
+
+    def test_an_arm_style_the_regex_cannot_read_fails_the_cross_check(
+        self, monkeypatch
+    ):
+        """The `;;` count is what stops a blind parse from agreeing with the expected set.
+
+        Args:
+            monkeypatch: Replaces the step with a `case` block whose arms are
+                double-quoted.
+
+        Test scenario:
+            `_ARM_HEADER`'s charset excludes `"` deliberately, so that a body line such as
+            `REF="$(cat .release-ref/release-ref.txt)"` cannot be read as an arm -- which
+            also makes a double-quoted arm header invisible to it. Without the
+            cross-check `_case_arms` would return an empty set for this block and
+            `test_the_tests_drive_every_case_arm` would be comparing nothing against
+            nothing.
+        """
+        script = (
+            'case "${E}" in\n  "push") REF=a ;;\n  "pull_request") REF=b ;;\nesac\n'
+        )
+        monkeypatch.setattr(sys.modules[__name__], "_resolve_script", lambda: script)
+
+        with pytest.raises(AssertionError, match="parsed 0 case arms but found 2"):
+            _case_arms()
+
+
+class TestTheArmParserReadsTheStylesItClaimsToAccept:
+    """`_case_arms` documents tolerance for three arm styles the live step does not use.
+
+    Nothing in the live workflow reaches the alternation split or the quote stripping, so
+    both are dead code against it -- and a tolerance no test exercises is one that breaks
+    the first time an arm is restyled, which is the regression the helper was widened to
+    prevent.
+    """
+
+    @pytest.mark.parametrize(
+        "style, span, expected",
+        [
+            (
+                "a pattern on its own line with its body beneath",
+                "  pull_request)\n    REF=a\n    ;;\n  *)\n    REF=b\n    ;;",
+                {"*", "pull_request"},
+            ),
+            (
+                "an alternation",
+                "  push|pull_request) REF=a ;;\n  *) REF=b ;;",
+                {"*", "push", "pull_request"},
+            ),
+            (
+                "a quoted pattern",
+                "  'pull_request') REF=a ;;\n  *) REF=b ;;",
+                {"*", "pull_request"},
+            ),
+        ],
+    )
+    def test_it_reads_an_arm_written_in_each_tolerated_style(
+        self, style, span, expected, monkeypatch
+    ):
+        """Parse a synthetic `case` block in one tolerated style and check the arm set.
+
+        Args:
+            style: How the arm is written, for the failure message.
+            span: The synthetic `case` body, wrapped into a full block below.
+            expected: The patterns `_case_arms` must report for it.
+            monkeypatch: Replaces the live step with that synthetic block.
+
+        Test scenario:
+            Each style also satisfies the `;;` cross-check, so a pass here means the
+            regex read the arms rather than merely counting terminators. The `*` arm is
+            present in all three because the live step has one, and dropping it would
+            change what the cross-check compares.
+        """
+        monkeypatch.setattr(
+            sys.modules[__name__],
+            "_resolve_script",
+            lambda: f'case "${{E}}" in\n{span}\nesac\n',
+        )
+
+        assert _case_arms() == expected, (
+            f"{style} was misread as {sorted(_case_arms())}"
+        )
 
 
 class TestTheHelperExamplesStayExecutable:
@@ -949,3 +1163,55 @@ class TestEveryJobReadingTheResolvedRefDeclaresIt:
 
         assert "needs.resolve-ref.result" in report["if"]
         assert "resolve-ref" in _declared_needs("report")
+
+
+class TestDeclaredNeedsReadsEveryShapeTheWorkflowUses:
+    """`needs` is written three ways in this workflow, and the root job omits it.
+
+    `test_every_such_job_is_wired` membership-tests the result, so a shape read wrongly
+    does not raise -- it reports a wired job as unwired, or an unwired one as fine.
+    """
+
+    def test_a_job_with_no_needs_reads_as_an_empty_list(self):
+        """`resolve-ref` is the root job, and must not make the helper raise.
+
+        Test scenario:
+            The `.get("needs", [])` default is reachable only from a job declaring none.
+            Every job `_jobs_reading_resolve_ref` yields has a `needs`, so the live suite
+            never took this branch; a job added later that reads the ref through a
+            different expression would be the first to.
+        """
+        assert _declared_needs("resolve-ref") == [], (
+            "the root job declares no needs, which must read as an empty list"
+        )
+
+    @pytest.mark.parametrize(
+        "job_id, shape",
+        [
+            ("build-linux-wheels", "a bare string"),
+            ("verify-debian12", "an inline list"),
+            ("report", "a list on the following line"),
+        ],
+    )
+    def test_it_normalises_the_shapes_the_live_workflow_uses(self, job_id, shape):
+        """Each written form must yield a list that contains `resolve-ref`.
+
+        Args:
+            job_id: A job declaring its `needs` in one of the live YAML forms.
+            shape: How that job writes it, for the failure message.
+
+        Test scenario:
+            `needs: resolve-ref`, `needs: [resolve-ref, ...]` and the same list wrapped
+            onto the next line all appear in this workflow. The bare-string form is the
+            one that matters: `"resolve-ref" in "resolve-ref-check"` is true for a
+            substring, so a job needing only a similarly-named job would read as wired if
+            the string were membership-tested instead of wrapped in a list.
+        """
+        needs = _declared_needs(job_id)
+
+        assert isinstance(needs, list), (
+            f"{shape} did not normalise to a list: {needs!r}"
+        )
+        assert "resolve-ref" in needs, (
+            f"{job_id} writes its needs as {shape} and must still list resolve-ref"
+        )
