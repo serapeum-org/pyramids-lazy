@@ -417,6 +417,124 @@ jobs:
           python -m pip install "$(ls wheelhouse/*.whl)" --only-binary=:all:
           python ci/parquet-plugin/verify.py --via-entry-point
 
+  test-native-wheel:
+    # Runs the actual test suite against the PUBLISHED native wheel the way a pip user installs it
+    # (actions/setup-python + `pip --only-binary=:all:`, NOT the conda/pixi dev env). The verify-*
+    # jobs only smoke-test that the OGR-Parquet driver loads; this exercises the whole suite against
+    # the real artifact, across the supported Python range (Linux) and all three OS wheels. 3.15 is
+    # deliberately absent: pyramids-core / h5py / numcodecs ship no cp315 wheels on PyPI yet, so the
+    # stack cannot be installed there -- that path is probed non-gating in pypi-install-test.yml.
+    name: suite native wheel ${{ matrix.os }} py${{ matrix.python-version }}
+    needs: [resolve-ref, build-linux-wheels, build-macos-wheels, build-windows-wheels]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # onlybinary is "--only-binary=:all:" on the bare legs (the published-wheel contract: every
+          # runtime dep must resolve from a wheel, as pure-wheel-test's core job asserts) but empty on
+          # the [parquet] leg, matching pure-wheel-test's extras job, which installs the extra WITHOUT
+          # --only-binary so a transitive sdist-only dep of pyarrow/dask-geopandas cannot block this
+          # release gate (both jobs gate the release; keeping the same contract avoids the asymmetry).
+          - { os: ubuntu-latest, artifact: wheels-linux-x86_64, python-version: "3.11", extra: "", onlybinary: "--only-binary=:all:" }
+          - { os: ubuntu-latest, artifact: wheels-linux-x86_64, python-version: "3.12", extra: "", onlybinary: "--only-binary=:all:" }
+          # One leg installs the [parquet] extra so the OGR-Parquet suite runs through the bundled
+          # driver end to end (the extra provides pyarrow to write the fixture); 3.13 matches the
+          # pure-wheel-test extras leg, where the pyarrow/dask-geopandas wheels are known-present.
+          - { os: ubuntu-latest, artifact: wheels-linux-x86_64, python-version: "3.13", extra: "[parquet]", onlybinary: "" }
+          - { os: ubuntu-latest, artifact: wheels-linux-x86_64, python-version: "3.14", extra: "", onlybinary: "--only-binary=:all:" }
+          - { os: macos-15, artifact: wheels-macos-arm64, python-version: "3.12", extra: "", onlybinary: "--only-binary=:all:" }
+          - { os: windows-2022, artifact: wheels-windows-AMD64, python-version: "3.12", extra: "", onlybinary: "--only-binary=:all:" }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-ref.outputs.ref }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ matrix.artifact }}
+          path: wheelhouse
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install the native wheel as a pip user would, then run the suite
+        # matrix.onlybinary is --only-binary=:all: on the bare legs (every runtime dep -- pyramids-core,
+        # dask, zarr, kerchunk, h5py, ... -- must resolve from a published wheel on this OS/Python) and
+        # empty on the [parquet] leg, matching pure-wheel-test's extras job (see the matrix comment).
+        # -o pythonpath= clears pyproject's `pythonpath = [".", "src"]` so tests import the INSTALLED
+        # wheel, not the source tree. interop (xarray) is a test-only dep absent from the wheel, and
+        # live needs the network -- both deselected (they run in tests.yml's pixi interop env).
+        shell: bash
+        run: |
+          set -euo pipefail
+          WHEEL=$(ls wheelhouse/*.whl)
+          pip install "${WHEEL}${{ matrix.extra }}" ${{ matrix.onlybinary }}
+          pip install pytest pytest-env pytest-mock --only-binary=:all:
+          python -c "import pyramids_lazy; print('installed', pyramids_lazy.__version__)"
+          # Unlike pure-wheel-test's extras leg, this gate does NOT tolerate pytest exit 5
+          # (`|| [ $? -eq 5 ]`): it runs the full tests/ tree, which always collects non-live/
+          # non-interop tests, so exit 5 here means the installed wheel failed to collect and must
+          # fail the gate rather than be masked.
+          pytest -vvv -o pythonpath= -m "not live and not interop" tests/
+
+  verify-sdist-pure-backend:
+    # The sdist is what a pip user on an UNSUPPORTED platform (musllinux, win_arm64) falls back to:
+    # no bundled driver, the pure backend. conda-forge ships no musl/win-arm64 libgdal-core, so that
+    # exact platform cannot pip-install the stack here; instead we force the pure path on glibc by
+    # building pyramids-lazy from the real sdist artifact (--no-binary) while its deps stay wheels.
+    # Asserts the degraded contract: the sdist install imports, reads a GeoParquet via read_parquet
+    # (the pure pyarrow/geopandas path), and carries NO bundled gdalplugins/ -- the one thing that
+    # actually distinguishes it from the native wheel. (It deliberately does NOT assert anything about
+    # iter_features over parquet: per ci/parquet-plugin/verify.py, iter_features is pyogrio-backed on
+    # pyogrio's own vendored libgdal, which has no Parquet driver and so raises with OR without the
+    # bundled plugin -- that raise would prove nothing about the pure vs native difference.)
+    name: verify sdist pure backend
+    needs: [resolve-ref, sdist]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-ref.outputs.ref }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sdist
+          path: dist
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install the sdist (pure backend) and assert the degraded contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          # --no-binary=pyramids-lazy forces the sdist to build (the pure backend, no gdalplugins);
+          # --only-binary=:all: keeps every dependency a published wheel. [parquet] pulls pyarrow so
+          # the assertion below can write a GeoParquet fixture.
+          pip install "$(ls dist/*.tar.gz)[parquet]" --only-binary=:all: --no-binary=pyramids-lazy
+          python - <<'PY'
+          import importlib.util, pathlib, tempfile, os
+          spec = importlib.util.find_spec("pyramids_lazy")
+          pkg = pathlib.Path(spec.origin).parent
+          # The discriminator between this pure sdist install and the native wheel: no bundled driver.
+          assert not (pkg / "gdalplugins").exists(), f"pure sdist install must not carry gdalplugins/: {pkg}"
+          import pyramids_lazy
+          print("pure backend OK:", pyramids_lazy.__version__, "@", pkg, "(no gdalplugins/)")
+
+          import pyramids  # vendored-GDAL bootstrap must run before osgeo/geopandas/shapely
+          import geopandas as gpd
+          from shapely.geometry import Point
+          from pyramids.feature import FeatureCollection
+
+          path = os.path.join(tempfile.mkdtemp(), "points.parquet")
+          gpd.GeoDataFrame(
+              {"i": [0, 1, 2]}, geometry=[Point(x, x) for x in range(3)], crs="EPSG:4326"
+          ).to_parquet(path)
+          # read_parquet is the pure pyarrow/geopandas path and must work without any bundled driver.
+          feats = len(FeatureCollection.read_parquet(path))
+          assert feats == 3, f"read_parquet returned {feats} features, expected 3"
+          print("read_parquet works on the pure backend:", feats, "features")
+          PY
+
   report:
     name: report
     # resolve-ref is listed because the `if` below reads needs.resolve-ref.result: an
@@ -451,7 +569,8 @@ jobs:
     # mark the run failed. Mirrors pyramids-core's bundle release job.
     needs:
       [build-linux-wheels, build-macos-wheels, build-windows-wheels, sdist,
-       verify-debian12, verify-rocky9, verify-rocky9-aarch64, verify-macos, verify-windows]
+       verify-debian12, verify-rocky9, verify-rocky9-aarch64, verify-macos, verify-windows,
+       test-native-wheel, verify-sdist-pure-backend]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # Publish only after a SUCCESSFUL same-repo github-release (the canonical path). A manual

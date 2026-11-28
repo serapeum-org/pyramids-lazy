@@ -1,0 +1,82 @@
+name: PyPI Install Test
+
+# Installs the ALREADY-PUBLISHED pyramids-lazy straight from PyPI -- no local build -- exactly as an
+# end user does, across the OS/Python matrix. This is the only job that exercises the real published
+# artifact + its real published dependency closure as resolved by a plain `pip install`; every other
+# wheel job installs a locally-built wheel. It is scheduled (not a release gate) so it also serves as
+# a standing tripwire for Python 3.15: that leg is expected to FAIL today because pyramids-core / h5py /
+# numcodecs ship no cp315 wheels on PyPI yet, so pip cannot resolve the stack. The leg is non-gating and
+# will flip green on its own the week those upstream cp315 wheels exist. Not a release gate: it runs
+# after the fact, so it can never block a release, and a failure means the live PyPI package is broken
+# for users.
+
+permissions:
+  contents: read
+
+on:
+  schedule:
+    # Weekly, Monday 06:00 UTC -- frequent enough to notice an upstream cp315 landing promptly.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "pyramids-lazy version to install from PyPI (blank = latest)"
+        required: false
+        default: ""
+        type: string
+
+jobs:
+  install-from-pypi:
+    name: pip install pyramids-lazy[parquet] ${{ matrix.os }} py${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, python-version: "3.11", experimental: false }
+          - { os: ubuntu-latest, python-version: "3.12", experimental: false }
+          - { os: ubuntu-latest, python-version: "3.13", experimental: false }
+          - { os: ubuntu-latest, python-version: "3.14", experimental: false }
+          # Expected-red tripwire: pip cannot resolve the stack here because upstream ships no cp315
+          # wheels yet. Flips green on its own once those wheels exist. Non-gating via `experimental`.
+          - { os: ubuntu-latest, python-version: "3.15", experimental: true }
+          - { os: macos-15, python-version: "3.12", experimental: false }
+          - { os: windows-2022, python-version: "3.12", experimental: false }
+    steps:
+      # Checked out only for ci/parquet-plugin/verify.py; the package itself comes from PyPI. verify.py
+      # is run at HEAD against whatever version PyPI serves -- it is a stable smoke check, not pinned.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          # On the experimental (3.15) leg accept a pre-release interpreter so the tripwire actually
+          # reaches the pip step -- otherwise, while 3.15 is only pre-release on the runners,
+          # setup-python would fail here for an unrelated reason and the leg would never flip green once
+          # the cp315 wheels exist. GA interpreters are unaffected.
+          allow-prereleases: ${{ matrix.experimental }}
+
+      - name: pip install pyramids-lazy[parquet] from PyPI
+        # A plain install, exactly as a user runs it (no --only-binary, no local index): whatever pip
+        # resolves from PyPI for this OS/Python is what we test. On 3.15 this is expected to fail
+        # (no cp315 wheels upstream) -- the tripwire -- which the non-gating leg tolerates. The dispatch
+        # input is passed via env (never interpolated into the script) so a crafted value cannot inject
+        # shell.
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          SPEC="pyramids-lazy[parquet]"
+          if [ -n "${VERSION}" ]; then SPEC="pyramids-lazy[parquet]==${VERSION}"; fi
+          echo "installing: ${SPEC}"
+          pip install "${SPEC}"
+
+      - name: Import and verify the OGR-Parquet driver loads
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -c "import pyramids_lazy; print('installed from PyPI:', pyramids_lazy.__version__)"
+          python ci/parquet-plugin/verify.py --via-entry-point

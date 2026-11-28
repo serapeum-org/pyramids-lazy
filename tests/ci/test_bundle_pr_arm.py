@@ -783,10 +783,12 @@ class TestAPullRequestCannotPublish:
         """A red verify must stop a publish, not merely colour the run.
 
         Test scenario:
-            The nine jobs the artifact's correctness depends on -- the four artifact-building
-            jobs (three wheel builds plus `sdist`) and all five verify jobs. `resolve-ref` is deliberately absent: `release` reads no
-            `needs.resolve-ref` expression, so it is one of the two jobs
-            `test_the_set_of_such_jobs_is_the_expected_ten` leaves out.
+            The eleven jobs the artifact's correctness depends on -- the four artifact-building
+            jobs (three wheel builds plus `sdist`), all five verify jobs, the `test-native-wheel`
+            suite run against the published wheel, and the `verify-sdist-pure-backend` check.
+            `resolve-ref` is deliberately absent: `release` reads no `needs.resolve-ref`
+            expression, so it is one of the two jobs
+            `test_the_set_of_such_jobs_is_the_expected_twelve` leaves out.
         """
         assert set(_workflow()["jobs"]["release"]["needs"]) == {
             "build-linux-wheels",
@@ -798,6 +800,8 @@ class TestAPullRequestCannotPublish:
             "verify-rocky9-aarch64",
             "verify-macos",
             "verify-windows",
+            "test-native-wheel",
+            "verify-sdist-pure-backend",
         }
 
 
@@ -1608,10 +1612,10 @@ def _jobs_reading_resolve_ref() -> set[str]:
         set[str]: Job ids containing a `needs.resolve-ref...` expression.
 
     Examples:
-        - Ten of the workflow's twelve jobs read the resolved ref:
+        - Twelve of the workflow's fourteen jobs read the resolved ref:
             ```python
             >>> len(_jobs_reading_resolve_ref())
-            10
+            12
             >>> "report" in _jobs_reading_resolve_ref()
             True
 
@@ -1688,13 +1692,13 @@ class TestEveryJobReadingTheResolvedRefDeclaresIt:
     """
 
     def test_every_such_job_is_wired(self):
-        """The invariant for all ten jobs, derived from the workflow rather than listed here.
+        """The invariant for all twelve jobs, derived from the workflow rather than listed here.
 
         Test scenario:
             Collects every job whose definition mentions `needs.resolve-ref` -- the four
-            artifact-building jobs (three wheel builds plus `sdist`), the five verify jobs and
-            `report` -- and requires each to declare it. A job added later is covered
-            automatically.
+            artifact-building jobs (three wheel builds plus `sdist`), the five verify jobs,
+            `test-native-wheel`, `verify-sdist-pure-backend` and `report` -- and requires each
+            to declare it. A job added later is covered automatically.
         """
         missing = {
             job_id
@@ -1706,11 +1710,11 @@ class TestEveryJobReadingTheResolvedRefDeclaresIt:
             f"these jobs read needs.resolve-ref without declaring it: {missing}"
         )
 
-    def test_the_set_of_such_jobs_is_the_expected_ten(self):
+    def test_the_set_of_such_jobs_is_the_expected_twelve(self):
         """Guards the guard: an empty collection would make the test above vacuous.
 
         Test scenario:
-            Ten of the workflow's twelve jobs, i.e. every job except `resolve-ref` itself and
+            Twelve of the workflow's fourteen jobs, i.e. every job except `resolve-ref` itself and
             `release`. Listing them is the point: `test_every_such_job_is_wired` passes trivially
             on an empty set, so this is what proves the search found the jobs rather than nothing.
         """
@@ -1724,6 +1728,8 @@ class TestEveryJobReadingTheResolvedRefDeclaresIt:
             "verify-rocky9-aarch64",
             "verify-macos",
             "verify-windows",
+            "test-native-wheel",
+            "verify-sdist-pure-backend",
             "report",
         }
 
