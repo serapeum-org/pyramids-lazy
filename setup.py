@@ -51,19 +51,7 @@ class _Py3NoneWheel(bdist_wheel):
         return "py3", "none", os.environ.get("PYRAMIDS_LAZY_WHEEL_PLAT", plat)
 
 
-# Requires-Python is declared dynamic in pyproject.toml so it can differ between a PUBLISHED
-# artifact and a local/editable install. The wheels + sdist that go to PyPI are built with
-# ``PYRAMIDS_LAZY_PUBLISH=1`` and cap at ``<3.15``: pip then refuses to install on Python 3.15,
-# where pyramids-core / h5py / numcodecs ship no cp315 wheels yet and a bare ``pip install`` would
-# otherwise fail deep in dependency resolution with an opaque error. A clean checkout, the pixi
-# editable dev install and conda-forge's source build leave ``PYRAMIDS_LAZY_PUBLISH`` unset and so
-# stay uncapped (``>=3.11,<4``) -- that is what keeps the 3.15 conda dev and CI environments, which
-# install this package editable, working. Lift the cap (and stop setting PYRAMIDS_LAZY_PUBLISH's
-# ceiling) once those upstream cp315 wheels exist on PyPI.
-_PUBLISH = os.environ.get("PYRAMIDS_LAZY_PUBLISH") == "1"
-_REQUIRES_PYTHON = ">=3.11,<3.15" if _PUBLISH else ">=3.11,<4"
-
 if os.environ.get("PYRAMIDS_LAZY_NATIVE") == "1":
-    setup(python_requires=_REQUIRES_PYTHON, cmdclass={"bdist_wheel": _Py3NoneWheel})
+    setup(cmdclass={"bdist_wheel": _Py3NoneWheel})
 else:
-    setup(python_requires=_REQUIRES_PYTHON)
+    setup()

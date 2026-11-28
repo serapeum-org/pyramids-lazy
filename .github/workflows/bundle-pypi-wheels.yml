@@ -187,7 +187,7 @@ jobs:
           CIBW_ARCHS_LINUX: ${{ matrix.arch }}
           # before-all (build.sh) runs inside the manylinux container; pass what it needs in.
           CIBW_ENVIRONMENT: >-
-            PYRAMIDS_LAZY_NATIVE=1 PYRAMIDS_LAZY_PUBLISH=1 OUTPUT=/tmp/pp-out
+            PYRAMIDS_LAZY_NATIVE=1 OUTPUT=/tmp/pp-out
             PLAT=manylinux_2_28_${{ matrix.arch }}
             CORE_VERSION=${{ inputs.core-version || env.PINNED_CORE_VERSION }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -222,7 +222,7 @@ jobs:
         env:
           CIBW_ARCHS_MACOS: ${{ matrix.arch }}
           CIBW_ENVIRONMENT: >-
-            PYRAMIDS_LAZY_NATIVE=1 PYRAMIDS_LAZY_PUBLISH=1 OUTPUT=/tmp/pp-out
+            PYRAMIDS_LAZY_NATIVE=1 OUTPUT=/tmp/pp-out
             PLAT=macosx_11_0_${{ matrix.arch }}
             CORE_VERSION=${{ inputs.core-version || env.PINNED_CORE_VERSION }}
             MACOSX_DEPLOYMENT_TARGET=11.0
@@ -246,7 +246,7 @@ jobs:
         env:
           CIBW_ARCHS_WINDOWS: AMD64
           CIBW_ENVIRONMENT: >-
-            PYRAMIDS_LAZY_NATIVE=1 PYRAMIDS_LAZY_PUBLISH=1 OUTPUT=C:/pp-out
+            PYRAMIDS_LAZY_NATIVE=1 OUTPUT=C:/pp-out
             PLAT=win_amd64
             CORE_VERSION=${{ inputs.core-version || env.PINNED_CORE_VERSION }}
             GDAL_VERSION=${{ inputs.gdal-version || env.PINNED_GDAL_VERSION }}
@@ -272,11 +272,7 @@ jobs:
       - name: Build the sdist
         # No plugin staged and PYRAMIDS_LAZY_NATIVE unset, so this is the ordinary pure source
         # dist; a source install on an unsupported platform gets the pure backend and the
-        # OGR-Parquet path raises its branded hint. PYRAMIDS_LAZY_PUBLISH=1 caps Requires-Python at
-        # <3.15 (see setup.py) so pip refuses the sdist on 3.15 too -- otherwise pip would skip the
-        # capped wheels and fall through to an uncapped sdist, defeating the clean refusal.
-        env:
-          PYRAMIDS_LAZY_PUBLISH: "1"
+        # OGR-Parquet path raises its branded hint.
         run: |
           set -euo pipefail
           python -m pip install --quiet --upgrade build
@@ -426,8 +422,8 @@ jobs:
     # (actions/setup-python + `pip --only-binary=:all:`, NOT the conda/pixi dev env). The verify-*
     # jobs only smoke-test that the OGR-Parquet driver loads; this exercises the whole suite against
     # the real artifact, across the supported Python range (Linux) and all three OS wheels. 3.15 is
-    # deliberately absent: the published wheel caps Requires-Python at <3.15 (see setup.py), so it
-    # cannot install there -- that path is probed non-gating in pypi-install-test.yml instead.
+    # deliberately absent: pyramids-core / h5py / numcodecs ship no cp315 wheels on PyPI yet, so the
+    # stack cannot be installed there -- that path is probed non-gating in pypi-install-test.yml.
     name: suite native wheel ${{ matrix.os }} py${{ matrix.python-version }}
     needs: [resolve-ref, build-linux-wheels, build-macos-wheels, build-windows-wheels]
     runs-on: ${{ matrix.os }}
