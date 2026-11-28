@@ -343,7 +343,9 @@ class TestTheRuleOrderSurvivedTheSingleReturnRewrite:
             {"tas": {"coordinates": "auxc"}, "auxc": {"grid_mapping": "spatial_ref"}},
         )
 
-        assert detect_data_var(group) == "auxc", "an explicit declaration was overridden"
+        assert detect_data_var(group) == "auxc", (
+            "an explicit declaration was overridden"
+        )
 
     @pytest.mark.lazy
     @needs_zarr
