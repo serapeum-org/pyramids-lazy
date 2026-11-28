@@ -1,3 +1,15 @@
+## 0.3.0 (2026-11-28)
+
+### Feat
+
+- **lazy**: bundle the OGR-Parquet driver into the native wheel (#43)
+- **backend**: serve the dataset raster/compute lazy ops delegated from pyramids-core (#42)
+- **parquet**: build the OGR Parquet driver as a standalone plugin wheel (#40)
+
+### Fix
+
+- **build**: restore native-wheel packaging + registration dropped in the py315 rework (#48)
+
 ## 0.2.0 (2026-11-17)
 
 ### Feat
