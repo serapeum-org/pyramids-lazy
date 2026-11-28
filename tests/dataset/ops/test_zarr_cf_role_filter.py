@@ -246,7 +246,7 @@ class TestWhatCountsAsReferenced:
                 "time_bnds": (3, 2),
                 "edges": (4, 2),
                 "lat": (4,),
-                "aux": (4, 6),
+                "auxc": (4, 6),
                 "flags": (4, 6),
                 "areacella": (4, 6),
                 "spatial_ref": (),
@@ -254,7 +254,7 @@ class TestWhatCountsAsReferenced:
             {
                 "lat": {"bounds": "edges"},
                 "tas": {
-                    "coordinates": "aux",
+                    "coordinates": "auxc",
                     "ancillary_variables": "flags",
                     "cell_measures": "area: areacella",
                     "grid_mapping": "spatial_ref",
@@ -269,7 +269,7 @@ class TestWhatCountsAsReferenced:
         assert referenced == {
             "time_bnds",
             "edges",
-            "aux",
+            "auxc",
             "flags",
             "areacella",
             "spatial_ref",
@@ -339,11 +339,11 @@ class TestTheRuleOrderSurvivedTheSingleReturnRewrite:
         """
         group = _store(
             tmp_path,
-            {"tas": (4, 6), "aux": (4, 6)},
-            {"tas": {"coordinates": "aux"}, "aux": {"grid_mapping": "spatial_ref"}},
+            {"tas": (4, 6), "auxc": (4, 6)},
+            {"tas": {"coordinates": "auxc"}, "auxc": {"grid_mapping": "spatial_ref"}},
         )
 
-        assert detect_data_var(group) == "aux", "an explicit declaration was overridden"
+        assert detect_data_var(group) == "auxc", "an explicit declaration was overridden"
 
     @pytest.mark.lazy
     @needs_zarr
@@ -371,7 +371,7 @@ class TestMalformedCfAttributesAreIgnoredNotFatal:
     @needs_zarr
     @pytest.mark.parametrize(
         "value",
-        [1, 3.5, ["aux"], [], {"name": "aux"}, None],
+        [1, 3.5, ["auxc"], [], {"name": "auxc"}, None],
         ids=["int", "float", "list", "empty-list", "dict", "none"],
     )
     def test_a_non_string_reference_attribute_references_nothing(self, tmp_path, value):
@@ -387,7 +387,7 @@ class TestMalformedCfAttributesAreIgnoredNotFatal:
             job is to survive foreign stores, and treating a list as a name
             list would demote arrays the store never pointed at.
         """
-        group = _store(tmp_path, {"tas": (4, 6), "aux": (4, 6)})
+        group = _store(tmp_path, {"tas": (4, 6), "auxc": (4, 6)})
         group["tas"].attrs.update({"coordinates": value})
 
         referenced = _cf_referenced_names(
