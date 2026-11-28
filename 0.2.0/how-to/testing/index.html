@@ -1,0 +1,1803 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="The lazy / dask compute backend for pyramids: lazy reads, lazy cubes, Zarr, kerchunk and lazy vector">
+      
+      
+      
+        <link rel="canonical" href="https://serapeum-org.github.io/pyramids-lazy/0.2.0/how-to/testing/">
+      
+      
+        <link rel="prev" href="../../reference/lazy-feature-collection/">
+      
+      
+        <link rel="next" href="../../change-log/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>Testing & benchmarks - pyramids-lazy</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="purple">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#testing" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="pyramids-lazy" class="md-header__button md-logo" aria-label="pyramids-lazy" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            pyramids-lazy
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Testing & benchmarks
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme)" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="purple"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m14.3 16-.7-2h-3.2l-.7 2H7.8L11 7h2l3.2 9zM20 8.69V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12zm-9.15 3.96h2.3L12 9z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="purple"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_2" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="lime"  aria-label="Switch to system preference"  type="radio" name="__palette" id="__palette_2">
+    
+      <label class="md-header__button md-icon" title="Switch to system preference" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/serapeum-org/pyramids-lazy" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    serapeum-org/pyramids-lazy
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../installation/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="./" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Development
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../change-log/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  About
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="pyramids-lazy" class="md-nav__button md-logo" aria-label="pyramids-lazy" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    pyramids-lazy
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/serapeum-org/pyramids-lazy" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    serapeum-org/pyramids-lazy
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/backend/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Backend contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/lazy-array/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lazy raster reads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/lazy-netcdf/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lazy NetCDF cube
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/dask-dataframe/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dask dataframe view
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/mfdataset/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-file reads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/kerchunk/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kerchunk manifests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/zarr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Zarr (Dataset)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/collection-zarr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Zarr (DatasetCollection)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/vector-read/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lazy vector reads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/lazy-feature-collection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lazy feature collection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing & benchmarks
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing & benchmarks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#test-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test layout
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#environments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environments
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-tests-locally" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running tests locally
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#markers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Markers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-no-silent-skip-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The no-silent-skip gate
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The no-silent-skip gate">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#category-markers-vs-conditional-skips" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Category markers vs conditional skips
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-runs-in-ci" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What runs in CI
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#benchmarks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Benchmarks
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Benchmarks">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#where-to-check-the-benchmark-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where to check the benchmark results
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    About
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    About
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../change-log/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Change-log
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../LICENSE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    License
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#test-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test layout
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#environments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environments
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-tests-locally" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running tests locally
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#markers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Markers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-no-silent-skip-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The no-silent-skip gate
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The no-silent-skip gate">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#category-markers-vs-conditional-skips" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Category markers vs conditional skips
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-runs-in-ci" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What runs in CI
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#benchmarks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Benchmarks
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Benchmarks">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#where-to-check-the-benchmark-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where to check the benchmark results
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/serapeum-org/pyramids-lazy/edit/main/docs/how-to/testing.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+    
+      
+    
+    <a href="https://github.com/serapeum-org/pyramids-lazy/raw/main/docs/how-to/testing.md" title="View source of this page" class="md-content__button md-icon">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 18c.56 0 1 .44 1 1s-.44 1-1 1-1-.44-1-1 .44-1 1-1m0-3c-2.73 0-5.06 1.66-6 4 .94 2.34 3.27 4 6 4s5.06-1.66 6-4c-.94-2.34-3.27-4-6-4m0 6.5a2.5 2.5 0 0 1-2.5-2.5 2.5 2.5 0 0 1 2.5-2.5 2.5 2.5 0 0 1 2.5 2.5 2.5 2.5 0 0 1-2.5 2.5M9.27 20H6V4h7v5h5v4.07c.7.08 1.36.25 2 .49V8l-6-6H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h4.5a8.2 8.2 0 0 1-1.23-2"/></svg>
+    </a>
+  
+
+
+<h1 id="testing"><a class="toclink" href="#testing">Testing</a><a class="headerlink" href="#testing" title="Permanent link">#</a></h1>
+<p><code>pyramids-lazy</code> is tested with <code>pytest</code>, driven through <code>pixi</code>, and selected with markers. There are two kinds of
+suite plus a separate performance-benchmark suite, and everything the CI runs is reproducible locally with a
+<code>pixi</code> task.</p>
+<h2 id="test-layout"><a class="toclink" href="#test-layout">Test layout</a><a class="headerlink" href="#test-layout" title="Permanent link">#</a></h2>
+<ul>
+<li><strong><code>tests/test_*.py</code> (top level)</strong> — the plugin's own seam / unit tests: <code>test_backend_contract.py</code> (the
+  <code>ComputeBackend</code> Protocol, the singleton, <code>api_version</code>), <code>test_seam_version.py</code> (the import-time core-contract
+  check), <code>test_optional_parquet_guard.py</code> (the <code>[parquet]</code> guard), plus focused <code>test_zarr.py</code> /
+  <code>test_collection_zarr.py</code> / <code>test_netcdf_lazy.py</code> / <code>test_vector_read.py</code>.</li>
+<li><strong><code>tests/dataset/</code>, <code>tests/netcdf/lazy/</code>, <code>tests/feature/lazy/</code></strong> — the comprehensive suites relocated verbatim
+  from <code>pyramids-core</code>, keeping core's directory layout so they stay diffable against it.</li>
+<li><strong><code>benchmarks/</code></strong> — the performance benchmarks, deliberately <em>outside</em> <code>testpaths = ["tests"]</code>, so the normal
+  test tasks never collect them (see <a href="#benchmarks">Benchmarks</a>).</li>
+</ul>
+<h2 id="environments"><a class="toclink" href="#environments">Environments</a><a class="headerlink" href="#environments" title="Permanent link">#</a></h2>
+<p>The repo carries its own self-contained <code>pixi</code> environments (GDAL and the native dask/zarr/HDF5 stack come from
+conda-forge; <code>src/</code> is installed editable). Seven are defined:</p>
+<table>
+<thead>
+<tr>
+<th>Environment</th>
+<th>What it is</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>dev</code></td>
+<td>everything, including the <code>[parquet]</code> vector extra — the day-to-day env</td>
+</tr>
+<tr>
+<td><code>base</code></td>
+<td>the no-<code>[parquet]</code> shape on Python 3.11 (the combo that surfaced the backend-discovery bug)</td>
+</tr>
+<tr>
+<td><code>py311</code>–<code>py314</code></td>
+<td>full-stack, one per supported Python — the CI test matrix</td>
+</tr>
+<tr>
+<td><code>docs</code></td>
+<td>the MkDocs stack</td>
+</tr>
+</tbody>
+</table>
+<p>Always drive them through <code>pixi run</code> (never a hardcoded interpreter path — a bare interpreter fails on GDAL).</p>
+<h2 id="running-tests-locally"><a class="toclink" href="#running-tests-locally">Running tests locally</a><a class="headerlink" href="#running-tests-locally" title="Permanent link">#</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nv">$M</span> <span class="p">=</span> <span class="s2">"&lt;repo&gt;/pyproject.toml"</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="c"># whole suite (pytest -vvv)</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">pixi</span> <span class="n">run</span> <span class="p">-</span><span class="n">-manifest-path</span> <span class="s2">"$M"</span> <span class="n">-e</span> <span class="n">dev</span> <span class="n">test</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="c"># with coverage, exactly as CI runs it: `main` (-m "not live", writes coverage.xml) or `test-all` (everything)</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="n">pixi</span> <span class="n">run</span> <span class="p">-</span><span class="n">-manifest-path</span> <span class="s2">"$M"</span> <span class="n">-e</span> <span class="n">dev</span> <span class="n">main</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="c"># one file / class / test</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="n">pixi</span> <span class="n">run</span> <span class="p">-</span><span class="n">-manifest-path</span> <span class="s2">"$M"</span> <span class="n">-e</span> <span class="n">dev</span> <span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">tests</span><span class="p">/</span><span class="n">netcdf</span><span class="p">/</span><span class="n">lazy</span><span class="p">/</span><span class="n">test_lazy_cube</span><span class="p">.</span><span class="n">py</span> <span class="n">-q</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="n">pixi</span> <span class="n">run</span> <span class="p">-</span><span class="n">-manifest-path</span> <span class="s2">"$M"</span> <span class="n">-e</span> <span class="n">dev</span> <span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">tests</span><span class="p">/</span><span class="n">netcdf</span><span class="p">/</span><span class="n">lazy</span><span class="p">/</span><span class="n">test_lazy_cube</span><span class="p">.</span><span class="n">py</span><span class="p">::</span><span class="n">TestChunksProperty</span> <span class="n">-q</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="c"># by marker</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="n">pixi</span> <span class="n">run</span> <span class="p">-</span><span class="n">-manifest-path</span> <span class="s2">"$M"</span> <span class="n">-e</span> <span class="n">dev</span> <span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">tests</span> <span class="n">-q</span> <span class="n">-m</span> <span class="s2">"not live"</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="c"># quality gates (also enforced in CI)</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="n">pixi</span> <span class="n">run</span> <span class="p">-</span><span class="n">-manifest-path</span> <span class="s2">"$M"</span> <span class="n">-e</span> <span class="n">dev</span> <span class="n">typecheck</span>     <span class="c"># mypy</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="n">pixi</span> <span class="n">run</span> <span class="p">-</span><span class="n">-manifest-path</span> <span class="s2">"$M"</span> <span class="n">-e</span> <span class="n">dev</span> <span class="n">lint</span>          <span class="c"># ruff check + ruff format --check</span>
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="n">pixi</span> <span class="n">run</span> <span class="p">-</span><span class="n">-manifest-path</span> <span class="s2">"$M"</span> <span class="n">-e</span> <span class="n">dev</span> <span class="n">pydocstyle</span>    <span class="c"># google convention, D403 relaxed</span>
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="n">pixi</span> <span class="n">run</span> <span class="p">-</span><span class="n">-manifest-path</span> <span class="s2">"$M"</span> <span class="n">-e</span> <span class="n">dev</span> <span class="n">precommit</span>     <span class="c"># all pre-commit hooks</span>
+</code></pre></div>
+<h2 id="markers"><a class="toclink" href="#markers">Markers</a><a class="headerlink" href="#markers" title="Permanent link">#</a></h2>
+<p>Test categories are selected by <strong>marker + <code>-m</code></strong> only — never by an environment variable. The markers are declared
+in <code>pyproject.toml</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Marker</th>
+<th>Needs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>core</code></td>
+<td>nothing beyond the base install (auto-applied when no extras marker is present)</td>
+</tr>
+<tr>
+<td><code>lazy</code></td>
+<td>the dask/zarr lazy stack</td>
+</tr>
+<tr>
+<td><code>netcdf_lazy</code></td>
+<td>kerchunk + h5py</td>
+</tr>
+<tr>
+<td><code>parquet</code></td>
+<td>the <code>[parquet]</code> extra (pyarrow)</td>
+</tr>
+<tr>
+<td><code>parquet_lazy</code></td>
+<td>dask-geopandas</td>
+</tr>
+<tr>
+<td><code>live</code></td>
+<td>a real external network service</td>
+</tr>
+</tbody>
+</table>
+<p>Select or skip with <code>-m</code>, e.g. <code>-m "not live"</code> (the default in CI), <code>-m parquet_lazy</code>. <code>live</code> tests are skipped
+unless <code>live</code> appears as a whole token in <code>-m</code>.</p>
+<h2 id="the-no-silent-skip-gate"><a class="toclink" href="#the-no-silent-skip-gate">The no-silent-skip gate</a><a class="headerlink" href="#the-no-silent-skip-gate" title="Permanent link">#</a></h2>
+<p>A skip for a missing optional dependency is normally invisible: it is folded into <code>N skipped</code>, CI stays green, and a
+whole marker can run nowhere for months unnoticed. In a job whose environment <strong>has</strong> the extra, such a skip is
+never legitimate — it means the test was mis-marked or mis-routed.</p>
+<p>Passing <code>--strict-extra-skips</code> turns such a skip into a session failure, so the gap becomes loud instead. It is
+<code>store_true</code> with <code>default=False</code>, so an ordinary or partial-install run still skips cleanly. The decision lives in
+<code>tests/_skip_guard.py</code> (wired up in <code>tests/conftest.py</code>) and is unit-tested by <code>tests/test_skip_guard.py</code>.</p>
+<p><strong>No workflow passes the flag today</strong> (<a href="https://github.com/serapeum-org/pyramids-lazy/issues/37">#37</a>) — it is
+available for a per-extra job but not yet armed in CI, so for now it is a local check. Note that <code>-m</code> still
+applies, so this arms the gate for the <code>parquet_lazy</code> tests only and deselects the rest:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>pixi<span class="w"> </span>run<span class="w"> </span>-e<span class="w"> </span>dev<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>pytest<span class="w"> </span>tests<span class="w"> </span>-m<span class="w"> </span>parquet_lazy<span class="w"> </span>--strict-extra-skips
+</code></pre></div>
+<p>A skip is counted as a dependency-skip when its reason matches one of three canonical shapes:</p>
+<table>
+<thead>
+<tr>
+<th>Shape</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>not installed</code></td>
+<td><code>zarr not installed</code>, <code>pyramids-lazy[parquet] not installed</code></td>
+</tr>
+<tr>
+<td><code>could not import</code></td>
+<td><code>pytest.importorskip("kerchunk")</code>'s default reason</td>
+</tr>
+<tr>
+<td>a <code>pyramids…[</code> extra reference</td>
+<td><code>dask.dataframe needs dask + pyarrow (pyramids-lazy[parquet])</code></td>
+</tr>
+</tbody>
+</table>
+<p>The third shape is <code>pyramids(?:[_-][a-z0-9_-]+)?\[</code> — a bare <code>pyramids[</code> or any <code>pyramids-&lt;name&gt;[</code> /
+<code>pyramids_&lt;name&gt;[</code>, so a reason naming core's extras would match too, though none does today. Matching is
+<strong>case-insensitive</strong>. The separator is required so an unrelated distribution such as <code>pyramidsomething[</code> is not
+swallowed.</p>
+<p><strong>Write a dependency skip in one of those forms, or the gate cannot see it.</strong> Generic wording is deliberately not
+matched, so <code>reason="requires zarr"</code> would be invisible; the <code>zarr</code> skips in <code>tests/dataset/ops/</code> are worded
+<code>zarr not installed</code> for that reason.</p>
+<h3 id="category-markers-vs-conditional-skips"><a class="toclink" href="#category-markers-vs-conditional-skips">Category markers vs conditional skips</a><a class="headerlink" href="#category-markers-vs-conditional-skips" title="Permanent link">#</a></h3>
+<p>The markers above split into two kinds, and the split is deliberate:</p>
+<ul>
+<li><strong>Category markers</strong> — <code>lazy</code>, <code>netcdf_lazy</code> — carry <strong>no condition</strong>. Their dependencies (<code>dask</code>, <code>zarr</code>,
+  <code>kerchunk</code>, <code>h5py</code>) are hard requirements in <code>[project] dependencies</code>, so they cannot be absent in an installed
+  environment. They exist purely for <code>-m</code> selection. A <code>skipif</code> here would be worse than useless: if one of those
+  packages ever broke or left the metadata, several hundred tests would quietly report <code>skipped</code> and CI would stay
+  green. Without one, a broken install fails at import, loudly.</li>
+<li><strong>Conditional skips</strong> — <code>parquet</code>, <code>parquet_lazy</code> — gate on the <code>[parquet]</code> extra, the only genuinely optional
+  dependency set, because the <code>base</code> environment installs without it on purpose. These are the only skips the gate
+  can ever see.</li>
+</ul>
+<p>So in any full-stack environment the suite skips <strong>nothing</strong> for a missing dependency:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>$<span class="w"> </span>pixi<span class="w"> </span>run<span class="w"> </span>-e<span class="w"> </span>dev<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>pytest<span class="w"> </span>tests<span class="w"> </span>-m<span class="w"> </span><span class="s2">"not live"</span><span class="w"> </span>--strict-extra-skips
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="m">653</span><span class="w"> </span>passed
+</code></pre></div>
+<p>Keep that split when adding a marker: condition on a dependency only if some environment genuinely installs
+without it.</p>
+<p>The flip side: matching is on <strong>wording, not nature</strong>. A platform or driver skip phrased with "not installed" —
+<code>reason="OGR Parquet driver not installed"</code> — <em>is</em> classified as a dependency skip and will fail an armed job.
+That is usually right, since a missing driver is a missing dependency, but if you want such a skip to stay
+invisible, word it without the canonical phrases.</p>
+<p>Two things are excluded. Free-text skips (<code>pytest.skip("dask + zarr required")</code>, the <code>live</code> marker's own message)
+do not match. And an <code>xfail</code> is excluded before any reason matching: it also reports as skipped, but it ran and is
+visible as xfailed, so an xfail whose reason happens to name a dependency cannot trip the gate. That exclusion is
+a safeguard rather than a response to anything here — this suite currently declares no <code>xfail</code> marks at all.</p>
+<h2 id="what-runs-in-ci"><a class="toclink" href="#what-runs-in-ci">What runs in CI</a><a class="headerlink" href="#what-runs-in-ci" title="Permanent link">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Workflow</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/serapeum-org/pyramids-lazy/actions/workflows/tests.yml"><code>tests.yml</code></a></td>
+<td>matrix <code>os × [py311, py312, py313, py314]</code> + a no-<code>[parquet]</code> <code>base</code> leg; runs the <code>main</code> task (coverage → Codecov), the nbval notebooks step, and asserts the committed lock with <code>--locked</code></td>
+</tr>
+<tr>
+<td><a href="https://github.com/serapeum-org/pyramids-lazy/actions/workflows/lint.yml"><code>lint.yml</code></a></td>
+<td>a <code>pre-commit</code> job (ruff/pydocstyle/file hooks), a <code>static</code> job (<code>mypy</code> + <code>src</code> doctests), and a <code>gitleaks</code> secret scan</td>
+</tr>
+<tr>
+<td><a href="https://github.com/serapeum-org/pyramids-lazy/actions/workflows/pip-audit.yml"><code>pip-audit.yml</code></a></td>
+<td>advisory audit of the <code>py311</code> lock, on PR + a weekly schedule</td>
+</tr>
+<tr>
+<td><a href="https://github.com/serapeum-org/pyramids-lazy/actions/workflows/pure-wheel-test.yml"><code>pure-wheel-test.yml</code></a></td>
+<td>builds the wheel, installs it <code>--only-binary=:all:</code>, imports it and runs the suite across the matrix</td>
+</tr>
+</tbody>
+</table>
+<p>Line + branch <strong>coverage is uploaded to Codecov</strong> — browse it at
+<a href="https://app.codecov.io/gh/serapeum-org/pyramids-lazy">https://app.codecov.io/gh/serapeum-org/pyramids-lazy</a>.</p>
+<h2 id="benchmarks"><a class="toclink" href="#benchmarks">Benchmarks</a><a class="headerlink" href="#benchmarks" title="Permanent link">#</a></h2>
+<p>The <code>benchmarks/</code> suite is a set of <a href="https://pytest-benchmark.readthedocs.io/"><code>pytest-benchmark</code></a> micro-benchmarks
+for the compute backend's hot paths. They answer <em>"did this change make operation X slower?"</em> — regression
+detection, not profiling. Because they are outside <code>testpaths</code>, the normal test tasks never collect them; they run
+only via the <code>benchmark</code> task and the nightly workflow.</p>
+<p><strong>What is covered</strong> (the backend's lazy paths, plus an eager-core baseline):</p>
+<ul>
+<li><code>benchmarks/test_bench_zarr.py</code> — <code>write_dataset_to_zarr</code> (plain + overview levels) and <code>read_dataset_from_zarr</code>,
+  the only fully-parallel raster Zarr write/read path (called on the <code>backend</code> singleton directly).</li>
+<li><code>benchmarks/test_bench_netcdf.py</code> — <code>NetCDF.read_array</code> eager vs lazy (<code>read_array_lazy</code> / <code>build_lazy_array</code>,
+  build-only and build+compute) and <code>NetCDF.chunk</code> (<code>build_lazy_cube</code>).</li>
+</ul>
+<p><strong>Running them:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">pixi</span> <span class="n">run</span> <span class="p">-</span><span class="n">-manifest-path</span> <span class="s2">"$M"</span> <span class="n">-e</span> <span class="n">dev</span> <span class="n">benchmark</span>                        <span class="c"># the whole suite, with a stats table</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">pixi</span> <span class="n">run</span> <span class="p">-</span><span class="n">-manifest-path</span> <span class="s2">"$M"</span> <span class="n">-e</span> <span class="n">dev</span> <span class="n">pytest</span> <span class="n">benchmarks</span> <span class="n">-k</span> <span class="n">zarr</span>        <span class="c"># one group</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="c"># save a baseline on a branch you trust, then compare a change against it</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">pixi</span> <span class="n">run</span> <span class="p">-</span><span class="n">-manifest-path</span> <span class="s2">"$M"</span> <span class="n">-e</span> <span class="n">dev</span> <span class="n">pytest</span> <span class="n">benchmarks</span> <span class="p">-</span><span class="n">-benchmark-autosave</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">pixi</span> <span class="n">run</span> <span class="p">-</span><span class="n">-manifest-path</span> <span class="s2">"$M"</span> <span class="n">-e</span> <span class="n">dev</span> <span class="n">pytest</span> <span class="n">benchmarks</span> <span class="p">-</span><span class="n">-benchmark-compare</span> <span class="p">-</span><span class="n">-benchmark-compare-fail</span><span class="p">=</span><span class="n">median</span><span class="p">:</span><span class="n">50</span><span class="p">%</span>
+</code></pre></div>
+<p>Saved runs live under <code>.benchmarks/</code> (git-ignored). See <code>benchmarks/README.md</code> for the methodology notes.</p>
+<h3 id="where-to-check-the-benchmark-results"><a class="toclink" href="#where-to-check-the-benchmark-results">Where to check the benchmark results</a><a class="headerlink" href="#where-to-check-the-benchmark-results" title="Permanent link">#</a></h3>
+<p>The benchmarks run on a <strong>nightly schedule (04:00 UTC) and on manual dispatch</strong> — never on a pull request, and only
+once the workflow is on the default branch. They are <strong>not a merge gate</strong>: shared GitHub runners are too noisy to
+compare absolute milliseconds commit-to-commit.</p>
+<ul>
+<li><strong>Workflow runs:</strong>
+  <a href="https://github.com/serapeum-org/pyramids-lazy/actions/workflows/benchmarks.yml">https://github.com/serapeum-org/pyramids-lazy/actions/workflows/benchmarks.yml</a></li>
+<li><strong>Results:</strong> each run uploads a <code>benchmark-results-&lt;run_id&gt;</code> <strong>artifact</strong> (90-day retention) containing
+  <code>benchmark-results.json</code> (the full <code>--benchmark-json</code>) and the <code>.benchmarks/</code> autosave. Download it from the run's
+  <em>Artifacts</em> section, or with the CLI:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>gh<span class="w"> </span>run<span class="w"> </span>list<span class="w"> </span>--workflow<span class="w"> </span>benchmarks.yml
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>gh<span class="w"> </span>run<span class="w"> </span>download<span class="w"> </span>&lt;run-id&gt;
+</code></pre></div>
+<ul>
+<li><strong>Trend chart:</strong> <a href="https://serapeum-org.github.io/pyramids-lazy/bench/">https://serapeum-org.github.io/pyramids-lazy/bench/</a> — each nightly run feeds
+  <a href="https://github.com/benchmark-action/github-action-benchmark"><code>github-action-benchmark</code></a>, which appends the run
+  to a history under <code>bench/</code> on the <code>gh-pages</code> branch and publishes the interactive chart there. <code>bench/</code> is its
+  own subdir, so it coexists with the mike-versioned MkDocs site without either clobbering the other.</li>
+<li><strong>Regression alerts:</strong> when a benchmark regresses by <strong>≥ 1.5×</strong> (the <code>150%</code> alert threshold, loose on purpose
+  because shared runners are noisy), the action posts a <strong>commit comment that @-mentions the maintainer</strong>. It never
+  fails the nightly run. Alerts begin from the second run on <code>gh-pages</code> (the first seeds the baseline).</li>
+<li><strong>Comparing runs locally:</strong> compare two runs' JSON directly:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>pytest-benchmark<span class="w"> </span>compare<span class="w"> </span>old.json<span class="w"> </span>new.json
+</code></pre></div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../../reference/lazy-feature-collection/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Lazy feature collection">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Lazy feature collection
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../../change-log/" class="md-footer__link md-footer__link--next" aria-label="Next: Change-log">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Change-log
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/serapeum-org/pyramids-lazy" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.expand", "navigation.indexes", "navigation.footer", "navigation.sections", "navigation.tabs", "navigation.tabs.sticky", "navigation.top", "content.code.copy", "content.code.annotate", "content.action.edit", "content.action.view", "content.tooltips", "search.highlight", "search.suggest", "toc.follow", "announce.dismiss"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>
